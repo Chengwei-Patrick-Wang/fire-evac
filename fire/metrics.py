@@ -1,121 +1,148 @@
-"""Run metrics v0 (spec 7.4): door queues, waiting time and density heatmaps.
+"""Speed-based door queues, crossing flow and smoke-grid density heatmaps.
 
-compute(run, building) returns a copy of run["metrics"] plus
-  doors:    [{id, floor, peakQueue, waitPersonSeconds, flow: None}]
-  heatmaps: [{floor, origin, cell, cols, rows, d}]
-
-Door queue: agents with status 1 (moving) within QUEUE_RADIUS m of the door midpoint on the
-same floor, counted in every frame. peakQueue is the largest count and waitPersonSeconds is
-the sum of the counts times run["frameInterval"].
-
-Heatmap: agents whose status is in HEAT_STATUSES, counted per HEAT_CELL m cell over all frames,
-scaled to 0-100 by the busiest cell of the whole run (so floors stay comparable) and stored as
-base64 of a row-major uint8 array (row 0 = miny, origin = (minx, miny) of the floor's walkable
-bounds). Agents that have not started moving yet (status 0) are left out, so the map shows
-where crowding builds rather than where people stood when the alarm went off. To count every
-status, set HEAT_STATUSES = (0, 1, 2, 3).
-
-CLI: python -m fire.metrics RUN BUILDING   (prints the top 5 doors by waiting)
+CLI: python -m fire.metrics RUN BUILDING (top five doors by waiting).
 """
 import base64
 import json
-import math
 import sys
 from pathlib import Path
 
 import numpy as np
 
-QUEUE_RADIUS = 2.0     # m: how close to a door midpoint counts as queueing there
-HEAT_CELL = 0.5        # m
-HEAT_STATUSES = (1,)   # frame statuses that count towards the heatmap (1 = moving)
+from fire.grid import grid_specs
 
-
-def _floor_bounds(floor: dict):
-    """(minx, miny, maxx, maxy) of the outer rings of a floor's walkable area, or None."""
-    pts = [p for poly in floor.get("walkable") or [] for p in poly["outer"]]
-    if not pts:
-        return None
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    return min(xs), min(ys), max(xs), max(ys)
+QUEUE_RADIUS_M = 2.0
+QUEUE_SPEED_MS = 0.3
+DOOR_BOX_M = 3.0
+CROSS_SIDE_M = 1.0
+CROSS_MARGIN_M = 0.3
+FLOW_MIN_SPAN_S = 30.0
 
 
 def _stack(frames: list):
-    """All frame rows in one array: (frame number of each row, [idx, x, y, floorIdx, status])."""
-    counts, parts = [], []
-    for fr in frames:
-        a = fr.get("a") or []
-        counts.append(len(a))
-        if a:
-            parts.append(np.asarray(a, dtype=float))
-    if not parts:
-        return np.zeros(0, dtype=int), np.zeros((0, 5))
-    return np.repeat(np.arange(len(frames)), counts), np.vstack(parts)
+    """Rows, frame indexes, speeds, and indexes of the preceding frame's rows.
+
+    Speed uses time since last appearance. Crossings require consecutive frames;
+    a first appearance or floor transfer has unknown (infinite) speed.
+    """
+    rows, frame_numbers, speeds, previous_rows = [], [], [], []
+    last = {}
+    for k, frame in enumerate(frames):
+        t = float(frame["t"])
+        for row in frame.get("a") or []:
+            idx, x, y, floor, _ = row
+            speed, prior = float("inf"), -1
+            if idx in last:
+                old_k, old_t, old_row, old_index = last[idx]
+                if old_row[3] == floor:
+                    if t > old_t:
+                        speed = np.hypot(x - old_row[1], y - old_row[2]) / (t - old_t)
+                    if old_k == k - 1 and t > old_t:
+                        prior = old_index
+            last[idx] = (k, t, row, len(rows))
+            rows.append(row)
+            frame_numbers.append(k)
+            speeds.append(speed)
+            previous_rows.append(prior)
+    return (np.asarray(rows, dtype=float).reshape(-1, 5),
+            np.asarray(frame_numbers, dtype=int), np.asarray(speeds),
+            np.asarray(previous_rows, dtype=int))
 
 
-def compute(run: dict, building: dict) -> dict:
+def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
+    """Copy sim metrics and add every door's queues/flow and per-floor heatmaps.
+
+    With a scenario, add smoke-only room ASET and observed clearance margins.
+    """
     dt = float(run.get("frameInterval", 0.5))
     frames = run.get("frames") or []
-    n_frames = len(frames)
     floor_ids = list(run.get("floors") or [f["id"] for f in building["floors"]])
-
-    fno, a = _stack(frames)
-    x, y = a[:, 1], a[:, 2]
+    a, fno, speed, previous = _stack(frames)
+    xy = a[:, 1:3]
     fl, st = a[:, 3].astype(int), a[:, 4].astype(int)
-
-    doors, grids = [], []
-    for floor in building["floors"]:
+    times = np.asarray([frame["t"] for frame in frames], dtype=float)
+    doors, heatmaps = [], []
+    for floor, spec in zip(building["floors"], grid_specs(building)):
         fi = floor_ids.index(floor["id"]) if floor["id"] in floor_ids else -1
-
-        # Door queues: moving agents within QUEUE_RADIUS of each door midpoint, per frame.
-        mov = (fl == fi) & (st == 1)
-        mx_, my_, mf = x[mov], y[mov], fno[mov]
+        on_floor = np.flatnonzero(fl == fi) if fi >= 0 else np.array([], dtype=int)
+        floor_xy = xy[on_floor]
         for door in floor.get("doors") or []:
-            cx = (door["a"][0] + door["b"][0]) / 2.0
-            cy = (door["a"][1] + door["b"][1]) / 2.0
-            near = np.hypot(mx_ - cx, my_ - cy) <= QUEUE_RADIUS
-            per_frame = np.bincount(mf[near], minlength=n_frames)
-            doors.append({
-                "id": door["id"],
-                "floor": floor["id"],
-                "peakQueue": int(per_frame.max()) if n_frames else 0,
-                "waitPersonSeconds": round(float(per_frame.sum()) * dt, 3),
-                "flow": None,
-            })
+            start, end = np.asarray(door["a"]), np.asarray(door["b"])
+            # Only evaluate geometry for agents in the opening's +/-3 m box.
+            near_box = np.all((floor_xy >= np.minimum(start, end) - DOOR_BOX_M) &
+                              (floor_xy <= np.maximum(start, end) + DOOR_BOX_M), axis=1)
+            candidates = on_floor[near_box]
+            delta = end - start
+            length = float(np.linalg.norm(delta))
+            relative = xy[candidates] - start
+            if length:
+                along = relative @ (delta / length)
+                closest = start + np.clip(along, 0, length)[:, None] * delta / length
+            else:
+                closest = start
+            distance = np.linalg.norm(xy[candidates] - closest, axis=1)
+            queued = candidates[(st[candidates] == 1) & (speed[candidates] < QUEUE_SPEED_MS) &
+                                (distance <= QUEUE_RADIUS_M)]
+            counts = np.bincount(fno[queued], minlength=len(frames))
 
-        # Heatmap counts on the floor's grid.
-        b = _floor_bounds(floor)
-        if b is None:
-            continue
-        ox, oy = round(b[0], 3), round(b[1], 3)
-        cols = max(1, math.ceil(round((b[2] - ox) / HEAT_CELL, 6)))
-        nrows = max(1, math.ceil(round((b[3] - oy) / HEAT_CELL, 6)))
-        sel = (fl == fi) & np.isin(st, HEAT_STATUSES)
-        c = np.clip(np.floor((x[sel] - ox) / HEAT_CELL).astype(int), 0, cols - 1)
-        r = np.clip(np.floor((y[sel] - oy) / HEAT_CELL).astype(int), 0, nrows - 1)
-        counts = np.bincount(r * cols + c, minlength=cols * nrows).reshape(nrows, cols)
-        grids.append((floor["id"], ox, oy, cols, nrows, counts))
+            crossing_rows = np.array([], dtype=int)
+            if length:
+                current = candidates[previous[candidates] >= 0]
+                old_xy = xy[previous[current]] - start
+                new_xy = xy[current] - start
+                tangent = delta / length
+                normal = np.array([-tangent[1], tangent[0]])
+                old_side, new_side = old_xy @ normal, new_xy @ normal
+                old_along, new_along = old_xy @ tangent, new_xy @ tangent
+                crossing_rows = current[(old_side * new_side < 0) &
+                    (np.abs(old_side) <= CROSS_SIDE_M) & (np.abs(new_side) <= CROSS_SIDE_M) &
+                    (old_along >= -CROSS_MARGIN_M) & (old_along <= length + CROSS_MARGIN_M) &
+                    (new_along >= -CROSS_MARGIN_M) & (new_along <= length + CROSS_MARGIN_M)]
+            crossed = len(np.unique(a[crossing_rows, 0]))
+            flow = 0.0
+            if crossed:
+                crossing_times = times[fno[crossing_rows]]
+                span = max(FLOW_MIN_SPAN_S, float(np.ptp(crossing_times)))
+                flow = crossed * 60.0 / span
+            doors.append({"id": door["id"], "floor": floor["id"],
+                          "peakQueue": int(counts.max()) if len(counts) else 0,
+                          "waitPersonSeconds": round(float(counts.sum()) * dt, 3),
+                          "flow": float(flow), "crossed": crossed})
 
-    top = max((int(g[5].max()) for g in grids), default=0)
-    heatmaps = []
-    for fid, ox, oy, cols, nrows, counts in grids:
-        if top > 0:
-            d = np.rint(counts * (100.0 / top)).astype(np.uint8)
-        else:
-            d = np.zeros((nrows, cols), dtype=np.uint8)
-        heatmaps.append({
-            "floor": fid,
-            "origin": [ox, oy],
-            "cell": HEAT_CELL,
-            "cols": cols,
-            "rows": nrows,
-            "d": base64.b64encode(d.tobytes()).decode("ascii"),
-        })
+        moving = on_floor[st[on_floor] == 1]
+        cells = np.floor((xy[moving] - spec["origin"]) / spec["cell"]).astype(int)
+        cols, rows = spec["cols"], spec["rows"]
+        inside = ((cells[:, 0] >= 0) & (cells[:, 0] < cols) &
+                  (cells[:, 1] >= 0) & (cells[:, 1] < rows))
+        cells = cells[inside]
+        counts = np.bincount(cells[:, 1] * cols + cells[:, 0], minlength=cols * rows)
+        peak = int(counts.max()) if len(counts) else 0
+        d = np.rint(counts * (100.0 / peak)).astype(np.uint8) if peak else np.zeros(cols * rows, dtype=np.uint8)
+        heatmaps.append({"floor": floor["id"], **spec,
+                         "d": base64.b64encode(d.tobytes()).decode("ascii")})
+    result = {**(run.get("metrics") or {}), "doors": doors, "heatmaps": heatmaps}
+    if scenario is not None:
+        from fire.model import aset_by_room
 
-    out = dict(run.get("metrics") or {})
-    out["doors"] = doors
-    out["heatmaps"] = heatmaps
-    return out
+        aset = aset_by_room(building, scenario, float(scenario["maxTime"]))
+        exits, stairs = {}, {}
+        for event in run.get("events", []):
+            if event.get("idx") is not None and event.get("type") in ("exit", "stair"):
+                times_by_agent = exits if event["type"] == "exit" else stairs
+                idx = event["idx"]
+                times_by_agent[idx] = max(times_by_agent.get(idx, 0.0), float(event["t"]))
+        occupants = {}
+        for agent in run.get("agents", []):
+            occupants.setdefault(agent["room"], []).append(agent["idx"])
+        rooms = []
+        for room, indexes in occupants.items():
+            clearance = [exits.get(idx, stairs.get(idx)) for idx in indexes]
+            rset = max(clearance) if all(t is not None for t in clearance) else None
+            available = aset.get(room)
+            margin = available - rset if available is not None and rset is not None else None
+            rooms.append({"id": room, "rset": rset, "aset": available, "margin": margin})
+        result["rooms"] = rooms
+    return result
 
 
 def main(argv=None) -> int:
@@ -130,9 +157,10 @@ def main(argv=None) -> int:
         **{k: m.get(k) for k in ("agents", "evacuated", "trapped", "t50", "t90", "t100")}))
     top = sorted(m["doors"], key=lambda d: (-d["waitPersonSeconds"], -d["peakQueue"], d["id"]))[:5]
     print("Top 5 doors by waiting:")
-    print("  %-8s %-6s %9s %18s" % ("door", "floor", "peakQueue", "waitPersonSeconds"))
+    print("  %-8s %-6s %9s %18s %10s" % ("door", "floor", "peakQueue", "waitPersonSeconds", "flow/min"))
     for d in top:
-        print("  %-8s %-6s %9d %18.1f" % (d["id"], d["floor"], d["peakQueue"], d["waitPersonSeconds"]))
+        print("  %-8s %-6s %9d %18.1f %10.2f" %
+              (d["id"], d["floor"], d["peakQueue"], d["waitPersonSeconds"], d["flow"]))
     return 0
 
 
