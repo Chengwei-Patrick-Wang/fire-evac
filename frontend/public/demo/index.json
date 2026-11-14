@@ -1,6 +1,6 @@
 {
   "version": "demo-index/v0",
-  "generated": "2026-11-14T15:54:21Z",
+  "generated": "2026-11-14T16:19:27Z",
   "buildings": [
     {
       "id": "example-office",
@@ -296,7 +296,8 @@
       "id": "example-office-batch",
       "buildingId": "example-office",
       "file": "batch-example-office.json",
-      "report": "report-example-office.md"
+      "report": "report-example-office.md",
+      "headlines": "headlines-example-office.json"
     }
   ]
 }
