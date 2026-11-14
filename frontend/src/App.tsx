@@ -4,6 +4,7 @@ import { useApp } from './store/app'
 import type { LoadedRun } from './store/app'
 import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
+import SplitView from './scene/SplitView'
 import Toolbar3D from './ui/Toolbar3D'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
@@ -116,7 +117,9 @@ function s_notice(m: string) {
 }
 
 export default function App() {
-  const { view, building } = useApp()
+  const { view, building, split, runs, runOrder, activeRunKey } = useApp()
+  const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
+  const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
     useApp.getState().setBuildings(await listBuildings())
     useApp.getState().setView('replay')
@@ -141,7 +144,7 @@ export default function App() {
           </Suspense>
         ) : (
           <>
-            <Scene />
+            {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
             <Toolbar3D />
           </>
         )}

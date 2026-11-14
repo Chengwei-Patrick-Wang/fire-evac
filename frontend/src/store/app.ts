@@ -53,6 +53,7 @@ interface AppState {
   visibleFloors: string[] | null
   layers: Layers
   topView: number
+  split: boolean
   draft: Scenario | null
   placing: boolean
   running: string | null
@@ -100,6 +101,7 @@ export const useApp = create<AppState>((set) => ({
   visibleFloors: null,
   layers: { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
   topView: 0,
+  split: false,
   draft: null,
   placing: true,
   running: null,

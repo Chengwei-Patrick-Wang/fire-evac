@@ -10,6 +10,8 @@ export default function Toolbar3D() {
   const heatmap = useApp((s) => s.layers.heatmap)
   const queues = useApp((s) => s.layers.queues)
   const risk = useApp((s) => s.layers.risk)
+  const split = useApp((s) => s.split)
+  const nRuns = useApp((s) => s.runOrder.length)
   if (!building) return null
   const set = useApp.setState
   const isOn = (id: string) => !visible || visible.includes(id)
@@ -53,6 +55,7 @@ export default function Toolbar3D() {
           {name}
         </label>
       ))}
+      <button disabled={nRuns < 2} className={split ? 'on' : ''} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
     </div>
   )
