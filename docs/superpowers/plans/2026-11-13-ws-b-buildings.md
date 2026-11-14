@@ -43,21 +43,17 @@
 
 ### Task B1: Download IFC candidates, inspect, pick the model (P0, target Sat 2 AM)
 
-Overnight note: no candidate meets the strict pickability rule; the README records the closest candidate and traced-building fallback. Team chat was not available in this run.
-
 **Files:** Create `buildings/inspect_ifc.py`, `buildings/README.md`. Downloads go to `data/raw/<name>/` (gitignored).
 
 **Interfaces:** Consumes nothing from the scaffold. Produces `python -m buildings.inspect_ifc PATH...` (each PATH is an `.ifc` file or a folder searched recursively); its last line is `PICK: <path>`. `buildings/README.md` records the counts table, the pick, its unit scale and its credits text.
 
-- [x] Download each archive into its own new empty folder and unzip it there with `python -m zipfile -e ZIP DIR` (never run anything from those folders). VTT example BIM files (CC BY-SA 4.0), page https://cris.vtt.fi/en/publications/bim-files-to-download/: `curl -L -o data/raw/vtt/ARCH.zip https://www.nordicsustainableconstruction.com/Media/638593249820446520/ARCH.zip` (the page's link on Fri night; if it fails, take the link from the page; ARCH holds the architecture models of the residential and the three-floor office building; skip STRUCTURAL and HVAC). NIBS Common BIM Files, https://wbdg.org/node/9165 (clinic and office IFC zips such as `2011-09-14-Clinic-IFC.zip`, also linked from https://www.wbdg.org/node/23884): both pages load by JavaScript, so a person downloads them in a browser into `data/raw/nibs-clinic/` and `data/raw/nibs-office/`; with no browser, continue with VTT only and say so in the README.
-- [x] Write `buildings/inspect_ifc.py`. Per file print the schema and `ifcopenshell.util.unit.calculate_unit_scale(model)`, then one row per `IfcBuildingStorey` sorted by `Elevation * scale`: name, elevation in m, counts of IfcSpace, IfcDoor, IfcStair, IfcStairFlight. Storey of an element: `ifcopenshell.util.element.get_container(e)`, else `get_aggregate(e)`, repeated up to 5 times. Verdict `PICKABLE` when every storey has at least one IfcSpace and the model has at least 2 IfcStair (or, with none, at least 2 IfcStairFlight). Last line `PICK: <path>`: the pickable file with the most storeys, then the most spaces; if none is pickable, the closest one plus a line saying what is missing.
-- [x] Run it on `data/raw`. If nothing is pickable, also try 1–2 models from the Open IFC Model Repository (spec §13: next candidate, else the traced building: then tell A, skip B2 and B3, and let B4, B5 and B8 carry the real building). Write `buildings/README.md` with the counts table, `PICK: data/raw/...`, the unit scale, the runner-up and the pick's credits text (NIBS files: free download, made by the US Army ERDC/CERL, no license found, credit them; VTT: CC BY-SA 4.0, credit VTT and share the derived plan under the same license). Post the pick and counts in team chat.
-- [x] **Verify:** `python -m buildings.inspect_ifc data/raw` prints a table per model and ends with `PICK: <path>`; the README shows the same path.
-- [x] **Commit** `feat(buildings): inspect_ifc and IFC pick`, then push `ws-b`.
+- [ ] Download each archive into its own new empty folder and unzip it there with `python -m zipfile -e ZIP DIR` (never run anything from those folders). VTT example BIM files (CC BY-SA 4.0), page https://cris.vtt.fi/en/publications/bim-files-to-download/: `curl -L -o data/raw/vtt/ARCH.zip https://www.nordicsustainableconstruction.com/Media/638593249820446520/ARCH.zip` (the page's link on Fri night; if it fails, take the link from the page; ARCH holds the architecture models of the residential and the three-floor office building; skip STRUCTURAL and HVAC). NIBS Common BIM Files, https://wbdg.org/node/9165 (clinic and office IFC zips such as `2011-09-14-Clinic-IFC.zip`, also linked from https://www.wbdg.org/node/23884): both pages load by JavaScript, so a person downloads them in a browser into `data/raw/nibs-clinic/` and `data/raw/nibs-office/`; with no browser, continue with VTT only and say so in the README.
+- [ ] Write `buildings/inspect_ifc.py`. Per file print the schema and `ifcopenshell.util.unit.calculate_unit_scale(model)`, then one row per `IfcBuildingStorey` sorted by `Elevation * scale`: name, elevation in m, counts of IfcSpace, IfcDoor, IfcStair, IfcStairFlight. Storey of an element: `ifcopenshell.util.element.get_container(e)`, else `get_aggregate(e)`, repeated up to 5 times. Verdict `PICKABLE` when at least 2 storeys have an IfcSpace (storeys without spaces, such as roof, foundation and footing, are ignored) and the model has at least 2 IfcStair (or, with none, at least 2 IfcStairFlight). Last line `PICK: <path>`: the smallest pickable file (in bytes) with at least 50 spaces, which keeps the sim and the 3D view fast; if none qualifies, the closest one plus a line saying what is missing. (Lead's ruling, Sat 02:15: the earlier rule, that every storey has a space, rejected every real model, because roof and foundation storeys never have rooms. With the team's files the pick is `Office_A_20110811.ifc`, and `Clinic_Architectural.ifc` is the second building.)
+- [ ] Run it on `data/raw`. If nothing is pickable, also try 1–2 models from the Open IFC Model Repository (spec §13: next candidate, else the traced building: then tell A, skip B2 and B3, and let B4, B5 and B8 carry the real building). Write `buildings/README.md` with the counts table, `PICK: data/raw/...`, the unit scale, the runner-up and the pick's credits text (NIBS files: free download, made by the US Army ERDC/CERL, no license found, credit them; VTT: CC BY-SA 4.0, credit VTT and share the derived plan under the same license). Post the pick and counts in team chat.
+- [ ] **Verify:** `python -m buildings.inspect_ifc data/raw` prints a table per model and ends with `PICK: <path>`; the README shows the same path.
+- [ ] **Commit** `feat(buildings): inspect_ifc and IFC pick`, then push `ws-b`.
 
 ### Task B2: IFC extraction I, storeys and room footprints (P0, target Sat 10 AM; aim for ~4 AM)
-
-BLOCKED: No IFC candidate meets B1's pickability criterion; the closest has an empty storey between occupied storeys. Use the traced-building fallback until a suitable IFC is available.
 
 **Files:** Create `buildings/ifc.py`; modify `buildings/smoke_test.py`.
 
@@ -75,8 +71,6 @@ IFC facts (verified on IfcOpenShell 0.9.0.post1 with a millimetre model): `scale
 
 ### Task B3: IFC extraction II, doors, stair rooms and groups (P0, target Sat 10 AM; aim for ~7 AM)
 
-BLOCKED: B2 is blocked pending a pickable IFC candidate.
-
 **Files:** Modify `buildings/ifc.py`, `buildings/smoke_test.py`.
 
 **Interfaces:** Consumes B2's `extract` and `footprint`. Produces the same `extract(...)`, now returning floors with `doors[]` and stair rooms, plus the pure helper `group_stairs(floors: list[dict]) -> None` (sets `group` on the `type == "stair"` rooms in place; testable without IFC).
@@ -89,8 +83,6 @@ BLOCKED: B2 is blocked pending a pickable IFC candidate.
 - [ ] **Commit** `feat(buildings): IFC doors and stairs`; push.
 
 ### Task B4: Normalizer hardening, geometry (P0, target Sat 10 AM; aim for ~8:30 AM)
-
-BLOCKED: The IFC extraction tasks B2 and B3 are blocked because no supplied candidate meets B1's selection criterion, so the required pick.plan.json cannot be generated or verified.
 
 **Files:** Modify `buildings/normalize.py`, `buildings/smoke_test.py`. Do not edit `contracts/` or `tools/`.
 
@@ -109,8 +101,6 @@ BLOCKED: The IFC extraction tasks B2 and B3 are blocked because no supplied cand
 
 ### Task B5: Overrides file and validation report (P0, target Sat 10 AM; aim for ~9:15 AM)
 
-BLOCKED: B4's hardened normalizer and hard_plan fixture are unavailable because B4 is blocked on the missing qualifying IFC input.
-
 **Files:** Create `buildings/fixups.py` (not `overrides.py`: `buildings/overrides/` is the data folder), `buildings/validate.py`; modify `buildings/normalize.py`, `buildings/smoke_test.py`, `buildings/README.md` (document the format).
 
 **Interfaces:** Consumes B4's `plan_to_building` and `hard_plan()`. Produces:
@@ -128,8 +118,6 @@ Override format (all keys optional): `{"doors": {"add": [{"floor": "F1", "id": "
 
 ### Task B6: Real building end to end with C (P0, Sat 10 AM sync)
 
-BLOCKED: No supplied IFC candidate satisfies B1, so B2–B5 cannot produce the extracted and validated building required for the end-to-end run.
-
 **Files:** Create `buildings/make_scenario.py`, `data/buildings/<id>.json` (the committed demo building), `data/buildings/<id>.scenario.json`, and `buildings/overrides/<id>.json` if fixes are needed; modify `buildings/smoke_test.py`, `buildings/README.md`.
 
 **Interfaces:** Consumes the pick (B1), `extract`, `plan_to_building` with overrides (B2–B5), C's `python -m sim.run BUILDING SCENARIO OUT` and A's `tools/plot_building.py` (both from main). Produces `python -m buildings.make_scenario BUILDING OUT [--total 120]` → scenario/v0 with `id` `<building id>-fire`, `buildingId`, `seed` 1, `occupants {total, mix {typical 0.85, older 0.1, visitor 0.05}}`, `sprinklers` false, `doors` {}, `alarmTime` 30, `maxTime` 400 and `fire {floor, room, x, y, type, start: 0}` in the largest room of the lowest floor that is not a corridor or stair (`x, y` = `representative_point()`; `type` kitchen for a kitchen, bedroom for a bedroom, else trash); and the committed `data/buildings/<id>.json`. (C writes its own `data/runs/real-scenario.json` for the real run; this scenario is for your checks.)
@@ -143,8 +131,7 @@ BLOCKED: No supplied IFC candidate satisfies B1, so B2–B5 cannot produce the e
 
 ### Task B7: Door-flow calibration (P1, target Sat 4 PM)
 
-BLOCKED: The required data/calibration.json artifact is outside workstream B's permitted buildings/ folder.
-
+> Lead's ruling, Sat 02:15: writing `data/calibration.json` is allowed. It is generated data, and the folder rule covers code.
 **Files:** Create `buildings/fixtures/one_door.plan.json`, `buildings/calibrate_doors.py`; generate `data/calibration.json`; modify `buildings/smoke_test.py`.
 
 **Interfaces:** Consumes `plan_to_building` and `sim.run.run(building, scenario) -> run/v0` (`events` hold `{t, type: "exit", idx, exit}`). Produces `python -m buildings.calibrate_doors [--agents 200]`, which prints a table and writes `data/calibration.json` in the `calibration/v0` shape that E's credibility chart reads (E12; persons/s): `{"version": "calibration/v0", "title": "Door flow: simulation against published values", "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 200 agents, seed 1", "points": [{"label": "1.0 m door", "width": 1.0, "simulated": <flow>, "references": [{"name": "IMO 1.3 persons/(m·s) × width", "value": 1.3 × width}, {"name": "Hydraulic 1.3 × (width − 0.3)", "value": 1.3 × (width − 0.3)}]}]}` for widths 0.8, 1.0, 1.2 and 1.6 m, with the same reference names in every point.
@@ -157,8 +144,6 @@ BLOCKED: The required data/calibration.json artifact is outside workstream B's p
 - [ ] **Commit** `feat(buildings): door-flow calibration`; push.
 
 ### Task B8: Student Union trace support and second building (P1, target Sat 10 PM)
-
-BLOCKED: B4's hardened normalizer and B5's validator are unavailable because the required qualifying IFC input is missing; A's tracer export is also not present.
 
 **Files:** Modify `buildings/normalize.py`, `buildings/validate.py`, `buildings/smoke_test.py`. Private, gitignored, never committed: `data/private/plans/umass-student-union.plan.json` (the plan/v0 behind A's tracer export; ask A for it), `data/private/overrides/umass-student-union.json`, `data/private/umass-student-union.json` (the building: A's API lists every `.json` at the top level of `data/private/` as a private building, so plans and overrides stay in the subfolders). Never put UMass-derived files in `buildings/overrides/` (that folder is public).
 
