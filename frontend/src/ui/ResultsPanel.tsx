@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useApp } from '../store/app'
+import type { ResultsTab } from '../store/app'
 import EvacCurve from '../dashboard/EvacCurve'
 import ExitBars from '../dashboard/ExitBars'
 import RunStats from '../dashboard/RunStats'
@@ -7,7 +8,7 @@ import ReportCard from '../dashboard/ReportCard'
 import Credibility from '../dashboard/Credibility'
 import WeakSpots from '../dashboard/WeakSpots'
 
-const TABS = [
+const TABS: { id: ResultsTab; label: string }[] = [
   { id: 'results', label: 'Results' },
   { id: 'risk', label: 'Risk map' },
   { id: 'report', label: 'Report' },
@@ -15,7 +16,8 @@ const TABS = [
 ]
 
 export default function ResultsPanel() {
-  const [tab, setTab] = useState<string>('results')
+  const tab = useApp((s) => s.resultsTab)
+  const setTab = useApp((s) => s.setResultsTab)
   return (
     <div className="results">
       <div className="tabs">

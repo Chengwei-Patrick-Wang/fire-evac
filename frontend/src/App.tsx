@@ -9,6 +9,8 @@ import Toolbar3D from './ui/Toolbar3D'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import Scrubber from './ui/Scrubber'
+import TourCaption from './tour/TourCaption'
+import { useTour, useTourKeys } from './tour/tour'
 import { makeDraft } from './model/scenarioDraft'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
@@ -126,8 +128,11 @@ export default function App() {
     await selectBuilding(id)
   }, [])
 
+  useTourKeys()
   useEffect(() => {
-    void startup()
+    void startup().then(() => {
+      if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
+    })
   }, [])
 
   return (
@@ -146,6 +151,7 @@ export default function App() {
           <>
             {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
             <Toolbar3D />
+            <TourCaption />
           </>
         )}
       </main>

@@ -81,3 +81,13 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .pane-caption { position: absolute; bottom: 8px; left: 8px; background: #111a2ecc; padding: 2px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; }
 .toolbar3d button.on { background: #2563eb; border-color: #3b82f6; }
 .toolbar3d button:disabled { opacity: 0.4; cursor: default; }
+
+.spots li.on { border-color: #3b82f6; background: #1e293b; }
+.topbar .demo { background: #2563eb; color: inherit; border: 1px solid #3b82f6; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.tourcap { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; pointer-events: none; max-width: min(720px, 92%); background: #0b1220ee; border: 1px solid #334155; border-radius: 6px; padding: 10px 16px; text-align: center; }
+.tourcap p { margin: 6px 0 0; font-size: 15px; }
+.tourcap .tourhead { display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 18px; }
+.tourcap button { pointer-events: auto; background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; cursor: pointer; padding: 0 8px; font-size: 16px; }
+.tourcap button:disabled { opacity: 0.4; cursor: default; }
+.tourbar { height: 3px; background: #3b82f6; margin-top: 8px; width: 0; animation: tourfill linear forwards; }
+@keyframes tourfill { to { width: 100%; } }

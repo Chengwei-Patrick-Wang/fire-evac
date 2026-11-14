@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { useApp } from '../store/app'
+import { useTour } from '../tour/tour'
 
 export default function TopBar({
   onSelectBuilding,
@@ -9,6 +10,7 @@ export default function TopBar({
   onOpenFile: (f: File) => void
 }) {
   const { buildings, building, runOrder, runs, activeRunKey, view, setView, switchRun, notice, mode, loading } = useApp()
+  const touring = useTour((s) => s.scene !== null)
   const fileRef = useRef<HTMLInputElement>(null)
   return (
     <header className="topbar">
@@ -35,6 +37,17 @@ export default function TopBar({
           </button>
         ))}
       </nav>
+      <button
+        className="demo"
+        onClick={(e) => {
+          const t = useTour.getState()
+          if (t.scene !== null) t.stop()
+          else t.start()
+          e.currentTarget.blur()
+        }}
+      >
+        {touring ? 'Stop demo' : 'Demo'}
+      </button>
       <label className="file">
         Open file
         <input

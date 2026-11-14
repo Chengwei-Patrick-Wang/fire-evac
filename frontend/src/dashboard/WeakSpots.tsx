@@ -10,6 +10,7 @@ export default function WeakSpots() {
   const risk = useApp((s) => s.layers.risk)
   const crowding = useApp((s) => s.crowding)
   const visible = useApp((s) => s.visibleFloors)
+  const activeSpot = useApp((s) => s.activeSpot)
   const running = useApp((s) => s.batchRunning)
   const err = useApp((s) => s.batchError)
   const runBatch = useApp((s) => s.runBatch)
@@ -22,7 +23,7 @@ export default function WeakSpots() {
       console.warn(`weak spot ${id} not found in ${building.id}`)
       return set({ notice: `Unknown spot ${id}` })
     }
-    set({ notice: null })
+    set({ notice: null, activeSpot: id })
     useApp.getState().flyTo(p.floorId, p.pos)
   }
 
@@ -68,7 +69,7 @@ export default function WeakSpots() {
           {batch.top.length === 0 && <p className="dim">No weak spots listed.</p>}
           <ol className="spots">
             {batch.top.map((t, i) => (
-              <li key={t.kind + t.id + i} onClick={() => go(t.id, t.floor)}>
+              <li key={t.kind + t.id + i} className={activeSpot === t.id ? 'on' : ''} onClick={() => go(t.id, t.floor)}>
                 <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{t.id}</b> · {t.floor} · score {t.score.toFixed(1)}
                 <div className="dim">{t.why}</div>
               </li>

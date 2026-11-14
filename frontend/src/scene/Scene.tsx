@@ -1,5 +1,6 @@
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Stats } from '@react-three/drei'
+import { useApp } from '../store/app'
 import Building from './Building'
 import CameraRig from './CameraRig'
 import Agents from '../replay/Agents'
@@ -12,13 +13,14 @@ import RiskOverlay from './RiskOverlay'
 import { CameraSyncPane } from './cameraSync'
 
 export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: string }) {
+  const autoRotate = useApp((s) => s.autoRotate)
   return (
-    <div style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%' }}>
+    <div style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%', isolation: 'isolate' }}>
       <Canvas dpr={[1, 2]} camera={{ fov: 50, near: 0.1, far: 1000 }}>
         <color attach="background" args={['#0b1220']} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[20, 40, 20]} intensity={0.8} />
-        <OrbitControls makeDefault />
+        <OrbitControls makeDefault autoRotate={autoRotate} autoRotateSpeed={0.5} />
         <CameraRig />
         {paneId && <CameraSyncPane paneId={paneId} />}
         <Building runKey={runKey} />

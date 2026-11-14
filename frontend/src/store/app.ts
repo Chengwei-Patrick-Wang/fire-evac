@@ -19,6 +19,7 @@ export interface LoadedRun {
 }
 
 export type View = 'replay' | 'tracer'
+export type ResultsTab = 'results' | 'risk' | 'report' | 'cred'
 
 export interface Layers {
   rooms: boolean
@@ -67,6 +68,11 @@ interface AppState {
   focus: Focus | null
   batchRunning: string | null
   batchError: string | null
+  resultsTab: ResultsTab
+  setResultsTab: (t: ResultsTab) => void
+  activeSpot: string | null
+  fitView: number
+  autoRotate: boolean
   flyTo: (floorId: string, pos: Vec2) => void
   runBatch: () => Promise<void>
   setDraft: (d: Scenario | null) => void
@@ -119,6 +125,11 @@ export const useApp = create<AppState>((set) => ({
   focus: null,
   batchRunning: null,
   batchError: null,
+  resultsTab: 'results',
+  setResultsTab: (resultsTab) => set({ resultsTab }),
+  activeSpot: null,
+  fitView: 0,
+  autoRotate: false,
   flyTo: (floorId, pos) => set((s) => ({ visibleFloors: [floorId], focus: { floorId, pos, nonce: (s.focus?.nonce ?? 0) + 1 } })),
   runBatch: async () => {
     const st = useApp.getState()
@@ -236,7 +247,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, selectedRoom: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
