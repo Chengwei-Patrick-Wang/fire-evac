@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { loadCalibration, type Calibration } from '../data/loader'
 import { useApp } from '../store/app'
+import { readSeedRange, span } from '../model/ranges'
 
 const COLORS = ['#38bdf8', '#f59e0b', '#a78bfa', '#34d399']
 
@@ -10,6 +11,7 @@ export function Limits() {
   const lr = useApp((s) => (s.activeRunKey ? s.runs[s.activeRunKey] : null))
   const sc = lr?.scenario
   const doors = sc?.doors ?? lr?.doors ?? {}
+  const t90r = lr ? readSeedRange(lr.run)?.t90 : undefined
   const doorText = Object.entries(doors).map(([k, v]) => `${k}: ${v}`).join(', ')
   const mix = sc?.occupants.mix
     ? Object.entries(sc.occupants.mix).map(([k, v]) => `${k} ${Math.round((v ?? 0) * 100)}%`).join(', ')
@@ -20,7 +22,12 @@ export function Limits() {
       <ul className="dim">
         <li>Not a compliance tool.</li>
         <li>The fire and smoke model is illustrative (a smoke front, not CFD).</li>
-        <li>One seed is one possible night.</li>
+        <li>
+          One seed is one possible night
+          {t90r && t90r.min != null && t90r.max != null && t90r.median != null && lr
+            ? `: over ${readSeedRange(lr.run)?.seeds.length} seeds, t90 ranged ${span({ min: t90r.min, max: t90r.max })} (median ${t90r.median.toFixed(0)} s)`
+            : ''}.
+        </li>
         {lr && (
           <li>
             This run: {sc ? `${sc.occupants.total} occupants` : `${lr.run.agents.length} agents`}
