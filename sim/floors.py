@@ -1,4 +1,4 @@
-"""Downward stair routes and seeded, width-limited FIFO admission."""
+"""Downward stair routes and seeded, width-limited admission beside assistance waits."""
 from __future__ import annotations
 
 from bisect import bisect_right
@@ -107,8 +107,15 @@ class StairNet:
             raise ValueError(f"floor {floor_id} stair {group}: cannot sample arrival polygon")
         admissions = self._admissions.setdefault((floor_id, group), [])
         ready = t if hold_until is None else max(t, hold_until)
-        enter = max(ready, admissions[-1] + 1 / (STAIR_FLOW * link["width"])) if admissions else ready
-        admissions.append(enter)
+        gap = 1 / (STAIR_FLOW * link["width"])
+        slot = bisect_right(admissions, ready)
+        enter = max(ready, admissions[slot - 1] + gap) if slot else ready
+        # Reserve the earliest free slot; a future assistance reservation must
+        # not hold people who can use the stair now.
+        while slot < len(admissions) and admissions[slot] - enter < gap:
+            enter = admissions[slot] + gap
+            slot += 1
+        admissions.insert(slot, enter)
         entry = {"enter": enter, "arrive": enter + link["length"] / speed,
                  "to": link["to"], "pos": pos}
         if hold_until is not None:

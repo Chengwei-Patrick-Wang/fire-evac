@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from sim.run import run, StuckWatch, floor_walkable, smoke_speed, fire_keepout, FIRE_KEEPOUT_M, place_occupants
+from sim.run import profile_metrics, _t_share, run, StuckWatch, floor_walkable, smoke_speed, fire_keepout, FIRE_KEEPOUT_M, place_occupants
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
 from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE, mobility_options
@@ -354,6 +354,61 @@ def check_mobility(building, scenario, total=160, delays=(180, 60)):
         print(f"mobility OK: {len(waits)} waiters, longest wait {max(e['until'] - e['t'] for e in waits):.0f} s")
 
 
+def check_assistance(building, scenario, total=40):
+    net = StairNet(building)
+    rng = np.random.default_rng(1)
+    held = net.enter(0, 0, "F2", "SA", rng, hold_until=100)
+    assert held["enter"] >= 100
+    entries = [net.enter(i, i, "F2", "SA", rng) for i in range(1, 4)]
+    assert [entry["enter"] for entry in entries] == [1, 2, 3]
+    assert net.backlog("F2", "SA", 3) == 1
+    # Equal readiness and a slot too close to a future reservation preserve spacing.
+    extra = net.enter(4, 100, "F2", "SA", rng)
+    before = net.enter(5, 99.5, "F2", "SA", rng)
+    assert before["enter"] > extra["enter"] > held["enter"]
+    assert net.backlog("F2", "SA", before["enter"]) == 0
+
+    agents = [{"idx": i, "profile": profile} for i, profile in
+              enumerate(("typical", "typical", "wheelchair", "wheelchair", "visitor"))]
+    events = [{"type": "exit", "idx": 1, "t": 20},
+              {"type": "exit", "idx": 0, "t": 10},
+              {"type": "exit", "idx": 2, "t": 50},
+              {"type": "trapped", "idx": 3, "t": 30},
+              {"type": "wait", "idx": 2, "t": 5, "until": 35},
+              {"type": "wait", "idx": 3, "t": 10, "until": 70}]
+    profiles, assist = profile_metrics(agents, events)
+    assert profiles == {
+        "typical": dict(agents=2, evacuated=2, trapped=0, t50=10, t90=20, t100=20),
+        "wheelchair": dict(agents=2, evacuated=1, trapped=1, t50=50, t90=None, t100=None),
+        "visitor": dict(agents=1, evacuated=0, trapped=0, t50=None, t90=None, t100=None)}
+    assert assist == dict(waiting=2, meanWait=45, maxWait=60, personSeconds=90)
+    assert profile_metrics([], []) == ({}, dict(waiting=0, meanWait=None, maxWait=None, personSeconds=0))
+
+    mix = ({"typical": 0.95, "wheelchair": 0.05} if total == 160 else
+           {"typical": 0.8, "older": 0.05, "cane": 0.03, "walker": 0.02, "wheelchair": 0.1})
+    times = []
+    for delay in (180, 0):
+        configured = dict(scenario, seed=1, maxTime=900, assistDelay=delay,
+                          occupants={"total": total, "mix": mix})
+        result = run(building, configured, NoFire(building, configured))
+        upper_walkers = {a["idx"] for a in result["agents"]
+                         if a["floor"] == "F2" and a["profile"] != "wheelchair"}
+        exits = sorted(e["t"] for e in result["events"]
+                       if e["type"] == "exit" and e["idx"] in upper_walkers)
+        times.append(_t_share(exits, len(upper_walkers), 0.9))
+        metrics = result["metrics"]
+        waits = [e for e in result["events"] if e["type"] == "wait"]
+        assert waits and metrics["assist"]["waiting"] == len(waits)
+        assert abs(metrics["assist"]["maxWait"] - delay) < 1e-9
+        assert abs(metrics["assist"]["personSeconds"] - delay * len(waits)) < 1e-9
+        assert sum(p["agents"] for p in metrics["profiles"].values()) == metrics["agents"]
+        assert sum(p["evacuated"] for p in metrics["profiles"].values()) == total
+    assert all(t is not None for t in times)
+    assert abs(times[0] - times[1]) <= 20, times
+    print(f"assistance ({total} agents): F2 non-wheelchair t90 "
+          f"{times[0]:.2f} s (180 s wait), {times[1]:.2f} s (0 s wait)")
+
+
 def fast_scenario(scenario, total=40) -> dict:
     fast = deepcopy(scenario)
     fast["occupants"] = {"total": total, "mix": fast["occupants"]["mix"]}
@@ -674,6 +729,7 @@ def main(argv=None) -> int:
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
+    timed("fast assistance", check_assistance, building, fast)
     timed("fast LLM", check_llm, building, fast, core)
     timed("recording", check_recording, building, fast)
 
@@ -684,6 +740,7 @@ def main(argv=None) -> int:
         timed("full fire", check_fire, building, scenario, core)
         timed("300 agents", check_300, building, scenario)
         timed("full mobility", check_mobility, building, scenario)
+        timed("full assistance", check_assistance, building, scenario, total=160)
         timed("full LLM", check_llm, building, scenario, core)
 
     print(f"suite {'slow' if args.slow else 'fast'}: {time.perf_counter() - started:.1f} s")

@@ -1,4 +1,4 @@
-"""Multi-floor evacuation with width-limited FIFO stair transfers (spec §7.2).
+"""Multi-floor evacuation with width-limited stair transfers (spec §7.2).
 
 C owns this module (stair transfer, brain, reroutes, blocked doors).
 
@@ -8,7 +8,8 @@ Behavior:
 - Occupants are split over rooms (not corridor/stair/restroom/storage) by area, or
   scenario.occupants.perRoom; profile, v0 and startDelay come from sim.profiles.
 - One CollisionFreeSpeedModel sim per floor. Stages: every exit on the floor, plus
-  connected downward stairs. Arrivals wait for a clear spot before re-entry.
+  connected downward stairs. Assistance waits leave earlier admission slots free;
+  arrivals re-enter in arrival-time order once a clear spot is available.
 - Each agent chooses a route using travel time and queues, and stands still
   (desired_speed 0) until alarmTime + startDelay, or an earlier cue countdown.
 - Fire in the same room, or visibility below 10 m, starts a separate 0–10 s
@@ -22,7 +23,8 @@ Behavior:
 """
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import Counter
+from heapq import heappush, heappop
 import argparse
 import json
 import math
@@ -310,6 +312,38 @@ def _t_share(exit_times: list[float], n_agents: int, share: float):
     return exit_times[need - 1] if len(exit_times) >= need else None
 
 
+def profile_metrics(agents, events):
+    """Summarize outcomes by profile and assistance waits from event durations."""
+    by_idx = {a["idx"]: a["profile"] for a in agents}
+    counts = Counter(by_idx.values())
+    exits = {profile: [] for profile in counts}
+    trapped = Counter()
+    waits = []
+    for event in events:
+        kind = event["type"]
+        if kind == "exit":
+            exits[by_idx[event["idx"]]].append(event["t"])
+        elif kind == "trapped":
+            trapped[by_idx[event["idx"]]] += 1
+        elif kind == "wait":
+            waits.append(event["until"] - event["t"])
+    profiles = {}
+    for profile, count in counts.items():
+        times = sorted(exits[profile])
+        profiles[profile] = {
+            "agents": count, "evacuated": len(times), "trapped": trapped[profile],
+            "t50": _t_share(times, count, 0.5),
+            "t90": _t_share(times, count, 0.9),
+            "t100": _t_share(times, count, 1.0),
+        }
+    person_seconds = sum(waits)
+    assist = {"waiting": len(waits),
+              "meanWait": person_seconds / len(waits) if waits else None,
+              "maxWait": max(waits) if waits else None,
+              "personSeconds": person_seconds}
+    return profiles, assist
+
+
 def smoke_speed(v0, S):
     return min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - S)))
 
@@ -508,7 +542,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         entry["arrival"] = link["arrival"]
         entry["group"] = st["group"]
         transit[i] = entry
-        arrivals.setdefault((entry["to"], st["group"]), deque()).append(i)
+        heappush(arrivals.setdefault((entry["to"], st["group"]), []), (entry["arrive"], i))
         watch.anchors.pop(i, None)
         status[i] = 2 if until is not None and t < until else 3
         where[i] = None
@@ -541,7 +575,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         for (fid, group), queue in list(arrivals.items()):
             fs = by_id[fid]
             while queue:
-                i = queue[0]
+                _, i = queue[0]
                 entry = transit[i]
                 if entry["arrive"] > t + 1e-9:
                     break
@@ -552,7 +586,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 if st is None:
                     break
                 if st["kind"] == "stair" and st["group"] == group:
-                    queue.popleft()
+                    heappop(queue)
                     enter_stair(i, t, fs, st)
                     continue
                 region = entry["arrival"].buffer(-0.3)
@@ -570,7 +604,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     journey_id=st["journey"], stage_id=st["stage"]))
                 fs.jid2idx[jid] = i
                 where[i], target[i], status[i] = (fs, jid), st, 1
-                queue.popleft()
+                heappop(queue)
                 del transit[i]
 
         if k % FIRE_EVERY == 0:
@@ -673,6 +707,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "t100": _t_share(exit_times, n, 1.0),
         "exitCounts": exit_counts,
     }
+
+    metrics["profiles"], metrics["assist"] = profile_metrics(agents, events)
 
     fire_cfg = scenario.get("fire") or {}
     return {
