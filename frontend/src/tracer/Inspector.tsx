@@ -1,13 +1,14 @@
 // The tracer's right-hand panel: the building (name, id, credits, Public), floor tabs (add a floor
-// with its image, upload the image again after a reload), the selected room or door, the live
-// checks, and Export, Download plan.json, Save trace and Load trace.
+// with its image, upload the image again after a reload), the AI first pass (its status, Accept
+// all and Discard AI draft), the selected room or door, the live checks, and Export, Download
+// plan.json, Save trace and Load trace.
 import { useMemo, useState } from "react";
 import { floorScale } from "./geometry";
 import { ROOM_TYPES } from "./plan";
 import type { DoorState, RoomType, TraceDoor, TraceFloor, TraceRoom } from "./plan";
 import { doorKinds, doorWidth, exportIds, readTrace, resizeDoor, roomArea } from "./edit";
 import { downloadJson, readImage } from "./files";
-import { EMPTY_TRACE, traceOf, useTrace } from "./store";
+import { EMPTY_TRACE, aiOutcome, traceOf, useTrace } from "./store";
 import type { Selection } from "./store";
 
 export type ExportState =
@@ -15,6 +16,14 @@ export type ExportState =
   | { kind: "busy" }
   | { kind: "done"; id: string; warnings: string[] }
   | { kind: "failed"; message: string };
+
+/** The AI first pass as the page runs it (TracerPage). */
+export interface AiControls {
+  why: string; // why it cannot run on the current floor; "" when it can
+  seconds: number; // how long the running pass has waited
+  onRun: () => void;
+  onCancel: () => void;
+}
 
 const DOOR_STATES: DoorState[] = ["open", "closed", "propped"];
 const isError = (m: string) => m.startsWith("error:");
@@ -194,6 +203,84 @@ function FloorPanel({ floor }: { floor: TraceFloor }) {
   );
 }
 
+function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
+  const job = useTrace((s) => s.aiJob);
+  const { acceptAi, discardAi, setAiJob } = useTrace.getState();
+  const drafts = floor.rooms.filter((r) => r.ai).length;
+  // the outcome line has done its job; a pass still running (on another floor) keeps its state
+  const settle = () => {
+    if (useTrace.getState().aiJob.kind !== "busy") setAiJob({ kind: "idle" });
+  };
+  const busy = job.kind === "busy";
+  const here = job.kind !== "idle" && job.floorId === floor.id;
+  // once every AI room is reviewed (or the draft is undone), the "N AI rooms" line has done its job
+  const stale = job.kind === "done" && job.added > 0 && drafts === 0;
+  const outcome = here && !stale ? aiOutcome(job) : null;
+  return (
+    <div className="tr-card">
+      <div className="tr-row">
+        <strong className="tr-small">AI first pass</strong>
+        {busy && here ? (
+          <button className="tr-right" onClick={ai.onCancel}>
+            Cancel
+          </button>
+        ) : (
+          <button
+            className="tr-right"
+            disabled={!!ai.why || busy}
+            title={ai.why || "Send this floor's image to Gemini; its rooms come back as a dashed draft (rooms only: you add the doors)"}
+            onClick={ai.onRun}
+          >
+            {drafts > 0 ? "Propose again" : "Propose rooms"}
+          </button>
+        )}
+      </div>
+      {busy && here ? (
+        <p className="tr-small">
+          <span className="tr-spin" aria-hidden="true" />
+          {` Waiting for Gemini: ${ai.seconds} s (usually 5–20 s, at most about 2 min)`}
+        </p>
+      ) : outcome ? (
+        <>
+          <p className={outcome.tone === "err" ? "tr-err" : outcome.tone === "warn" ? "tr-warn tr-small" : "tr-small"}>{outcome.text}</p>
+          {outcome.detail && <p className="tr-note">{outcome.detail}</p>}
+        </>
+      ) : (
+        <p className="tr-note">
+          {ai.why
+            ? `${ai.why}.`
+            : "Gemini proposes this floor's rooms from its image: a dashed draft until you edit or accept each room. Doors and stair groups stay yours to add. Public plans only."}
+        </p>
+      )}
+      {drafts > 0 && (
+        <div className="tr-row">
+          <span className="tr-warn tr-small">{`${drafts} AI room${drafts > 1 ? "s" : ""} to review`}</span>
+          <button
+            className="tr-right"
+            title="Keep every AI room on this floor as traced"
+            onClick={() => {
+              acceptAi(floor.id);
+              settle();
+            }}
+          >
+            Accept all
+          </button>
+          <button
+            className="tr-danger"
+            title="Remove this floor's unreviewed AI rooms (Undo brings them back)"
+            onClick={() => {
+              discardAi(floor.id);
+              settle();
+            }}
+          >
+            Discard AI draft
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RoomForm({ floor, room, exportId, groups, sel }: { floor: TraceFloor; room: TraceRoom; exportId: string; groups: string[]; sel: Selection }) {
   const { updateRoom, remove } = useTrace.getState();
   return (
@@ -298,12 +385,13 @@ function DoorForm({ floor, door, exportId, sel }: { floor: TraceFloor; door: Tra
 export default function Inspector(props: {
   messages: string[];
   exportState: ExportState;
+  ai: AiControls;
   onExport: () => void;
   onDownloadPlan: () => void;
   onOpen: (id: string) => void;
   onDismiss: () => void;
 }) {
-  const { messages, exportState, onExport, onDownloadPlan, onOpen, onDismiss } = props;
+  const { messages, exportState, ai, onExport, onDownloadPlan, onOpen, onDismiss } = props;
   const id = useTrace((s) => s.id);
   const name = useTrace((s) => s.name);
   const credits = useTrace((s) => s.credits);
@@ -405,6 +493,7 @@ export default function Inspector(props: {
         </div>
         {adding && <AddFloor onDone={() => setAdding(false)} />}
         {floor && <FloorPanel floor={floor} />}
+        {floor && <AiPanel floor={floor} ai={ai} />}
       </section>
 
       <section>
