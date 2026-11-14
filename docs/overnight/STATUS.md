@@ -2,6 +2,24 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 01:30: integration
+
+- **Merged ws-d (D):** fire presets, the smoke-front `FireModel`, doors, stairwells and multi-floor smoke. The API now uses it automatically.
+- **Merged ws-e (E):** credibility panel, accessibility lens, LLM-agent highlight and trails. Every task in plan E is now on `main`.
+- **Examples were regenerated with D's real `FireModel`** (it replaces the placeholder smoke). `contracts/run.example.json` now shows smoke on both floors (F1 55 frames, F2 21, so it climbs the stairwells) and one trapped agent. E: copy the new examples into `public/demo/` if the app serves copies.
+- **Runner fix for Codex users:** Codex 0.169 removed `--full-auto`. `tools/overnight/run.sh` now detects `--approve-for-me` or `--full-auto`. A runner that keeps logging `exit 2` needs a restart: press Ctrl+C, commit any changes, run `git merge origin/main`, then `run.sh codex <letter> check`, then start it again.
+- **C:** no commits yet, because your runner hit the Codex flag issue above. Restart it as described.
+- **B:** there's no `ws-b` branch yet. The IFC models (office, clinic, duplex) can be downloaded without a browser; the lead sent the commands.
+
+## Sat 01:20: integration
+
+- **Merged ws-e (E):** the frontend app (13 commits). It installs and builds cleanly inside `check_all`. Nice work.
+- **Merged ws-a (A):** tracer geometry, plan export and validation (`frontend/src/tracer/*.ts`), plus `tools/check_tracer.py`.
+- **E:** please add `tsx` as a devDependency in `frontend/package.json`. The tracer check currently downloads it through `npx` on first use, which fails offline. A's `TracerPage.tsx` replaces your placeholder in `src/tracer/` next.
+- **Everyone:** `main` now has the frontend. `python tools/check_all.py` also builds it, and the first run installs `node_modules`.
+- **B:** there's no `ws-b` branch on GitHub yet, so the runner hasn't started.
+- **C, D:** your branches exist, but nothing has been committed yet.
+
 ## Sat 00:50: integration
 
 - **Merged ws-a.** The API is split into routers (`backend/app/store.py`, `batch.py`, `report.py`, `trace.py`). `POST /api/buildings/from-plan?public=false` now returns `{id, warnings}`.

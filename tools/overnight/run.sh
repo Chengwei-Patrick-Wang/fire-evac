@@ -35,6 +35,14 @@ case "$TOOL" in claude|codex) ;; *) echo "tool must be claude or codex"; exit 1 
 command -v "$TOOL" >/dev/null || { echo "'$TOOL' is not on PATH"; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "Commit or stash your changes first."; exit 1; }
 
+# Codex renamed its unattended option: newer versions have --approve-for-me, older ones --full-auto.
+CODEX_AUTO=""
+if [ "$TOOL" = codex ]; then
+  if codex exec --help 2>/dev/null | grep -q -- '--approve-for-me'; then CODEX_AUTO="--approve-for-me"
+  else CODEX_AUTO="--full-auto"; fi
+  echo "codex $(codex --version 2>/dev/null | tail -1); unattended option: $CODEX_AUTO"
+fi
+
 # Every python call the agent makes uses the repo venv.
 if [ -d .venv/bin ]; then export PATH="$PWD/.venv/bin:$PATH"
 elif [ -d .venv/Scripts ]; then export PATH="$PWD/.venv/Scripts:$PATH"; fi
@@ -70,7 +78,7 @@ run_agent() {
         "Bash(ls:*)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(jq:*)" "Bash(mkdir:*)" "Bash(curl:*)" \
       --disallowedTools "Bash(git push:*)" "Bash(git pull:*)" "Bash(git reset:*)" "Bash(git checkout:*)" "Bash(rm -rf:*)"
   else
-    codex exec --full-auto -c sandbox_workspace_write.network_access=true "$1"
+    codex exec $CODEX_AUTO -c sandbox_workspace_write.network_access=true "$1" </dev/null
   fi
 }
 
@@ -105,7 +113,7 @@ if [ "$CHECK" = 1 ]; then
   if [ -n "$PLAN" ]; then pass "plan: $PLAN"; else echo "  WAIT  plan for $BRANCH is not on main yet (the real run waits for it)"; fi
   out="debug/overnight-$WS-check.txt"
   if [ "$TOOL" = claude ]; then claude -p "Reply with the single word READY." --model sonnet --max-turns 1 >"$out" 2>&1 &
-  else codex exec "Reply with the single word READY." >"$out" 2>&1 & fi
+  else codex exec $CODEX_AUTO -c sandbox_workspace_write.network_access=true "Reply with the single word READY." </dev/null >"$out" 2>&1 & fi
   pid=$!; ( sleep 180; kill "$pid" 2>/dev/null ) & watcher=$!
   wait "$pid"; kill "$watcher" 2>/dev/null
   if grep -qi ready "$out"; then pass "$TOOL answers in headless mode (logged in, no prompts)"
