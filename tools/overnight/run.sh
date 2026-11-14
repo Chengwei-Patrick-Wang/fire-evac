@@ -63,7 +63,7 @@ sync() {
 
 run_agent() {
   if [ "$TOOL" = claude ]; then
-    claude -p "$1" --model sonnet --permission-mode acceptEdits --max-turns 200 \
+    CLAUDE_CODE_USE_POWERSHELL_TOOL=0 claude -p "$1" --model sonnet --permission-mode auto --max-turns 200 \
       --allowedTools "Read" "Edit" "Write" "Glob" "Grep" "TodoWrite" \
         "Bash(python:*)" "Bash(pip:*)" "Bash(npm:*)" "Bash(npx:*)" "Bash(node:*)" \
         "Bash(git add:*)" "Bash(git commit:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)" \
