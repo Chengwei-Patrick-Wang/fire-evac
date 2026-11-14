@@ -1,5 +1,22 @@
 # Overnight status
 
+## Sat 13:30: demo-review fix tasks added (C, D, E): restart your runners
+
+New tasks are on `main`, under "Added Sat 13:25 (demo review fixes)" in each plan. **P0s first.** Your runner picks them up after `tools/overnight/run.sh <claude|codex> <letter>` (it merges main each round).
+
+- **C (Althan):**
+  - **C21 (P0)** fire keep-out fallback. In R227 the 1.0 m disc cuts off a dead end, but 0.75 m works. The same bug hits 24 office rooms and 102 clinic rooms.
+  - **C22 (P0)** corridor speed against density, measured in steady walking, so the credibility chart compares like with like.
+- **D (Aidan):**
+  - **D22 (P0)** trade-off wording. The "+1.3 trapped" is real model behavior, not an artifact: all 47 extra trapped people are in the three lobby fires, and E1 is the lobby's own exit. A fix that traps more people must say so, and say where.
+  - **D23 (P0)** readable names for unnamed interior doors.
+  - **D24 (P1)** tiny rooms: R203b is 0.21 m wide, so no 0.5 m smoke-grid node lies inside it.
+- **E (Donovan):**
+  - **E32 (P0)** what-if note contrast (axe).
+  - **E33 (P1)** static mode: the Sprinklers box says it needs the backend.
+  - **E34 (P1)** fix lines show trade-offs, and no list or dropdown shows a raw door id.
+- **A (lead):** after D22 and D23 land, rerun the precompute so the demo files pick up the new wording and labels.
+
 ## Sat 13:20: report labels and D19 finished
 
 **Merged:**
