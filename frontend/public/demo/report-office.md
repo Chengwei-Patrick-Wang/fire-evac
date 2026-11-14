@@ -1,6 +1,6 @@
 ### Report card: NIBS Office
 
-**Smoke first: 203 person-seconds in smoke per fire on average across 294 simulated fires; the worst spot is fires starting in OPEN OFFICE (R203c) on F2.**
+**Stair doors propped open: smoke exposure +58% (+487 person-seconds in smoke per fire), while 90% out 0.5 s sooner on average (slower in 2 of 24 fires).**
 
 294 fires simulated (98 rooms × 3 seeds). Smoke: 203 person-seconds in smoke per fire on average; 0.3 people per fire at an illustrative smoke dose of 1 (in 18 of 294 fires). 90% out: median 137 s; not reached within 400 s in 3 of 294 fires. People trapped in 40 of 294 fires.
 
@@ -17,6 +17,12 @@
    - **Fix:** Spread the load: make the other exits as easy to find and reach as this one (signs, lighting, clear routes), or widen this exit.
 
 Queues mark where the building runs short of capacity, not how people behave.
+
+#### What-ifs
+
+- **Stair doors propped open:** smoke exposure +58% (+487 person-seconds in smoke per fire); +0.3 people per fire at an illustrative smoke dose of 1; 90% out 0.5 s sooner on average (slower in 2 of 24 fires); trapped -0.4 per fire.
+- **Exit Stair S1 (west) blocked:** smoke exposure +75% (+631 person-seconds in smoke per fire); +3.2 people per fire at an illustrative smoke dose of 1; 90% out 11.5 s later on average (slower in 21 of 24 fires); trapped -0.4 per fire.
+- **Sprinklers on:** 2.2 fewer people trapped per fire; 90% out 6.7 s sooner on average (slower in 2 of 24 fires); smoke time is not compared: people who become trapped drop out of the frames.
 
 ---
 
