@@ -558,3 +558,24 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - `run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from `apply_overrides(office.scenario, 250, "kitchen")`, has 3 ok runs. Paste their t90 and trapped into a README section "Tiny rooms (D24)" that replaces D16's "Office limitation" paragraph.
 - [x] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
   - Handoff for A: R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs.
+
+## Added Sat (Ember UI and fire spread)
+
+> The task text, interfaces and measured numbers live in `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`. Each task is tracked here with the other D tasks.
+
+### Task D25 (P0 · Sat 6 PM): Fire spreads room to room at an illustrative material speed
+
+**Files:** Create `fire/spread.py`. Modify `fire/model.py` (`FireModel.__init__`, `hrr`, `_update`, new `burning_rooms`, `ignition_times`, attribute `material`), `fire/stub.py` (`NoFire.burning_rooms`, `NoFire.ignition_times`), `fire/checks.py` (new `check_spread`, `check_spread_slow`; `check_model` and `check_tuning` build their models with `spread=False`), `fire/README.md`, this file.
+
+- [x] **Step 1: Presets.** `MATERIALS`, `DEFAULT_MATERIAL`, `WALL_GAP_M`, `WALL_MIN_M` and `material_name` in `fire/spread.py`; a bad name raises `Unknown fire material 'steel'; valid names: concrete, drywall, wood`. Values as pinned.
+- [x] **Step 2: Room graph.** `room_links(building)`, cached by object identity. Matches the measured counts: example 24 door (2 stair) and 22 wall-only; office 91 and 176 in 0.1 s; clinic 222 and 347 in 0.27 s.
+- [x] **Step 3: Schedule.** `origin_room`, `ignition_schedule` (Dijkstra, heap key `(time, floor index, room index)`, `maxTime` horizon, sprinklers keep the origin), `room_hrr_kw`, and the CLI `python -m fire.spread BUILDING SCENARIO [--material NAME]`.
+- [x] **Step 4: Model.** `FireModel(building, scenario, spread=True)`, `FireModel.material`, the summed `hrr`, the arrival table, `_update` (density from the total, flame footprint from the ignition room's own curve, the doors of burning rooms), `burning_rooms(t)` and `ignition_times()`.
+- [x] **Step 5: Stub.** `NoFire.burning_rooms` and `NoFire.ignition_times`; no `material` attribute.
+- [x] **Step 6: Checks.** Fast `check_spread` and slow `check_spread_slow`; `check_model` and `check_tuning` build with `spread=False`. One slow check moved: `check_tradeoffs_slow` pins `fire.material` to `concrete` (it tests the trade-off wording; with drywall the R105 fire traps one more person with E1 blocked, so the lobby's 17 exceed the net 16 and `trapped_note` is blank). Every assertion stays; all other checks pass unchanged.
+- [x] **Step 7: Verify.** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`; `python -m fire.spread` on the example ends `12 rooms by 400 s (drywall)` and, with `--material wood`, `15 rooms by 400 s (wood)`; `python -m sim.smoke_test` (fast) ends `OK`. README section "Fire spread (D25)" with the presets, the rules, the measured tables and the handoffs.
+- [x] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): fire spreads room to room at an illustrative material speed"` (no attribution lines).
+  - Handoff for C27: `blocked_doors()` already holds the doors of burning rooms; the first `ignition_times()` entry is the ignition room; `NoFire` has both methods, `ToyFire` neither.
+  - Handoff for A11: `ignition_schedule(building, scenario)` is pure; `material_name` validates; every demo number changes, so rerun without `--resume`.
+  - Handoff for E: a room is fully involved `flashover` seconds after it ignites.
+
