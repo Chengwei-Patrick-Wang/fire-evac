@@ -38,7 +38,7 @@ button:focus-visible, .file:focus-within, select:focus-visible, input:focus-visi
 .right { grid-area: right; padding: 12px; overflow: auto; border-left: 1px solid var(--line); }
 .center { grid-area: center; position: relative; overflow: hidden; }
 .bottom { grid-area: bottom; padding: 8px 12px; background: var(--panel); border-top: 1px solid var(--line); }
-.credits { grid-area: credits; padding: 2px 12px; font-size: var(--fs-xs); color: var(--muted); }
+.credits { grid-area: credits; padding: 2px 12px; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pad { padding: 24px; }
 .dim { color: var(--muted); }
 .tabs { display: flex; gap: 4px; }

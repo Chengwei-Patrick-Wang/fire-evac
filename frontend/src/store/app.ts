@@ -8,6 +8,11 @@ import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode,
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
 import { findPrecomputedVariant, makeVariant } from '../model/whatif'
 
+/** Room labels start on only for small buildings (up to 40 rooms over all floors). */
+export function labelsFor(building: Building): boolean {
+  return building.floors.reduce((n, f) => n + f.rooms.length, 0) <= 40
+}
+
 export interface LoadedRun {
   key: string
   label: string
@@ -261,7 +266,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, layers: { ...s.layers, labels: building.floors.reduce((n, f) => n + f.rooms.length, 0) <= 40 }, draft: null, fromTracer: null, runNote: null, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

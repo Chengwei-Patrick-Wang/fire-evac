@@ -1,4 +1,4 @@
-import { useApp } from '../store/app'
+import { labelsFor, useApp } from '../store/app'
 import { useClock } from '../store/clock'
 import { listDemoRuns, loadDemoRun } from '../data/loader'
 import { compareRuns, findPrecomputedVariant } from '../model/whatif'
@@ -20,6 +20,7 @@ const DEFAULT_LAYERS = { rooms: true, labels: true, smoke: true, fire: true, hea
 
 /** Same starting picture for every scene, so a key pressed twice shows the same thing. */
 export function resetStage() {
+  const b = useApp.getState().building
   useApp.setState({
     view: 'replay',
     split: false,
@@ -36,7 +37,7 @@ export function resetStage() {
     riskMetric: 'riskT90',
     resultsTab: 'results',
     lens: [true, true, true, true, true, true],
-    layers: { ...DEFAULT_LAYERS },
+    layers: { ...DEFAULT_LAYERS, labels: b ? labelsFor(b) : DEFAULT_LAYERS.labels },
   })
   useClock.setState({ playing: false })
 }

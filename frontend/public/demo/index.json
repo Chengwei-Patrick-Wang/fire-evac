@@ -6,6 +6,12 @@
       "name": "Example office (synthetic, 2 floors)",
       "file": "building.example.json",
       "credits": "Synthetic example building made by the team; free to use."
+    },
+    {
+      "id": "office",
+      "name": "NIBS Office",
+      "file": "building-office.json",
+      "credits": "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"
     }
   ],
   "runs": [

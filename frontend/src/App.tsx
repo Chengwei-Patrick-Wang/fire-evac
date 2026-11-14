@@ -128,8 +128,38 @@ function s_notice(m: string) {
   useApp.getState().setNotice(m)
 }
 
+function Credits() {
+  const building = useApp((s) => s.building)
+  if (!building) return <div className="credits" />
+  const text = building.credits ? `${building.name}: ${building.credits}` : `${building.name}: no credits in this building file`
+  const parts: (string | { url: string; tail: string })[] = []
+  let last = 0
+  for (const m of text.matchAll(/https?:\/\/[^\s]+/g)) {
+    const raw = m[0]
+    const url = raw.replace(/[.,;:)]+$/, '')
+    parts.push(text.slice(last, m.index))
+    parts.push({ url, tail: raw.slice(url.length) })
+    last = m.index + raw.length
+  }
+  parts.push(text.slice(last))
+  return (
+    <div className="credits" title={text}>
+      {parts.map((p, i) =>
+        typeof p === 'string' ? (
+          p
+        ) : (
+          <span key={i}>
+            <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a>
+            {p.tail}
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
 export default function App() {
-  const { view, building, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
+  const { view, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
@@ -230,7 +260,8 @@ export default function App() {
       <footer className="bottom"><Scrubber /></footer>
       <ClockDriver />
       <AboutOverlay />
-      <div className="credits">{building?.credits ?? ''}</div>
+      <Credits />
+
     </div>
   )
 }

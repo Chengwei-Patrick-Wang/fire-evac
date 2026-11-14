@@ -20,6 +20,8 @@ export default function TopBar({
         {buildings.map((b) => (
           <option key={b.id} value={b.id}>
             {b.name}
+            {b.floors ? ` · ${b.floors} floors` : ''}
+            {b.private ? ' (private)' : ''}
           </option>
         ))}
       </select>

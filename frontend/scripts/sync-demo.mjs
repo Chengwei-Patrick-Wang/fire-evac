@@ -1,7 +1,7 @@
 // Copies contracts/*.example.json into public/demo/ and upserts public/demo/index.json.
 // Runs as predev and prebuild; safe from any cwd; a missing contracts/ folder is not an error.
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Extra runs: {run: 'data/runs/x.json', scenario: 'data/runs/x.scenario.json', label?: string, whatIf?: null | 'propped'}
@@ -15,7 +15,8 @@ if (!existsSync(contracts)) {
   console.log('sync-demo: no contracts/ folder, keeping public/demo as is')
   process.exit(0)
 }
-mkdirSync(demo, { recursive: true })
+const dry = process.argv.includes('--dry-run')
+if (!dry) mkdirSync(demo, { recursive: true })
 
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'))
 const norm = (s) => s.replace(/\r\n/g, '\n')
@@ -29,6 +30,9 @@ function copyFile(src, name) {
   const dst = join(demo, name)
   if (existsSync(dst) && Buffer.compare(readFileSync(dst), bytes) === 0) {
     console.log(`unchanged ${name}`)
+  } else if (dry) {
+    console.log(`would copy ${name}`)
+    return existsSync(dst)
   } else {
     writeFileSync(dst, bytes)
     console.log(`copied ${name} (${Math.round(statSync(dst).size / 1024)} KB)`)
@@ -72,6 +76,25 @@ else if (copyFile(building, 'building.example.json') && existsSync(join(demo, 'b
   const b = readJson(join(demo, 'building.example.json'))
   if (b.private === true) console.warn('sync-demo: building is private, not indexed')
   else upsert(index.buildings, { id: b.id, name: b.name, file: 'building.example.json', credits: b.credits })
+}
+
+// Public buildings from --buildings DIR (default data/buildings)
+{
+  const args = process.argv.slice(2)
+  const bi = args.indexOf('--buildings')
+  const dir = bi >= 0 && args[bi + 1] ? resolve(process.cwd(), args[bi + 1]) : join(root, 'data', 'buildings')
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.json')).sort()) {
+      const p = join(dir, f)
+      let b
+      try { b = readJson(p) } catch { console.log(`skip ${f} (not valid JSON)`); continue }
+      if (b.version !== 'building/v0') { console.log(`skip ${f} (not a building/v0 file)`); continue }
+      if (b.private === true || /private/i.test(p.replace(root, ''))) { console.log(`skip ${f} (private)`); continue }
+      const name = `building-${b.id}.json`
+      copyFile(p, name)
+      upsert(index.buildings, { id: b.id, name: b.name, file: name, credits: b.credits })
+    }
+  }
 }
 
 // Runs
@@ -130,7 +153,7 @@ else if (copyFile(batch, 'batch.example.json')) {
 
 const text = JSON.stringify(index, null, 2) + '\n'
 const changed = norm(oldText) !== text
-if (changed) writeFileSync(indexPath, text)
+if (changed && !dry) writeFileSync(indexPath, text)
 console.log(
-  `index.json: ${index.buildings.length} building, ${index.runs.length} run, ${index.batches.length} batch (${changed ? 'written' : 'unchanged'})`,
+  `index.json: ${index.buildings.length} buildings, ${index.runs.length} run, ${index.batches.length} batch (${dry ? 'dry run' : changed ? 'written' : 'unchanged'})`,
 )
