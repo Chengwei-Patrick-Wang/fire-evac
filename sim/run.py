@@ -10,7 +10,10 @@ Behavior:
 - One CollisionFreeSpeedModel sim per floor. Stages: every exit on the floor, plus
   connected downward stairs. Arrivals wait for a clear spot before re-entry.
 - Each agent chooses a route using travel time and queues, and stands still
-  (desired_speed 0) until alarmTime + startDelay.
+  (desired_speed 0) until alarmTime + startDelay, or an earlier cue countdown.
+- Fire in the same room, or visibility below 10 m, starts a separate 0–10 s
+  cue delay; the first cue wins and the alarm can still start people sooner.
+  scenario.premovement overrides profile delay ranges by room type.
 - People keep 2.5 m from the burning item where room geometry permits;
   smaller keep-out areas preserve connected escape routes.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
@@ -34,7 +37,7 @@ from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
 from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider
-from sim.profiles import PROFILES
+from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
 DT = 0.01
@@ -154,6 +157,17 @@ def _sample_points(region, n: int, rng: np.random.Generator, taken: list, label:
 
 def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, walkable=None) -> list[dict]:
     """Agents with idx 0..N-1, profile, floor, room, v0, startDelay, radius, x, y."""
+    premovement = scenario.get("premovement", {})
+    if not isinstance(premovement, dict):
+        raise ValueError("premovement must map room types to [lo, hi] ranges")
+    for room_type, bounds in premovement.items():
+        if (not isinstance(bounds, (list, tuple)) or len(bounds) != 2
+                or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                       or not math.isfinite(v) for v in bounds)
+                or not 0 <= bounds[0] <= bounds[1]):
+            raise ValueError(f"premovement {room_type}: expected two finite numbers with 0 <= lo <= hi")
+    room_types = {(f["id"], r["id"]): r.get("type")
+                  for f in building["floors"] for r in f["rooms"]}
     occ = scenario.get("occupants") or {}
     rooms = []  # (floor id, room, spawn region)
     for floor in building["floors"]:
@@ -188,7 +202,8 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, wa
             spec = PROFILES["typical"]
         a["profile"] = prof
         a["v0"] = round(float(rng.uniform(*spec["v0"])), 2)
-        a["startDelay"] = round(float(rng.uniform(*spec["startDelay"])), 1)
+        delay = premovement.get(room_types[a["floor"], a["room"]], spec["startDelay"])
+        a["startDelay"] = round(float(rng.uniform(*delay)), 1)
         a["radius"] = spec["radius"]
     if unknown:
         _warn(f"unknown profiles {sorted(unknown)}: using 'typical' parameters")
@@ -333,6 +348,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     ignition["x"], ignition["y"], radius)
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
+    cue_rng = np.random.default_rng([seed, 3])
+    for a in agents:
+        a["cueDelay"] = float(cue_rng.uniform(*CUE_DELAY))
+    cues = {}
     net.check({a["floor"] for a in agents})
     n = len(agents)
     mode = scenario.get("brain", "rules")
@@ -464,6 +483,16 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                            "from": current, "to": st["id"], "reason": reason})
         return st
 
+    def start_agent(i, t):
+        if status[i] == 0 and i not in trapped:
+            fs, jid = where[i]
+            target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
+            if target[i] is not None:
+                fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
+                fs.sim.agent(jid).model.desired_speed = smoke_speed(
+                    agents[i]["v0"], fire.visibility(fs.id, *fs.sim.agent(jid).position))
+            status[i] = 1
+
     def enter_stair(i, t, fs, st):
         profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
         until = None
@@ -502,14 +531,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         while next_start < n and alarm + agents[start_order[next_start]]["startDelay"] <= t + 1e-9:
             i = start_order[next_start]
             next_start += 1
-            if status[i] == 0 and i not in trapped:
-                fs, jid = where[i]
-                target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
-                if target[i] is not None:
-                    fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
-                    fs.sim.agent(jid).model.desired_speed = smoke_speed(
-                        agents[i]["v0"], fire.visibility(fs.id, *fs.sim.agent(jid).position))
-                status[i] = 1
+            start_agent(i, t)
 
         for i, entry in transit.items():
             if status[i] == 2 and t >= entry["hold_until"] - 1e-9:
@@ -565,6 +587,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     active -= 1
                     events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
                                    "x": round(x, 2), "y": round(y, 2)})
+                elif status[i] == 0:
+                    if i not in cues:
+                        if (fire.hrr(t) > 0 and fs.id == ignition.get("floor")
+                                and agents[i]["room"] == ignition.get("room")):
+                            cues[i] = (t, "fire")
+                        elif fire.visibility(fs.id, x, y) < CUE_VIS_M:
+                            cues[i] = (t, "smoke")
+                    if i in cues and t >= cues[i][0] + agents[i]["cueDelay"]:
+                        start_agent(i, t)
+                        events.append({"t": t, "type": "start", "idx": i,
+                                       "floor": fs.id, "cue": cues[i][1]})
                 elif status[i] == 1:
                     stuck = watch.update(i, t, x, y)
                     if stuck:

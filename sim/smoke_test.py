@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from sim.run import run, StuckWatch, floor_walkable, smoke_speed, fire_keepout, FIRE_KEEPOUT_M
+from sim.run import run, StuckWatch, floor_walkable, smoke_speed, fire_keepout, FIRE_KEEPOUT_M, place_occupants
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
 from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE, mobility_options
@@ -295,8 +295,12 @@ def check_fire(building, scenario, clear):
         def visibility(self, floor_id, x, y):
             return 1.0
 
-    slow = run(building, scenario, LowVisibility(building, scenario))
-    assert slow["metrics"]["t90"] >= 1.2 * clear["metrics"]["t90"]
+    # Start both crowds immediately to isolate smoke speed from the new cue starts.
+    immediate = dict(scenario, alarmTime=0, premovement={
+        r["type"]: [0, 0] for f in building["floors"] for r in f["rooms"]})
+    immediate_clear = run(building, immediate, NoFire(building, immediate))
+    slow = run(building, immediate, LowVisibility(building, immediate))
+    assert slow["metrics"]["t90"] >= 1.2 * immediate_clear["metrics"]["t90"]
     room = next(r for r in building["floors"][0]["rooms"] if r["id"] == "R101")
     poly = Polygon(room["polygon"])
 
@@ -363,6 +367,7 @@ def check_core(building, scenario) -> dict:
     runtime = time.perf_counter() - t0
     m = r["metrics"]
     events = r["events"]
+    assert not any(e["type"] == "start" for e in events)
     check_reroutes(r)
 
     assert r["version"] == "run/v0" and r["frameInterval"] == 0.5
@@ -557,6 +562,80 @@ def check_keepout(building, scenario, slow=False):
               f"{protected['metrics']['trapped']} trapped")
 
 
+def check_cues(building, scenario, slow=False):
+    if slow:
+        try:
+            from fire.model import FireModel
+        except ImportError:
+            print("fire cues: skipped full FireModel (not available)")
+            return
+        result = run(building, scenario, FireModel(building, scenario))
+        kitchen = {a["idx"] for a in result["agents"] if a["floor"] == "F1" and a["room"] == "R101"}
+        starts = [e for e in result["events"] if e["type"] == "start" and e["idx"] in kitchen]
+        assert kitchen and {e["idx"] for e in starts} == kitchen
+        assert len(starts) == len(kitchen)
+        assert all(e["cue"] == "fire" and e["t"] <= 11 for e in starts)
+        print(f"full fire cues: {len(starts)} kitchen occupants started by {max(e['t'] for e in starts)} s")
+        return
+
+    class KitchenFire(NoFire):
+        def hrr(self, t):
+            return 100.0 if t >= 5 else 0.0
+
+    result = run(building, scenario, KitchenFire(building, scenario))
+    kitchen = {a["idx"] for a in result["agents"] if a["floor"] == "F1" and a["room"] == "R101"}
+    starts = [e for e in result["events"] if e["type"] == "start"]
+    assert kitchen and {e["idx"] for e in starts} == kitchen
+    assert len(starts) == len(kitchen)
+    assert all(e["cue"] == "fire" and 5 <= e["t"] <= 15 for e in starts)
+    moving = {row[0] for f in result["frames"] if f["t"] < scenario["alarmTime"]
+              for row in f["a"] if row[4] == 1}
+    assert kitchen <= moving
+
+    room = next(r for f in building["floors"] if f["id"] == "F1"
+                for r in f["rooms"] if r["id"] == "R105")
+    poly = Polygon(room["polygon"])
+
+    class SmokyR105(NoFire):
+        def step(self, t):
+            self.t = t
+
+        def visibility(self, floor_id, x, y):
+            return 4.0 if self.t >= 20 and floor_id == "F1" and poly.contains(Point(x, y)) else 30.0
+
+    result = run(building, scenario, SmokyR105(building, scenario))
+    occupants = {a["idx"] for a in result["agents"] if a["floor"] == "F1" and a["room"] == "R105"}
+    starts = [e for e in result["events"] if e["type"] == "start"]
+    assert occupants and {e["idx"] for e in starts} == occupants
+    assert len(starts) == len(occupants)
+    assert all(e["cue"] == "smoke" and 20 <= e["t"] <= 30 for e in starts)
+    # The alarm wins an outstanding cue countdown without emitting a cue start.
+    early = dict(scenario, alarmTime=20, premovement={"office": [0, 0]})
+    result = run(building, early, SmokyR105(building, early))
+    assert not any(e["type"] == "start" for e in result["events"])
+
+    seed = scenario["seed"]
+    original = place_occupants(building, scenario, np.random.default_rng(seed))
+    override = dict(scenario, premovement={"office": [100, 100]})
+    changed = place_occupants(building, override, np.random.default_rng(seed))
+    types = {(f["id"], r["id"]): r["type"] for f in building["floors"] for r in f["rooms"]}
+    for before, after in zip(original, changed):
+        expected = dict(before)
+        if types[before["floor"], before["room"]] == "office":
+            expected["startDelay"] = 100.0
+        assert after == expected
+    for invalid in ([1], [2, 1], [-1, 2], [0, float("inf")],
+                    [float("nan"), 1], ["0", 1], [True, 1], None):
+        try:
+            place_occupants(building, dict(scenario, premovement={"office": invalid}),
+                            np.random.default_rng(seed))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid premovement accepted: {invalid}")
+    print(f"fire/smoke cues and room-type delays OK: {len(kitchen)} kitchen, {len(occupants)} office occupants")
+
+
 def check_recording(building, scenario):
     from tools.toy_fire import ToyFire
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
@@ -591,6 +670,7 @@ def main(argv=None) -> int:
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
     core = timed("fast core", check_core, building, fast)
+    timed("fast cues", check_cues, building, fast)
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
@@ -599,6 +679,7 @@ def main(argv=None) -> int:
 
     if args.slow:
         core = timed("full core", check_core, building, scenario)
+        timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)
         timed("full fire", check_fire, building, scenario, core)
         timed("300 agents", check_300, building, scenario)
