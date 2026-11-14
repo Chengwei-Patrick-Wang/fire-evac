@@ -1,6 +1,6 @@
 ### Report card: Example office (synthetic, 2 floors)
 
-**Stair doors propped open: +447 person-seconds in smoke per fire, while 90% out 0.1 s sooner on average (slower in 4 of 36 fires).**
+**Stair doors propped open: smoke exposure +31% (+447 person-seconds in smoke per fire), while 90% out 0.1 s sooner on average (slower in 4 of 36 fires).**
 
 54 fires simulated (18 rooms × 3 seeds). Smoke: 1,141 person-seconds in smoke per fire on average; 2.7 people per fire at an illustrative smoke dose of 1 (in 25 of 54 fires). 90% out: median 124 s; not reached within 400 s in 1 of 54 fires. People trapped in 3 of 54 fires.
 
@@ -20,8 +20,8 @@ Queues mark where the building runs short of capacity, not how people behave.
 
 #### What-ifs
 
-- **Stair doors propped open:** +447 person-seconds in smoke per fire; +0.5 people per fire at an illustrative smoke dose of 1; 90% out 0.1 s sooner on average (slower in 4 of 36 fires); trapped +0.0 per fire.
-- **Exit Main entrance blocked:** +3,022 person-seconds in smoke per fire; +9.2 people per fire at an illustrative smoke dose of 1; 90% out 58.3 s later on average (slower in 34 of 36 fires); trapped -1.3 per fire.
+- **Stair doors propped open:** smoke exposure +31% (+447 person-seconds in smoke per fire); +0.5 people per fire at an illustrative smoke dose of 1; 90% out 0.1 s sooner on average (slower in 4 of 36 fires); trapped +0.0 per fire.
+- **Exit Main entrance blocked:** smoke exposure +210% (+3,022 person-seconds in smoke per fire); +9.2 people per fire at an illustrative smoke dose of 1; 90% out 58.3 s later on average (slower in 34 of 36 fires); trapped -1.3 per fire.
 - **Sprinklers on:** 1.3 fewer people trapped per fire; 90% out 9.6 s sooner on average (slower in 0 of 36 fires); smoke time is not compared: people who become trapped drop out of the frames.
 
 ---
