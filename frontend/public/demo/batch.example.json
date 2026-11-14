@@ -1,0 +1,1134 @@
+{
+ "version": "batch/v0",
+ "id": "example-kitchen-fire-batch",
+ "buildingId": "example-office",
+ "placeholder": true,
+ "note": "Placeholder numbers (seeded random), not simulated. fire.batch replaces this file.",
+ "base": {
+  "version": "scenario/v0",
+  "id": "example-kitchen-fire",
+  "buildingId": "example-office",
+  "seed": 1,
+  "occupants": {
+   "total": 160,
+   "mix": {
+    "typical": 0.85,
+    "older": 0.1,
+    "visitor": 0.05
+   }
+  },
+  "fire": {
+   "floor": "F1",
+   "room": "R101",
+   "x": 8.0,
+   "y": 3.0,
+   "type": "kitchen",
+   "start": 0
+  },
+  "sprinklers": false,
+  "doors": {},
+  "alarmTime": 30,
+  "maxTime": 400
+ },
+ "runs": [
+  {
+   "scenarioId": "example-kitchen-fire-R101-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R101"
+   },
+   "t90": 177.9,
+   "t100": 219.5,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R101-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R101"
+   },
+   "t90": 182.4,
+   "t100": 221.8,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R101-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R101"
+   },
+   "t90": 175.4,
+   "t100": 215.4,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R102-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R102"
+   },
+   "t90": 173.9,
+   "t100": 208.8,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R102-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R102"
+   },
+   "t90": 167.1,
+   "t100": 201.9,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R102-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R102"
+   },
+   "t90": 177.2,
+   "t100": 228.2,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-L1-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "L1"
+   },
+   "t90": 188.7,
+   "t100": 230.7,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-L1-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "L1"
+   },
+   "t90": 184.0,
+   "t100": 236.9,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-L1-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "L1"
+   },
+   "t90": 182.9,
+   "t100": 233.5,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R103-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R103"
+   },
+   "t90": 173.6,
+   "t100": 216.9,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R103-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R103"
+   },
+   "t90": 165.1,
+   "t100": 201.6,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R103-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R103"
+   },
+   "t90": 177.5,
+   "t100": 218.7,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R104-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R104"
+   },
+   "t90": 185.2,
+   "t100": 226.3,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R104-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R104"
+   },
+   "t90": 170.8,
+   "t100": 214.4,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R104-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R104"
+   },
+   "t90": 179.8,
+   "t100": 219.6,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R105-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R105"
+   },
+   "t90": 177.0,
+   "t100": 218.3,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R105-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R105"
+   },
+   "t90": 172.8,
+   "t100": 214.4,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R105-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R105"
+   },
+   "t90": 182.3,
+   "t100": 221.1,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R106-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R106"
+   },
+   "t90": 146.2,
+   "t100": 182.5,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R106-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R106"
+   },
+   "t90": 150.1,
+   "t100": 180.5,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R106-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R106"
+   },
+   "t90": 148.2,
+   "t100": 177.6,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R107-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R107"
+   },
+   "t90": 157.8,
+   "t100": 188.6,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R107-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R107"
+   },
+   "t90": 164.2,
+   "t100": 207.9,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R107-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R107"
+   },
+   "t90": 144.3,
+   "t100": 176.5,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R108-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "R108"
+   },
+   "t90": 182.9,
+   "t100": 227.7,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R108-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "R108"
+   },
+   "t90": 165.4,
+   "t100": 213.4,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R108-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "R108"
+   },
+   "t90": 178.7,
+   "t100": 217.4,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SA1-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "SA1"
+   },
+   "t90": 192.1,
+   "t100": 238.7,
+   "trapped": 5
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SA1-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "SA1"
+   },
+   "t90": 196.9,
+   "t100": 254.5,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SA1-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "SA1"
+   },
+   "t90": 196.7,
+   "t100": 244.1,
+   "trapped": 6
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SB1-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F1",
+    "room": "SB1"
+   },
+   "t90": 189.4,
+   "t100": 237.4,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SB1-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F1",
+    "room": "SB1"
+   },
+   "t90": 183.3,
+   "t100": 234.4,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SB1-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F1",
+    "room": "SB1"
+   },
+   "t90": 188.6,
+   "t100": 232.3,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R201-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R201"
+   },
+   "t90": 170.4,
+   "t100": 213.5,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R201-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R201"
+   },
+   "t90": 192.3,
+   "t100": 234.4,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R201-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R201"
+   },
+   "t90": 165.8,
+   "t100": 203.5,
+   "trapped": 4
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R202-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R202"
+   },
+   "t90": 150.2,
+   "t100": 182.2,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R202-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R202"
+   },
+   "t90": 164.2,
+   "t100": 193.2,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R202-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R202"
+   },
+   "t90": 147.4,
+   "t100": 175.6,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R203-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R203"
+   },
+   "t90": 144.4,
+   "t100": 172.0,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R203-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R203"
+   },
+   "t90": 151.3,
+   "t100": 181.3,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R203-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R203"
+   },
+   "t90": 155.2,
+   "t100": 184.7,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R204-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R204"
+   },
+   "t90": 158.7,
+   "t100": 209.7,
+   "trapped": 4
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R204-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R204"
+   },
+   "t90": 167.5,
+   "t100": 204.0,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R204-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R204"
+   },
+   "t90": 144.5,
+   "t100": 178.5,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R205-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R205"
+   },
+   "t90": 180.7,
+   "t100": 222.1,
+   "trapped": 4
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R205-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R205"
+   },
+   "t90": 174.0,
+   "t100": 212.3,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R205-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R205"
+   },
+   "t90": 194.3,
+   "t100": 238.2,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R206-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R206"
+   },
+   "t90": 170.7,
+   "t100": 208.2,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R206-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R206"
+   },
+   "t90": 173.5,
+   "t100": 212.2,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R206-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R206"
+   },
+   "t90": 181.2,
+   "t100": 219.9,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R207-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R207"
+   },
+   "t90": 139.3,
+   "t100": 169.0,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R207-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R207"
+   },
+   "t90": 148.8,
+   "t100": 182.2,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R207-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R207"
+   },
+   "t90": 128.5,
+   "t100": 157.6,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R208-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R208"
+   },
+   "t90": 144.4,
+   "t100": 179.3,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R208-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R208"
+   },
+   "t90": 146.7,
+   "t100": 177.5,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R208-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R208"
+   },
+   "t90": 157.3,
+   "t100": 197.2,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R209-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "R209"
+   },
+   "t90": 182.5,
+   "t100": 222.1,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R209-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "R209"
+   },
+   "t90": 177.0,
+   "t100": 216.0,
+   "trapped": 0
+  },
+  {
+   "scenarioId": "example-kitchen-fire-R209-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "R209"
+   },
+   "t90": 183.0,
+   "t100": 223.3,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SA2-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "SA2"
+   },
+   "t90": 185.1,
+   "t100": 231.2,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SA2-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "SA2"
+   },
+   "t90": 192.2,
+   "t100": 234.9,
+   "trapped": 3
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SA2-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "SA2"
+   },
+   "t90": 194.7,
+   "t100": 251.8,
+   "trapped": 1
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SB2-s1",
+   "seed": 1,
+   "ignition": {
+    "floor": "F2",
+    "room": "SB2"
+   },
+   "t90": 186.2,
+   "t100": 233.7,
+   "trapped": 2
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SB2-s2",
+   "seed": 2,
+   "ignition": {
+    "floor": "F2",
+    "room": "SB2"
+   },
+   "t90": 198.8,
+   "t100": 243.8,
+   "trapped": 4
+  },
+  {
+   "scenarioId": "example-kitchen-fire-SB2-s3",
+   "seed": 3,
+   "ignition": {
+    "floor": "F2",
+    "room": "SB2"
+   },
+   "t90": 186.6,
+   "t100": 237.3,
+   "trapped": 4
+  }
+ ],
+ "rooms": [
+  {
+   "id": "R101",
+   "floor": "F1",
+   "riskT90": 178.6,
+   "riskTrapped": 2.0,
+   "n": 3
+  },
+  {
+   "id": "R102",
+   "floor": "F1",
+   "riskT90": 172.7,
+   "riskTrapped": 1.33,
+   "n": 3
+  },
+  {
+   "id": "L1",
+   "floor": "F1",
+   "riskT90": 185.2,
+   "riskTrapped": 0.67,
+   "n": 3
+  },
+  {
+   "id": "R103",
+   "floor": "F1",
+   "riskT90": 172.1,
+   "riskTrapped": 1.33,
+   "n": 3
+  },
+  {
+   "id": "R104",
+   "floor": "F1",
+   "riskT90": 178.6,
+   "riskTrapped": 1.67,
+   "n": 3
+  },
+  {
+   "id": "R105",
+   "floor": "F1",
+   "riskT90": 177.4,
+   "riskTrapped": 2.0,
+   "n": 3
+  },
+  {
+   "id": "R106",
+   "floor": "F1",
+   "riskT90": 148.2,
+   "riskTrapped": 0.33,
+   "n": 3
+  },
+  {
+   "id": "R107",
+   "floor": "F1",
+   "riskT90": 155.4,
+   "riskTrapped": 1.0,
+   "n": 3
+  },
+  {
+   "id": "R108",
+   "floor": "F1",
+   "riskT90": 175.7,
+   "riskTrapped": 1.0,
+   "n": 3
+  },
+  {
+   "id": "SA1",
+   "floor": "F1",
+   "riskT90": 195.2,
+   "riskTrapped": 4.0,
+   "n": 3
+  },
+  {
+   "id": "SB1",
+   "floor": "F1",
+   "riskT90": 187.1,
+   "riskTrapped": 2.0,
+   "n": 3
+  },
+  {
+   "id": "R201",
+   "floor": "F2",
+   "riskT90": 176.2,
+   "riskTrapped": 1.67,
+   "n": 3
+  },
+  {
+   "id": "R202",
+   "floor": "F2",
+   "riskT90": 153.9,
+   "riskTrapped": 0.0,
+   "n": 3
+  },
+  {
+   "id": "R203",
+   "floor": "F2",
+   "riskT90": 150.3,
+   "riskTrapped": 0.33,
+   "n": 3
+  },
+  {
+   "id": "R204",
+   "floor": "F2",
+   "riskT90": 156.9,
+   "riskTrapped": 2.0,
+   "n": 3
+  },
+  {
+   "id": "R205",
+   "floor": "F2",
+   "riskT90": 183.0,
+   "riskTrapped": 2.33,
+   "n": 3
+  },
+  {
+   "id": "R206",
+   "floor": "F2",
+   "riskT90": 175.1,
+   "riskTrapped": 0.67,
+   "n": 3
+  },
+  {
+   "id": "R207",
+   "floor": "F2",
+   "riskT90": 138.9,
+   "riskTrapped": 1.0,
+   "n": 3
+  },
+  {
+   "id": "R208",
+   "floor": "F2",
+   "riskT90": 149.5,
+   "riskTrapped": 0.67,
+   "n": 3
+  },
+  {
+   "id": "R209",
+   "floor": "F2",
+   "riskT90": 180.8,
+   "riskTrapped": 1.33,
+   "n": 3
+  },
+  {
+   "id": "SA2",
+   "floor": "F2",
+   "riskT90": 190.7,
+   "riskTrapped": 2.33,
+   "n": 3
+  },
+  {
+   "id": "SB2",
+   "floor": "F2",
+   "riskT90": 190.5,
+   "riskTrapped": 3.33,
+   "n": 3
+  }
+ ],
+ "doors": [
+  {
+   "id": "D101",
+   "floor": "F1",
+   "meanWait": 86.5,
+   "peakQueue": 3,
+   "score": 6.7
+  },
+  {
+   "id": "D102",
+   "floor": "F1",
+   "meanWait": 153.8,
+   "peakQueue": 6,
+   "score": 12.8
+  },
+  {
+   "id": "DL1",
+   "floor": "F1",
+   "meanWait": 30.5,
+   "peakQueue": 1,
+   "score": 2.3
+  },
+  {
+   "id": "D103",
+   "floor": "F1",
+   "meanWait": 252.0,
+   "peakQueue": 6,
+   "score": 16.2
+  },
+  {
+   "id": "D104",
+   "floor": "F1",
+   "meanWait": 221.0,
+   "peakQueue": 5,
+   "score": 13.9
+  },
+  {
+   "id": "D105",
+   "floor": "F1",
+   "meanWait": 112.5,
+   "peakQueue": 2,
+   "score": 6.4
+  },
+  {
+   "id": "D106",
+   "floor": "F1",
+   "meanWait": 168.9,
+   "peakQueue": 6,
+   "score": 13.3
+  },
+  {
+   "id": "D107",
+   "floor": "F1",
+   "meanWait": 115.8,
+   "peakQueue": 4,
+   "score": 9.0
+  },
+  {
+   "id": "D108",
+   "floor": "F1",
+   "meanWait": 175.7,
+   "peakQueue": 9,
+   "score": 17.3
+  },
+  {
+   "id": "DSA1",
+   "floor": "F1",
+   "meanWait": 1011.0,
+   "peakQueue": 32,
+   "score": 74.9
+  },
+  {
+   "id": "DSB1",
+   "floor": "F1",
+   "meanWait": 1259.4,
+   "peakQueue": 19,
+   "score": 67.2
+  },
+  {
+   "id": "E1",
+   "floor": "F1",
+   "meanWait": 879.0,
+   "peakQueue": 7,
+   "score": 39.1
+  },
+  {
+   "id": "E2",
+   "floor": "F1",
+   "meanWait": 902.4,
+   "peakQueue": 10,
+   "score": 43.6
+  },
+  {
+   "id": "D201",
+   "floor": "F2",
+   "meanWait": 173.6,
+   "peakQueue": 2,
+   "score": 8.5
+  },
+  {
+   "id": "D202",
+   "floor": "F2",
+   "meanWait": 36.4,
+   "peakQueue": 2,
+   "score": 3.8
+  },
+  {
+   "id": "D203",
+   "floor": "F2",
+   "meanWait": 85.2,
+   "peakQueue": 3,
+   "score": 6.7
+  },
+  {
+   "id": "D204",
+   "floor": "F2",
+   "meanWait": 213.3,
+   "peakQueue": 6,
+   "score": 14.9
+  },
+  {
+   "id": "D205",
+   "floor": "F2",
+   "meanWait": 88.0,
+   "peakQueue": 4,
+   "score": 8.0
+  },
+  {
+   "id": "D206",
+   "floor": "F2",
+   "meanWait": 199.0,
+   "peakQueue": 8,
+   "score": 16.9
+  },
+  {
+   "id": "D207",
+   "floor": "F2",
+   "meanWait": 213.5,
+   "peakQueue": 3,
+   "score": 11.1
+  },
+  {
+   "id": "D208",
+   "floor": "F2",
+   "meanWait": 62.7,
+   "peakQueue": 8,
+   "score": 12.2
+  },
+  {
+   "id": "D209",
+   "floor": "F2",
+   "meanWait": 67.2,
+   "peakQueue": 6,
+   "score": 9.8
+  },
+  {
+   "id": "DSA2",
+   "floor": "F2",
+   "meanWait": 1739.8,
+   "peakQueue": 24,
+   "score": 90.0
+  },
+  {
+   "id": "DSB2",
+   "floor": "F2",
+   "meanWait": 1714.4,
+   "peakQueue": 31,
+   "score": 97.9
+  }
+ ],
+ "heatmaps": [
+  {
+   "floor": "F1",
+   "origin": [
+    0.1,
+    -2.1
+   ],
+   "cell": 0.5,
+   "cols": 84,
+   "rows": 36,
+   "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARZDkHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhTTkLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvU0UGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANNRjVNAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAA1NOCQXBwAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAQAAAAAAAAAAAAEAAAAAAAAAAAAAABdHL0MpAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAABAEAAAAAAAABAAAAAAAAAAAAAAMAAAADAAAAAAAAAxs/Lgo1AAEAAAAAAAAAAAAAAAAAAAAAAQAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAcAAAAAAAEBAAAAAAEAAwAAAAMAAAMBAAAAAAAABB8/KAcvAwAAAAAAAAEAAAAAAAEAAAAAAQAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAYAAAAAAAEAAAAAAAEDAQEAAAMAAQMAAAAAAAAABis2GwQxBAAAAAAAAQEAAAAAAQEAAAAAAQAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEDAQcAAAAAAQEBAAAAAAADAAQAAAMABAEAAQAAAAAACTwxFAExBwAAAAAAAQAAAAAAAwAAAAAAAAEAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAoAAAAAAwEAAAAAAAABAwMAAAMABgABAAAAAAAACUYiCwEfFwAAAAAAAwEBAwMEAQAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwMGAAADAQABAAAAAAABBAEEAAMEAwEAAQEAAAAAC0chBwMRJAMAAAAAAwAGAAAAAAAAAAABAAEABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQQHAAAEAQEAAAAAAAAAAQQDAAMHAQEBAQAAAAAAHjgeBwEJKwEAAAAAAwQDAQMAAAAAAAAAAwEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQMLAAQBAwAAAAAAAAAAAAEHAAQHBAMAAAAAAAAAMigYBwEBMQEAAAABAAYEAwQAAAAAAAAAAwEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQLAwcBAAMAAAAAAAAAAAAGBg4EAwABAQEAAAAARRUVBwEDKQQBAAAABAQJBAAAAAAAAAAAAAcXAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANFAMDAQAAAAAAAAAAAAAADiUEAwEBAAAAAAAATR8VAAADHRQBAAAAAREYAQAAAAAAAAAAUwkOKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEKAYAAAAAAAAAAAAAAAAAETgOFBoxNjk/R1dZXSUHAAABCTYbGhURCREaAAAAAAAAAAAAAQYJAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARodGxseGh0aGx0bHRshGxonJyIVFRoaHiIlLBUDAAAAAxQABAQKEwkEAQMDAwMDAwMDAQEHDQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBAYTGh0dIRgRFxgoIR4TEAYAAAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAQkLCwsKCwcBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwYOGBoYFxQEAQEDBhARHiEXEQ4GAQAAAAAAABEHAAAAAAAAAAAAAAAAAAAAAAAAAQMUERETEBgbGh0bHRgBAAAAAAAAAAAAAAAAAAAAAQQJGhgVGBUJAAAAAAAAAAADDQsUCwcDAAAAAAAAAAAAAAMUAAAAAAABAwMBAwMBAwMBAwYREBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEHRQQAAAAAAAAAAAAAAAAAAAJIg4EAAAAAAAAAAAAAAAAAAAXAwMBAwMAAAAAAAAAAAAAFAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHGgAAAAAAAAAAAAAAAAADAykYRycAAAAAAAAAAAAAAAAAAwkXBwAAAAAAAAAAAAAAAQYJCwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQNBwYAAAAAAAAAAAAAAAQBBAMAFRAEAQEBAQEAAAAAAAADAwkKBgAAAAAAAAAAAAEAAQMGBwEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwYHAQkBAAAAAAAAAAMBAwEAAAYEDQYEBAMAAAAAAAAAAAABBwMJBgAAAAAAAAAAAAABAwMAAwMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAwEGAQMEAAAAAAAAAAAAAAAAAwEBBAMAAQEDAQAAAAAAAAAEBwEEBAAAAAAAAAAAAAABAQEAAwMBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAQEEAwAHAAAAAAAAAAAAAAABAQMABAMBAAEBAQAAAAAAAAMDAwQDBgAAAAAAAAAAAAABAQAAAQMBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADBAEAAQABAwAAAAAAAAAAAAAAAQEABgABAAAAAQAAAAAAAAEDAwQAAwMAAAAAAAAAAAADAAAAAAEBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwABAQAAAwEAAAAAAAAAAAAAAwAABAABAAAAAAAAAAAAAAMBAAMBAwMAAAAAAAAAAAMAAAAAAQEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwABAAAAAAMAAAAAAAAAAAADAAAABAADAAAAAAAAAAAAAAMBAAMAAwAAAAAAAAAAAAEAAAAAAAEBAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwADAAAAAAMAAAAAAAAAAAEBAAAAAwMAAQAAAAAAAAAAAwAAAAEAAQMAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAABAAAAAAAAAAMAAAAAAAEAAQAAAAAAAAAAAQAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAABAAAAAAADAAAAAAAAAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  {
+   "floor": "F2",
+   "origin": [
+    0.1,
+    0.1
+   ],
+   "cell": 0.5,
+   "cols": 80,
+   "rows": 32,
+   "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAEAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAJAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAABAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAEAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQABAAEAAAAAAAAAAAABAAAAAAABAQAAAAAAAAAAAAAAAQAAAAAAAAAAAAEAAwABAAAAAAEAAQMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAEBAAEDAAAAAAAAAAMAAAAAAQEDAAAAAAAAAAAAAAEAAQAAAAAAAAAAAQEAAAEAAAAAAQABAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAwEBAQAAAAAAAAAAAAMAAAABBAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAQEBAAAAAAAAAwEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEDAQABAAEAAAAAAAAAAQAAAQEDAAAAAAAAAAEAAAEBAAMAAAAAAAADAAEBAQEAAAAAAAADAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAMBAwEBAAAAAAABAAABAAABBgAAAAAAAAAAAQEAAQEBAAAAAAAAAAABAQADAAAAAAAAAAEBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEDBAEAAQAAAAAAAAABAQADAAYBAAAAAAAAAAAAAAEAAwABAAAAAAAAAAEBAwAAAAEAAAAAAAQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQYDAwEAAAAAAAAAAAAAAQMDBAAAAAAAAAAAAAABAwEBBAAAAAAAAAAAAAMDAQEBAAAAAAEABAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBBgQBAQAAAAAAAAAAAAABAwQDAAAAAAAAAAAAAAABAAMDAQAAAAAAAAAAAwYBAAAAAAAAAAMBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQAwAAAAAAAAAAAAAAAAABDQAAAAAAAAAAAAAAAAABBAQAAAAAAAAAAAADBwAAAAAAAAAAAAMBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAGEAoAAAAAAAAAAAAABwsNDQoKAAAAAAAAAAAAAAAAAAAACwoJCgoEAAAAAAANBwoHAAAAAAAAAAoEAAAAAAAAAAAAAAAAAAAAAAAADRANEAsLCgsNDQ0KCw0NDQsEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMKBwkKCgkKCQoUERMRCwoKDQcNAQAAAAAAAAAAAAAAAAAAAAsYEw4LCwMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHBwkGDRAbAAAAAAAAAAAAAAAAAAAACxsUCw0NCwkKCgsJAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEAwQDBAMEBAcOEREOEA4QGBsAAAAAAAAAAAAAAAAAAAAAAAENDQsLAQAAAAALDQcJDQsLCwkHDQsEAAAEAQQEBAMEAwQDBAQDAwQEBAMQBw4LDQ0NCwoLBwAAAAcGCgkBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQQAAAAAAAAAAAAAAAAAAAAAAQLBgAAAAAAAAAAAAAAAAAAAAABFQAAAAAAAAAAAAAAAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwQGAwAAAAAAAAAAAAAAAAAAAwoGAwEAAAAAAAAAAAABAAEBAQQJAwAAAAAAAAAAAAAAAAEEAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAwAEAQEAAAAAAAAAAAAAAQQBAwEGAQEAAAAAAAAAAAAAAAEBBAAGAQMBAAAAAAAAAAAAAQQBAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQQDAAADAQAAAAAAAAAAAQMBAQAAAQEEAwMBAAAAAAAAAAABAAEDAAEDAAEBAQAAAAAAAAEBAwMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAwEAAAEBAQEAAAAAAAEAAAEAAAMBAAADBAABAAAAAAAAAAABAQEAAAEDAQAAAAAAAAAAAQEDAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAADAwAAAAEBAQAAAAAAAAABAAAAAwEAAAABAwEDAQAAAAAAAAAAAAAAAAEBAAAAAAAAAAABAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAQMAAAAAAAEAAQAAAAAAAAEAAAADAAAAAAABAAEAAAAAAAAAAQABAAAAAQABAAAAAAAAAQABAwABAAAAAAAAAAAAAAAAAAAAAAAAAAABAAADAAEAAAAAAAEAAAAAAAABAAAAAAABAAAAAAABAAEAAAAAAAEAAAEAAAAAAQABAAAAAAAAAAADAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAEAAAAAAQAAAAAAAQAEAAAAAAAAAAEAAAABAAAAAQAAAAAAAQAAAAAAAQAAAwEAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAQAAAAABAAAAAAABAAEAAAAAAAAAAAAAAAEAAAAAAAAAAAABAAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+ ],
+ "top": [
+  {
+   "kind": "stair",
+   "id": "DSB2",
+   "floor": "F2",
+   "score": 97.9,
+   "why": "Stair B door DSB2 on F2: 31 people queued at peak; 1,714 person-seconds of waiting per fire on average across 66 fires."
+  },
+  {
+   "kind": "stair",
+   "id": "DSA2",
+   "floor": "F2",
+   "score": 90.0,
+   "why": "Stair A door DSA2 on F2: 24 people queued at peak; 1,740 person-seconds of waiting per fire on average across 66 fires."
+  },
+  {
+   "kind": "stair",
+   "id": "DSA1",
+   "floor": "F1",
+   "score": 74.9,
+   "why": "Stair A door DSA1 on F1: 32 people queued at peak; 1,011 person-seconds of waiting per fire on average across 66 fires."
+  }
+ ]
+}
