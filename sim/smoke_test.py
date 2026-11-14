@@ -846,6 +846,81 @@ def check_scale():
         print(f"office scale OK: {row}")
 
 
+def check_exit_choice(building, fast):
+    import base64
+    import shapely
+    from sim.brain import option_cost, visible_smoke, main_entrance
+    option = {"dist": 12, "queue": 2, "flow": 1.3, "tail": 0}
+    assert abs(option_cost(option, 1.2) - 11.54) < .005
+    assert abs(option_cost(dict(option, smoke=5, unfamiliar=True), 1.2) - 61.54) < .005
+    vis = lambda x, y: np.where(x >= 10, 2, 30)
+    assert abs(visible_smoke([(0, 0), (20, 0)], 30, vis) - 80/9) < .01
+    assert visible_smoke([(0, 0), (20, 0)], 5, vis) == 0
+    assert visible_smoke([(0, 0), (5, 0), (5, 20)], 30,
+                         lambda x, y: np.where(y >= 5, 2, 30)) == 0
+    assert main_entrance(building, {}) == "E1"
+    assert main_entrance(building, {"entrance": "E2"}) == "E2"
+    office = ROOT / "data/buildings/office.json"
+    if office.exists():
+        assert main_entrance(json.loads(office.read_text()), {}) == "DrRS91$"
+    brain = RuleBrain(42)
+    obs = {"idx": 0, "t": 0, "floor": "F1", "speed": 1, "current": None,
+           "trigger": "start", "options": [dict(option, id="A")]}
+    assert brain.decide(obs)["target"] == "A"
+    obs.update(t=5, current="A", trigger="tick",
+               options=[dict(option, id="A", dist=1000), dict(option, id="B", dist=4)])
+    assert brain.decide(obs) is None
+    obs["trigger"] = "smoke"
+    decision = brain.decide(obs)
+    assert decision["target"] == "B" and decision["reason"].startswith("smoke:")
+    for weights in ({"smoke": -1}, {"unfamiliar": float("nan")}, {"smoke": float("inf")}):
+        try:
+            run(building, dict(fast, exitChoice=weights), NoFire(building, fast))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid exitChoice accepted")
+    try:
+        main_entrance(building, {"entrance": "missing"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid entrance accepted")
+
+    class SmokySA2(NoFire):
+        def __init__(self, building, scenario):
+            super().__init__(building, scenario)
+            floor = next(f for f in building["floors"] if f["id"] == "F2")
+            self.stair = Polygon(next(r for r in floor["rooms"] if r["id"] == "SA2")["polygon"])
+            y, x = np.mgrid[0:40:.5, 0:40:.5]
+            density = np.where(self.mask(x + .25, y + .25), 60, 0).astype(np.uint8)
+            self.snap = {"origin": [0, 0], "cell": .5, "rows": 80, "cols": 80,
+                         "d": base64.b64encode(density.tobytes()).decode()}
+
+        def mask(self, x, y):
+            return shapely.contains_xy(self.stair, x, y) | ((x < 8) & (y >= 6.5) & (y <= 9.5))
+
+        def visibility(self, floor, x, y):
+            return 100/60 if floor == "F2" and self.mask(x, y) else 30
+
+        def snapshot(self, floor):
+            return self.snap if floor == "F2" else None
+
+    clear_choice = dict(fast, exitChoice={"smoke": 0})
+    without = run(building, clear_choice, SmokySA2(building, clear_choice))
+    with_smoke = run(building, fast, SmokySA2(building, fast))
+    sa = lambda r: sum(e["type"] == "stair" and e["floor"] == "F2" and e["group"] == "SA" for e in r["events"])
+    assert sa(without) >= 2
+    assert sa(with_smoke) < sa(without), (sa(with_smoke), sa(without))
+    visitors = dict(fast, occupants={"total": 40, "mix": {"visitor": 1}})
+    familiar = run(building, visitors, NoFire(building, visitors))
+    impartial = run(building, dict(visitors, exitChoice={"unfamiliar": 0}), NoFire(building, visitors))
+    assert familiar["metrics"]["exitCounts"].get("E1", 0) > impartial["metrics"]["exitCounts"].get("E1", 0)
+    print(f"exit choice: SA {sa(without)} -> {sa(with_smoke)}; visitor E1 "
+          f"{impartial['metrics']['exitCounts'].get('E1', 0)} -> {familiar['metrics']['exitCounts'].get('E1', 0)}; "
+          f"smoke reroutes {sum(e['type'] == 'reroute' and e['reason'].startswith('smoke:') for e in with_smoke['events'])}")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -867,6 +942,7 @@ def main(argv=None) -> int:
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
     core = timed("fast core", check_core, building, fast)
+    timed("exit choice", check_exit_choice, building, fast)
     timed("fast cues", check_cues, building, fast)
     timed("office keep-out", check_office_keepout)
     timed("burning stair", check_stair_fire, building, fast)

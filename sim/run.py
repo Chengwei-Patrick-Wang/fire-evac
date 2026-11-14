@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections import Counter
 from heapq import heappush, heappop
+import base64
 import argparse
 import json
 import math
@@ -39,7 +40,7 @@ import shapely
 from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
-from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
+from sim.brain import SMOKE_BETA, UNFAMILIAR_GAMMA, main_entrance, visible_smoke, route_points, RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
 from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
@@ -384,8 +385,26 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     smoke_every = _interval_steps(scenario, "smokeInterval", SMOKE_INTERVAL)
     frame_interval, smoke_interval = frame_every * DT, smoke_every * DT
     watch = StuckWatch()
-    brain = RuleBrain(seed)
-    distances = {}
+    weights = scenario.get("exitChoice", {})
+    beta = float(weights.get("smoke", SMOKE_BETA))
+    gamma = float(weights.get("unfamiliar", UNFAMILIAR_GAMMA))
+    if not all(math.isfinite(v) and v >= 0 for v in (beta, gamma)):
+        raise ValueError("exitChoice weights must be finite and nonnegative")
+    entrance = main_entrance(building, scenario)
+    brain = RuleBrain(seed, beta, gamma)
+    distances, routes = {}, {}
+    smoke_grids, route_smoke, previous_smoke = {}, {}, {}
+
+    def grid_visibility(fid, xs, ys):
+        grid = smoke_grids.get(fid)
+        out = np.full(np.shape(xs), 30.0)
+        if grid is not None:
+            snap, visibility = grid
+            col = np.floor((xs - snap["origin"][0]) / snap["cell"]).astype(int)
+            row = np.floor((ys - snap["origin"][1]) / snap["cell"]).astype(int)
+            valid = (col >= 0) & (row >= 0) & (col < snap["cols"]) & (row < snap["rows"])
+            out[valid] = visibility[row[valid], col[valid]]
+        return out
     print(f"routing: {ROUTING_MODE}")
     blocked = {key for key, state in scenario.get("doors", {}).items() if state == "blocked"}
     walkable = {f["id"]: floor_walkable(f, blocked) for f in building["floors"]}
@@ -505,11 +524,18 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             key = (fs.id, st["id"], round(pos[0] * 2), round(pos[1] * 2))
             if key not in distances:
                 goal = st["poly"].intersection(fs.walk).representative_point()
-                distances[key] = route_length(fs.walk, pos, (goal.x, goal.y))
+                routes[key] = route_points(fs.walk, pos, (goal.x, goal.y))
+                distances[key] = sum(math.dist(a, b) for a, b in zip(routes[key], routes[key][1:]))
+            memory_key = (i, fs.id, st["id"])
+            seen = visible_smoke(routes[key], min(30, fire.visibility(fs.id, *pos)),
+                                 lambda xs, ys: grid_visibility(fs.id, xs, ys)) if fs.id in smoke_grids else 0
+            route_smoke[memory_key] = max(route_smoke.get(memory_key, 0), seen)
             options.append({"id": st["id"], "kind": st["kind"], "name": st["name"],
                             "dist": distances[key], "queue": queues.get((fs.id, st["id"]), 0),
                             "flow": (1.3 if st["kind"] == "exit" else 1.1) * st["width"],
-                            "tail": st["tail"], **({"assist": True} if st.get("assist") else {})})
+                            "tail": st["tail"], "smoke": round(route_smoke[memory_key], 1),
+                            **({"unfamiliar": True} if agents[i]["profile"] == "visitor"
+                               and st["kind"] == "exit" and st["id"] != entrance else {}), **({"assist": True} if st.get("assist") else {})})
         obs = {"idx": i, "t": t, "floor": fs.id, "x": pos[0], "y": pos[1],
                "profile": agents[i]["profile"], "visibility": fire.visibility(fs.id, *pos),
                "speed": agents[i]["v0"] if speed is None else speed,
@@ -544,6 +570,13 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     brain.left[i, fs.id, current] = t
                     brain.switches[i] = brain.switches.get(i, 0) + 1
         else:
+            if trigger == "tick" and i not in flagged:
+                amount = next((o["smoke"] for o in options if o["id"] == current), 0)
+                tick_key = (i, fs.id, current)
+                if beta > 0 and amount - previous_smoke.get(tick_key, 0) >= 1.0:
+                    obs["trigger"] = "smoke"
+                for option in options:
+                    previous_smoke[i, fs.id, option["id"]] = option["smoke"]
             decision = brain.decide(obs)
         return apply_choice(i, t, fs, current, trigger, decision)
 
@@ -597,6 +630,14 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         t = round(k * DT, 2)
         if k % FIRE_EVERY == 0:
             fire.step(t)
+            smoke_grids.clear()
+            for fs in sims:
+                snap = fire.snapshot(fs.id)
+                if snap is not None:
+                    density = np.frombuffer(base64.b64decode(snap["d"]), np.uint8).reshape(snap["rows"], snap["cols"])
+                    visibility = np.full(density.shape, 30.0)
+                    np.divide(100.0, density, out=visibility, where=density > 0)
+                    smoke_grids[fs.id] = (snap, np.minimum(30, visibility))
             fire_blocks = set(fire.blocked_doors())
             if fire.hrr(t) > 0:
                 fire_blocks.update(burning_doors)
