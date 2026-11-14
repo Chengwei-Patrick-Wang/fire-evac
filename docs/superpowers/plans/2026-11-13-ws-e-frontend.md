@@ -429,7 +429,6 @@
 - [x] **Step 3: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): readable what-if notes (axe color contrast)"` (no attribution lines).
 
 ### Task E33 (P1 · Sat 4 PM): Static mode: the Sprinklers box says it needs the backend and quotes the measured sprinkler what-if
-BLOCKED: taken over by the lead's machine at 14:21; skip
 - **Files:** Modify `frontend/src/ui/WhatIfCard.tsx`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes:**
@@ -440,23 +439,23 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
     - `useApp.mode`, `useApp.batch`, `useApp.headlines`, and `readWhatIf(batch)` (`src/model/exposure.ts`).
     - All three demo batches carry a `sprinklers` what-if (example n 36, office 24, clinic 9). The example's reads: "Sprinklers on: 90% out 10 s sooner on average (slower in 0 of 36 fires); -86 person-seconds in smoke (-6%), -2.4 people at an illustrative smoke dose of 1, -1.3 trapped per fire."
   - **Produces:** a disabled checkbox with a note in static mode, and the qa step `whatif-static`.
-- [ ] **Step 1: Disabled in static mode.**
+- [x] **Step 1: Disabled in static mode.**
   - With `live = mode === 'live'`, the checkbox gets `disabled={!live}`, `checked={live && sprinklers}` and a `title`.
   - The Run button passes `live && sprinklers`.
   - Door and state stay as they are: the loaded run's headline already names the precomputed door and state.
   - Live mode is unchanged.
-- [ ] **Step 2: Note.** In static mode, add a muted `p.dim.note` under the checkbox: "Sprinklers need the live backend."
+- [x] **Step 2: Note.** In static mode, add a muted `p.dim.note` under the checkbox: "Sprinklers need the live backend."
   - Then, if `readWhatIf(batch)` (else `headlines.whatIf`) has an entry with id `sprinklers` and `n > 0`: " Measured across <n> fires: <why>", with the why verbatim.
   - Otherwise: " This static demo has precomputed propped-door runs only."
   - App.css: `.whatif .note { margin: 2px 0 6px; font-size: var(--fs-xs) }`.
-- [ ] **Step 3: QA.** Add step `whatif-static` after `load`, in the scenario panel's `.whatif`.
+- [x] **Step 3: QA.** Add step `whatif-static` after `load`, in the scenario panel's `.whatif`.
   - Report a problem if the Sprinklers checkbox is enabled, or if the note lacks "Sprinklers need the live backend" or "fires:".
   - Take shot `whatif-static.png`.
-- [ ] **Step 4: Verify.**
+- [x] **Step 4: Verify.**
   - `npm run build` passes with no type errors.
   - `npm run qa` exits 0 (with E32 in), and `qa/whatif-static.png` shows the greyed checkbox and the note quoting the example's sprinkler what-if.
   - If the backend runs: with `VITE_API_URL=http://localhost:8000/api npm run dev`, the box is enabled, and a what-if run with it ticked is labelled "+sprinklers".
-- [ ] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
+- [x] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
 
 ### Task E34 (P1 · Sat 6 PM): Fix lines show trade-offs, and no list names a spot by its raw id
 BLOCKED: taken over by the lead's machine at 14:21; skip
