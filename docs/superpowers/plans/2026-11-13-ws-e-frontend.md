@@ -458,8 +458,7 @@
 - [x] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
 
 ### Task E34 (P1 · Sat 6 PM): Fix lines show trade-offs, and no list names a spot by its raw id
-BLOCKED: taken over by the lead's machine at 14:21; skip
-- **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/ui/WhatIfCard.tsx`, `frontend/src/ui/AboutOverlay.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes, from E28:**
     - `Fix`, `readFixes`, `fixTarget` and `fixLine`. `fixLine` builds a signed compact line, with "; +1.3 trapped per fire" when |dTrapped| ≥ 0.05.
@@ -483,21 +482,21 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
     - Batch `top[]` entries have no `label`, but every `why` starts with it (`<label>: ...`). D18's `weakSpots[]` carry `label`.
     - Interior-door labels inside D's text still carry IFC ids (`Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`). The batches and headline packs pick up readable labels once D23 lands and A reruns the precompute; A's report cards already use `_Names.label`.
   - **Produces:** `VERDICT`, `fixVerdict(fix) → 'helps' | 'tradeoff' | 'nogain'`, `fixCosts(fix) → string[]`, `spotLabel(entry) → string`, `.badge.trade`, fixture entries, and qa checks.
-- [ ] **Step 1: One rule.**
+- [x] **Step 1: One rule.**
   - In `fixes.ts`, add `VERDICT = { t90: 1, trapped: 0.05, smokePct: 5 }` and `fixVerdict(fix)`:
     - `n === 0` gives 'nogain'.
     - When `typeof fix.tradeoff === 'boolean'` (D22 data): 'tradeoff' if true, else 'helps' if `helps`, else 'nogain'.
     - Otherwise, gains and costs from the numbers by D22's rule.
   - `Fix` gains `tradeoff?: boolean` and `costs?: string[]`.
-- [ ] **Step 2: Line.**
+- [x] **Step 2: Line.**
   - `fixLine` keeps today's text for 'helps' and 'nogain', so E28's expectations hold.
   - A trade-off lists its gains, then "; but " and its costs, in the same signed form. Example: "Keep Exit Main entrance clear (vs blocked): -58 s t90, -68% smoke exposure across 36 fires; but +1.3 trapped per fire".
   - A measure that is neither a gain nor a cost is left out.
-- [ ] **Step 3: Badge.**
+- [x] **Step 3: Badge.**
   - helps → `.badge.ok` "helps"; tradeoff → `.badge.trade` "trade-off"; nogain → `.badge.warn` "no gain".
   - App.css: `.badge.trade { background: #7c2d12; color: #ffedd5 }`. qa's axe step checks contrast.
   - Scene 5's "Best measured fix" is the first fix whose verdict is 'helps'.
-- [ ] **Step 4: Names, never ids.** In `spots.ts`, `spotLabel(entry)` returns, in order of preference:
+- [x] **Step 4: Names, never ids.** In `spots.ts`, `spotLabel(entry)` returns, in order of preference:
   - `entry.label`, if it's a non-empty string;
   - else the text of `entry.why` before its first ": ";
   - else `Room <id>` for kind `room` (room ids read well);
@@ -510,23 +509,28 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - HeadlinePack and scene 5, instead of `?? t.id`.
   
   "Not measured" items read `<kind word>: <reason>`, with kind words Widen, Keep clear, Sprinklers and Self-closers. `data-spot`, React keys and `goToSpot` keep the ids.
-- [ ] **Step 5: Fixtures.** In `make-fixtures.mjs`, for `.fixtures/fixes.batch.json` (made-up numbers for the UI only):
+  
+  The what-if door dropdown (the lead note above E32), done in the same step:
+  - Each option reads the door in words, from `doorLabels(building)` in `spots.ts` (cached per building): "Stair SB door", "Exit Main entrance", "Door between Kitchen and Corridor 1". That is D's `door_label` with D23's plain-door wording, so the picker and the lists agree once D23's labels land.
+  - Equal readings on a floor are numbered ", 1 of 2", and a building with several floors adds " · F1". The option's value stays the door id, and the door select takes its own row (the long labels pushed the state select out of the panel).
+  - The same words name the door in the what-if result headline ("Propping Stair SB door open: ...") and in scene 4's fallback caption. AboutOverlay's "Top weak spot" line uses `spotLabel`.
+- [x] **Step 5: Fixtures.** In `make-fixtures.mjs`, for `.fixtures/fixes.batch.json` (made-up numbers for the UI only):
   - Give the `top` entries readable whys: "Stair SB door: 31 people queued at peak; ...", "Stair SA door: ...", "Stair SA door: ...".
   - Append `keepClear-E1` in today's shape: label "Keep Exit Main entrance clear (vs blocked)", derivedFrom "whatIf.blockedExit", door E1, floor F1, n 36, dT90 −58, dSmokeSeconds −3022, smokePct −68, dTrapped 1.3, helps true, no `tradeoff`.
   - Append `keepClear-E2` in D22's shape: label "Keep Exit East stair exit clear (vs blocked)", door E2, floor F1, n 36, dT90 −4, dTrapped −0.2, smokePct 37, helps false, tradeoff true, costs ["37% more time in smoke"].
   - Give both a `why` in D's shape.
-- [ ] **Step 6: QA.** Extend step `fixes`, which runs only with `--open`.
+- [x] **Step 6: QA.** Extend step `fixes`, which runs only with `--open`.
   - When the loaded batch is the fixture (`batch.id === 'fixes'`), report a problem unless all of these hold:
     - the list shows two "trade-off" badges;
     - it contains "; but +1.3 trapped per fire";
     - none of DSB2, DSA2, DSA1, E1, E2 appears as a whole word in any `.fixes .target` or `.spots button b` text.
   - Demo batches skip that id assertion: their D-written labels keep IFC ids until D23 and the precompute rerun.
   - The fly-to assertion on the first button stays for every batch.
-- [ ] **Step 7: Verify.**
+- [x] **Step 7: Verify.**
   - `npm run build` passes with no type errors. Run `node scripts/make-fixtures.mjs`.
   - `npm run qa -- --open .fixtures/fixes.batch.json` exits 0:
     - `qa/fixes-list.png` shows "→ #1 Stair SB door" and two "trade-off" badges at the end of the list;
     - `qa/open-1-tab-risk.png`'s weak-spot headings read labels, not DSB2.
   - `npm run qa -- --open public/demo/batch-example-office.json` exits 0. Its `qa/fixes-list.png` shows keepClear-E1 with a "trade-off" badge, "; but +1.3 trapped per fire" and "→ #4 Exit Main entrance".
-- [ ] **Step 8: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): trade-off badges for measured fixes; spots named by label, never raw id"` (no attribution lines).
+- [x] **Step 8: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): trade-off badges for measured fixes; spots named by label, never raw id"` (no attribution lines).
   - Say in the commit body that office and clinic interior doors read well once D23 lands and A reruns the precompute.

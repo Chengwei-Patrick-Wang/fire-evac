@@ -2,9 +2,9 @@ import { labelsFor, useApp } from '../store/app'
 import { useClock } from '../store/clock'
 import { listDemoRuns, loadDemoRun } from '../data/loader'
 import { compareRuns, findPrecomputedVariant } from '../model/whatif'
-import { spotPosition } from '../model/spots'
+import { doorLabels, spotLabel, spotPosition } from '../model/spots'
 import { batchHeadline, pairHeadline } from '../model/exposure'
-import { fixLine } from '../model/fixes'
+import { fixLine, fixVerdict, readFixes } from '../model/fixes'
 import { seedBadge } from '../model/ranges'
 
 export interface TourCtx {
@@ -98,6 +98,12 @@ const fit = () => useApp.setState((s) => ({ fitView: s.fitView + 1 }))
 const sgn = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(0)} s`
 const sec = (v: number | null) => (v == null ? 'not reached' : `${v.toFixed(0)} s`)
 
+/** The door a what-if changed, in words (the precomputed ones are stair doors). */
+function doorWords(id: string): string {
+  const b = useApp.getState().building
+  return (b && doorLabels(b).get(id)?.label) || `Stair door ${id}`
+}
+
 function variantCaption(): string {
   const st = useApp.getState()
   if (st.headlines?.headline) return st.headlines.headline
@@ -106,10 +112,11 @@ function variantCaption(): string {
     const bh = batchHeadline(st.batch)
     return bh ? `${bh.main} (mean of ${bh.n} fires)` : ''
   }
-  const h = pairHeadline(a.run, b.run, `Stair door ${b.whatIf.door} propped open`)
+  const what = `${doorWords(b.whatIf.door)} propped open`
+  const h = pairHeadline(a.run, b.run, what)
   if (h) return h.secondary ? `${h.main} · ${h.secondary}` : h.main
   const c = compareRuns(a.run, b.run)
-  return `Stair door ${b.whatIf.door} propped open: t90 ${sec(c.t90[0])} → ${sec(c.t90[1])}${c.dT90 != null ? ` (${sgn(c.dT90)})` : ''}, trapped ${a.run.metrics.trapped} → ${b.run.metrics.trapped}`
+  return `${what}: t90 ${sec(c.t90[0])} → ${sec(c.t90[1])}${c.dT90 != null ? ` (${sgn(c.dT90)})` : ''}, trapped ${a.run.metrics.trapped} → ${b.run.metrics.trapped}`
 }
 
 export const TOUR: TourScene[] = [
@@ -181,8 +188,8 @@ export const TOUR: TourScene[] = [
       const spot = hp?.weakSpots?.[0]
       if (hp && spot) {
         const b = seedBadge(spot.kind, spot.seedsInTop3, hp.stability?.n)
-        const fix = hp.fixes?.find((f) => f.helps)
-        return `Fires in every room. Top weak spot: ${spot.label ?? spot.id}${b ? ` (${b.text})` : ''}${fix ? `. Best measured fix: ${fixLine(fix)}` : ''}`
+        const fix = readFixes(hp).find((f) => fixVerdict(f) === 'helps')
+        return `Fires in every room. Top weak spot: ${spotLabel(spot)}${b ? ` (${b.text})` : ''}${fix ? `. Best measured fix: ${fixLine(fix)}` : ''}`
       }
       const top = st.batch?.top[0]
       return top ? `Fires in every room. Top weak spot: ${top.why}` : ''

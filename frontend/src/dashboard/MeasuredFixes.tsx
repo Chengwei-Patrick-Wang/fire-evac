@@ -1,12 +1,19 @@
 import { useApp } from '../store/app'
-import { fixLine, fixTarget } from '../model/fixes'
-import type { Fix } from '../model/fixes'
+import { fixLine, fixTarget, fixVerdict, skippedLine } from '../model/fixes'
+import type { Fix, Verdict } from '../model/fixes'
+import type { SpotLike } from '../model/spots'
 
 interface Props {
   fixes: Fix[]
   skipped?: { id: string; reason: string }[]
-  top: { id: string; floor: string }[]
+  top: (SpotLike & { floor: string })[]
   print?: boolean
+}
+
+const BADGE: Record<Verdict, { cls: string; text: string }> = {
+  helps: { cls: 'badge ok', text: 'helps' },
+  tradeoff: { cls: 'badge trade', text: 'trade-off' },
+  nogain: { cls: 'badge warn', text: 'no gain' },
 }
 
 export default function MeasuredFixes({ fixes, skipped = [], top, print = false }: Props) {
@@ -21,10 +28,16 @@ export default function MeasuredFixes({ fixes, skipped = [], top, print = false 
       <ol className="spots fixes">
         {fixes.map((f) => {
           const t = fixTarget(f, top, building)
+          const badge = BADGE[fixVerdict(f)]
           const inner = (
             <>
-              <span className={f.helps ? 'badge ok' : 'badge warn'}>{f.helps ? 'helps' : 'no gain'}</span> <b>{fixLine(f)}</b>
-              {t && <> → {t.rank != null ? `#${t.rank} ${t.id}` : `${t.id} · ${t.floor}`}</>}
+              <span className={badge.cls}>{badge.text}</span> <b>{fixLine(f)}</b>
+              {t && (
+                <>
+                  {' '}
+                  <span className="target">→ {t.rank != null ? `#${t.rank} ${t.label}` : `${print ? 'on' : 'show on'} ${t.floor}`}</span>
+                </>
+              )}
               <div className="dim">{f.why}</div>
             </>
           )
@@ -40,7 +53,7 @@ export default function MeasuredFixes({ fixes, skipped = [], top, print = false 
       {!print && skipped.length > 0 && (
         <details>
           <summary>Not measured ({skipped.length})</summary>
-          <ul>{skipped.map((s) => <li key={s.id}>{s.id}: {s.reason}</li>)}</ul>
+          <ul>{skipped.map((s) => <li key={s.id}>{skippedLine(s)}</li>)}</ul>
         </details>
       )}
     </>

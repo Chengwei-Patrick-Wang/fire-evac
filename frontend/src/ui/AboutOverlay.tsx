@@ -5,6 +5,7 @@ import { useApp } from '../store/app'
 import { useTour } from '../tour/tour'
 import { creditParts } from '../model/buildingIndex'
 import { phoneReachable, shareUrl } from '../model/link'
+import { spotLabel } from '../model/spots'
 
 
 export function markAboutSeen() {
@@ -61,7 +62,7 @@ export default function AboutOverlay() {
   const numbers = pack
     ? [
         pack.headline,
-        spot0 ? `Top weak spot: ${spot0.label ?? spot0.id}` : null,
+        spot0 ? `Top weak spot: ${spotLabel(spot0)}` : null,
         sc && typeof sc.runs === 'number' && typeof sc.rooms === 'number' && Array.isArray(sc.seeds) && typeof sc.occupants === 'number'
           ? `${sc.runs} fires in ${sc.rooms} rooms over ${sc.seeds.length} seeds, ${sc.occupants} occupants`
           : null,
