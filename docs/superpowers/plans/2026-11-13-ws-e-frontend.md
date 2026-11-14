@@ -17,6 +17,7 @@
 - **Before the scaffold lands on `main` (~12:45 AM Sat):** `frontend/` does not exist, and only `contracts/plan.example.json` and `scenario.example.json` do. Do E1 now, then start E2 on `SAMPLE_BUILDING` (hand-made in E1 from the spec §6 description). When the scaffold lands: `git fetch origin && git merge origin/main`, copy `contracts/{building,run,batch,scenario}.example.json` into `frontend/public/demo/` and list the building, run and batch in `index.json` in A's A5 format (E1 Step 4; ids copied from each file; `scenario.example.json` is only for Open file tests; re-copy after every `python tools/build_examples.py`). If an example disagrees with `types.ts`, the example wins: fix the types and tell A. Never re-plan scaffold work.
 - **Big files:** never read `run.example.json` whole (about 1 MB now, several MB for real runs). Header: `jq -c 'del(.frames,.smoke,.agents,.events,.fire.hrr,.metrics.heatmaps,.metrics.doors)' FILE | head -c 2500`. One frame: `jq -c '.frames[10] | {t, n: (.a|length), first: .a[0]}' FILE`. Event counts: `jq -c '[.events[].type] | group_by(.) | map({(.[0]): length}) | add' FILE`. No jq: `node -e "const r=require('./contracts/run.example.json');console.log(Object.keys(r),r.frames.length)"`.
 - **Run a task (one per session, then `/clear`):** Claude Code on Pro: Sonnet, medium effort, `acceptEdits`, "Use superpowers:executing-plans to do only Task E3 of docs/superpowers/plans/2026-11-13-ws-e-frontend.md". Codex on Plus (reads AGENTS.md itself): "Do only Task E3 of that plan, in order, ticking its boxes." Order: E1 to E9, then P1 (E10 to E12), then P2 (E13); E8 (due Sat 4 PM) goes before E7 (due Sat 10 PM). Behind at 1:30 AM? Ship the skeleton first (E2 Walls and Scene, E3 Index, Sampling and Clock); labels, toggles, marks and fixtures follow.
+- **Ember rework (Sat 14 Nov):** E36 to E38 are in `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`. After E36 the shell below (`TopBar`, `Toolbar3D`, `Scrubber`, `AgentLegend`, the 300 px and 380 px panels) no longer exists; see "Task E36" at the end of this file for where each control went.
 - **Git:** every task's last step is `git add frontend && git commit -m "<message>" && git push` (first push: `git push -u origin ws-e`); push at least hourly, PR to `main` at least every 2 h (the first right after E1), merge `main` into `ws-e` at each sync; if `package.json` or the lockfile conflicts, keep both sides' dependencies and run `npm install`. Never force-push, never push to `main`.
 
 ## Global Constraints
@@ -579,3 +580,31 @@
     - A stand-in API that answers `/health` and the buildings and fails `POST /runs` (HTTP 500, a run that reports an error, a run that never finishes), with a second dev server pointed at it: the app starts in live mode by itself, stays live after each failure, and shows the note and the nearest run.
     - Stop both dev servers and the stand-in.
 - [x] **Step 6: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): live mode falls back to the nearest precomputed run"` (no attribution lines).
+
+## Reworked Sat 14 Nov (Ember)
+
+E36 to E38 are in `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`. E36 removed `TopBar`, `Toolbar3D`, `Scrubber` and `AgentLegend`, so where a task above names them, read the table below. The data, replay, tour and dashboard tasks above still describe how those parts work.
+
+### Task E36 (P0 · Sat 7 PM): Ember theme and shell layout (done; the steps are in the Ember plan)
+- **Theme:** the §11 tokens in `index.css` (the old names stay as aliases), `ui/theme.ts` (`CANVAS`, `sceneBg`, `useChartTheme`), the high-contrast theme redefines the same tokens, and every dark colour is gone from the CSS, the charts and the in-scene labels (`.l3d`, `.tip3d`).
+- **Shell:** a viewer between the analytics sidebar (left) and a dock (floor strip, timeline, credits) at the bottom. The top navigation is a drawer behind the chevron `#nav-toggle`. The legend and a one-button rail (Layers) float at the top right; the scenario and layers cards float over the viewer. Store: `navOpen`, `sidebarOpen`, `card`.
+- **Where each old control went:**
+
+  | Before | Now |
+  | --- | --- |
+  | `TopBar`: brand | sidebar header "Ember" (`TracerBar` in the tracer) |
+  | `TopBar`: Building select, mode chip, Demo, About | nav menubar, right |
+  | `TopBar`: Replay / Tracer tabs | File > Trace a floor plan; "Back to 3D replay" in `TracerBar` |
+  | `TopBar`: run tabs | Timeline "Run" select |
+  | `TopBar`: Share, Open file | nav toolbar; File menu |
+  | `TopBar`: Display (High contrast, Reduce motion) | Settings menu |
+  | `Toolbar3D`: Explode, Labels, Smoke / Fire / Heatmap / Queues / Risk map, Trails, lens buttons | Layers card |
+  | `Toolbar3D`: floor select | floor strip |
+  | `Toolbar3D`: Color status / profile | legend switch "Color by type"; Settings |
+  | `Toolbar3D`: Agent view, Split, Save PNG, Top view, Overview | nav toolbar ("Reset camera" for Overview); View and File menus |
+  | `Scrubber` | `Timeline` (speeds 0.25 to 10×, Restart, Run select) |
+  | `AgentLegend` | `LegendCard` |
+  | left panel "Scenario" | "Fire and scenario" card (Set fire, Run simulation, What-if) |
+  | right panel "Results" | analytics sidebar; "Overview" tab replaces "Results" |
+
+- **QA:** `npm run qa` has the new steps `shell` (default state, menus, Focus mode, floor strip, alerts), `tour` (all six scenes, timers of 10 s or more shortened tenfold) and `phone` (390 × 844), axe on the nav, two menus, both cards, Focus mode and high contrast, and a Tab pass through the open nav.

@@ -8,8 +8,12 @@ import { floorY, toWorld } from '../scene/geometry'
 import { sampleAgent } from './runIndex'
 import type { AgentSample } from './runIndex'
 import { smokeDensityAt, useAgentView, visibility } from './agentView'
+import { sceneBg } from '../ui/theme'
+import { useA11y } from '../ui/a11y'
 
-const BG = new THREE.Color('#0b1220')
+/** The scene's background colour right now (light canvas, or black in high contrast), in one shared instance. */
+const BG = new THREE.Color()
+const bg = () => BG.set(sceneBg(useA11y.getState().contrast))
 const FOG = new THREE.Color('#3a3a3a')
 
 interface Orbit {
@@ -67,7 +71,7 @@ export default function AgentCam() {
       }
       saved.current = null
       scene.fog = null
-      if (scene.background instanceof THREE.Color) scene.background.copy(BG)
+      if (scene.background instanceof THREE.Color) scene.background.copy(bg())
     }
   }, [active, camera, controls, scene, st])
 
@@ -114,7 +118,7 @@ export default function AgentCam() {
         const d = smokeDensityAt(lr.run, f.id, out.x, out.y, t)
         const S = visibility(d)
         if (st.fog) st.fog.far = Math.max(0.5, st.fog.far + ((d < 1 ? 200 : S) - st.fog.far) * (1 - Math.exp(-3 * dt)))
-        if (scene.background instanceof THREE.Color) scene.background.copy(BG).lerp(FOG, 1 - S / 30)
+        if (scene.background instanceof THREE.Color) scene.background.copy(bg()).lerp(FOG, 1 - S / 30)
         if (now - st.last > 250) {
           st.last = now
           let speed = 0

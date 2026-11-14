@@ -3,8 +3,9 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import { loadCalibration, type Calibration } from '../data/loader'
 import { useApp } from '../store/app'
 import { readSeedRange, span } from '../model/ranges'
+import { useChartTheme } from '../ui/theme'
 
-const COLORS = ['#38bdf8', '#f59e0b', '#a78bfa', '#34d399']
+const COLORS = ['#2563EB', '#C2410C', '#7C3AED', '#15803D']
 
 export function Limits() {
   const building = useApp((s) => s.building)
@@ -61,6 +62,7 @@ function between(points: CalPoint[], noun: string) {
 }
 
 function CalChart({ title, source, points, unit, id, noun }: { title: string; source: string; points: CalPoint[]; unit: string; id: string; noun: string }) {
+  const ct = useChartTheme()
   const names = [...new Set(points.flatMap((p) => p.references.map((r) => r.name)))]
   const rows = points.map((p) => {
     const r: Record<string, number | string> = { label: p.label, simulated: p.simulated }
@@ -77,11 +79,12 @@ function CalChart({ title, source, points, unit, id, noun }: { title: string; so
         </p>
         <ResponsiveContainer>
           <BarChart accessibilityLayer={false} data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -10 }}>
-            <CartesianGrid stroke="#1e293b" />
-            <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} />
-            <YAxis stroke="#94a3b8" fontSize={11} unit={unit} />
-            <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #334155' }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <CartesianGrid stroke={ct.grid} />
+            <XAxis dataKey="label" stroke={ct.axis} fontSize={11} />
+            <YAxis stroke={ct.axis} fontSize={11} unit={unit} />
+            <Tooltip contentStyle={{ background: ct.tipBg, border: `1px solid ${ct.tipBorder}` }} labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
+            {/* The swatch keeps the series colour; the name is written in the text colour. */}
+            <Legend wrapperStyle={{ fontSize: 11 }} formatter={(value: string) => <span style={{ color: 'var(--text)' }}>{value}</span>} />
             <Bar dataKey="simulated" name="Simulated" fill={COLORS[0]} isAnimationActive={false} />
             {names.map((n, i) => (
               <Bar key={n} dataKey={n} fill={COLORS[(i + 1) % COLORS.length]} isAnimationActive={false} />

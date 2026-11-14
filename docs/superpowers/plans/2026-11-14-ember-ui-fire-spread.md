@@ -394,7 +394,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
       - `liveStats.ts`: `useLiveStats()`.
     - Components: `TopNav`, `Menu`, `AnalyticsSidebar`, `Overview`, `FloorStrip`, `Timeline`, `LegendCard`, `FloatingCard`, `LayersCard`, `TracerBar`.
     - DOM hooks for qa: `#nav-toggle`, `#topnav`, `.ctxbar`, `#open-file`, `#analytics`, `.edgetab`, `dl.kpis`, `ul.congestion`, `ul.alerts`, `nav.floorstrip`, `footer.dock`, `#play`, `select[aria-label="Playback speed"]`, `select[aria-label="Run"]`, `section.legendcard`, `#card-scenario`, `#card-layers`, `#shell-status`.
-- [ ] **Step 1: Light theme.**
+- [x] **Step 1: Light theme.**
   - Run `npm i lucide-react`.
   - In `index.css`, `:root` takes the §11 tokens:
     - `--canvas: #F8FAFC; --surface: #FFFFFF; --surface-2: #F1F5F9; --text: #111827; --text-2: #64748B; --border: #E5E7EB; --border-strong: #CBD5E1;`
@@ -419,7 +419,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - `sceneBg(contrast)` returns '#000000' or `CANVAS`;
     - `useChartTheme()` returns `{grid: '#E5E7EB', axis: '#64748B', now: '#111827', tipBg: '#FFFFFF', tipBorder: '#E5E7EB'}`, or in high contrast `{grid: '#333333', axis: '#FFFFFF', now: '#FFD400', tipBg: '#000000', tipBorder: '#FFFFFF'}`.
   - In `index.html`, the title becomes "Ember: fire evacuation simulator".
-- [ ] **Step 2: Restyle what stays.** Every dark colour listed under Consumes moves to tokens.
+- [x] **Step 2: Restyle what stays.** Every dark colour listed under Consumes moves to tokens.
   - **Controls:**
     - Buttons sit on `--surface` with a `--border-strong` border and `--r-ctl`.
     - `button.on` and primary buttons (`.run`, `.demo`, the About dialog's first button) are `--primary` with white text. The orange Run button becomes primary blue, because white or near-white on orange fails contrast.
@@ -446,7 +446,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - `SplitView`'s container class becomes `.splitview`, because `.split` collides with `.credits.split`.
   - `AboutOverlay`'s heading becomes "Ember"; the rest of its copy stays.
   - Afterwards, grep `App.css` and the `.tsx` files for hex colours. Anything left must be a three.js colour, or a fill and text pair that passes on its own.
-- [ ] **Step 3: Shell grid.**
+- [x] **Step 3: Shell grid.**
   - **Replay view `.app`:**
     - `height: 100dvh`, `grid-template-columns: var(--sb-col) minmax(0, 1fr)`, `grid-template-rows: minmax(0, 1fr) auto`, areas `'side center' 'dock dock'`.
     - `--sb-col` is 344px, or 0px with `.sb-closed`.
@@ -475,7 +475,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - **Tracer view:**
     - `TracerBar` is a 44 px `header.topbar`: flame mark, "Ember" as `h1.brand`, "Tracer", a "Back to 3D replay" button (`setView('replay')`), and the mode chip.
     - It sits above `TracerPage`. `.app.tracing` keeps today's rows (`44px 1fr`), because `.tr-page` assumes a 44 px bar.
-- [ ] **Step 4: TopNav and menus.**
+- [x] **Step 4: TopNav and menus.**
   - **`button#nav-toggle.navtoggle`:**
     - A 56 × 24 px tab on `--surface`, fixed at the centre of the top edge, with a 12 px bottom radius, `--shadow` and Lucide `ChevronDown`. While the nav is open, it sits on the nav's bottom edge with `ChevronUp`.
     - `aria-label` and `title` read "Expand navigation" or "Collapse navigation". It has `aria-expanded` and `aria-controls="topnav"`. Focus stays on it when it flips.
@@ -529,7 +529,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - Disabled states and titles carry over from Toolbar3D: Split under 2 runs; Agent view and Save PNG in split; Save PNG on private buildings.
     - If the installed lucide-react lacks an icon name, use the nearest one.
   - **Focus mode** sets `navOpen: false` and `sidebarOpen: false`, and moves focus to `#nav-toggle`.
-- [ ] **Step 5: Analytics sidebar.**
+- [x] **Step 5: Analytics sidebar.**
   - `aside#analytics.sidebar[aria-label="Analytics"]` is always in the DOM and `hidden` while collapsed. Its body renders only when open.
   - **Header:**
     - `h1.brand`: Lucide `Flame` in `--fire` (`aria-hidden`), then "Ember".
@@ -561,7 +561,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
       When empty: "No chokepoints at m:ss."
     - "More results": today's Exit use (ExitBars), Run (RunStats) and AccessStats.
     - The 5 and 15 thresholds match QueueRings' ring colours.
-- [ ] **Step 6: Floor strip, timeline, legend and cards.**
+- [x] **Step 6: Floor strip, timeline, legend and cards.**
   - **`FloorStrip`** (`nav.floorstrip[aria-label="Floors"]`, horizontal scroll, `scroll-snap-type: x proximity`):
     - Buttons: "Whole building" (`Layers` icon), then one per floor by level, labelled with `floorName`.
     - Each floor button carries a 64 × 36 SVG silhouette of its walkable outer rings (`aria-hidden`, stroke #94A3B8, fill `--surface-2`). An orange dot marks the active run's fire on its floor. Phones drop the silhouettes.
@@ -591,13 +591,13 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
       - Smoke, Fire, Heatmap, Queues and Risk map, with Toolbar3D's checked, disabled and title logic unchanged;
       - Trails;
       - "Highlight a profile": the six lens buttons, with the same toggling.
-- [ ] **Step 7: Tour and deep links.**
+- [x] **Step 7: Tour and deep links.**
   - In `scenes.ts`:
     - `resetStage()` also sets `navOpen: false`, `card: null`, and `sidebarOpen` (true at 901 px and wider, false below), so scenes 5 and 6 show their tabs.
     - `tourSpeed` picks from `[2, 4, 10]`, because 5× is no longer a speed.
   - In `restoreLink`, a link with `tab` also sets `sidebarOpen: true`. This replaces the startup special case that opened the right panel on phones.
   - The hash format doesn't change.
-- [ ] **Step 8: qa.**
+- [x] **Step 8: qa.**
   - **Helper:** `nav(page, open)` clicks `#nav-toggle` when its `aria-expanded` differs. Every step leaves the nav collapsed.
   - **Moved selectors:**
     - `about`: open the nav, then click the menubar's "About".
@@ -621,7 +621,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - Run axe on `.app`.
   - **`a11y`:** also run axe on `.app` with the nav open and the View menu open, with `card: 'scenario'`, with `card: 'layers'`, and in focus mode.
   - **`deeplink`:** p2 must also reach `sidebarOpen === true`.
-- [ ] **Step 9: Verify.**
+- [x] **Step 9: Verify.**
   - `npm run build` passes with no type errors.
   - `npm run qa` (shim) exits 0 and prints `qa ok: <n> screenshots in frontend/qa/`; every `axe …` line ends in `0 violations`. Then check the screenshots:
     - `qa/shell.png` has the mockup's layout: the analytics card at the left, the chevron at the top centre, the floor strip and timeline at the bottom, and the legend at the top right.
@@ -634,7 +634,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - Manual, with `npm run dev` at 1440 × 900:
     - `?demo` plays all six scenes in about 3 minutes, and Risk, Report and Credibility show on cue.
     - The keyboard alone can expand and collapse the nav, open every menu, hide and show analytics, and play.
-- [ ] **Step 10: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "feat(frontend): Ember light theme and shell (top nav, analytics sidebar, floor strip, timeline, legend)"` (no attribution lines).
+- [x] **Step 10: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "feat(frontend): Ember light theme and shell (top nav, analytics sidebar, floor strip, timeline, legend)"` (no attribution lines).
 
 ### Task E37 (P0 · Sat 9 PM): Building look, floor views, visibility and agent colors
 - **Files:** Create `frontend/src/scene/usePlace.ts`, `frontend/src/ui/VisibilityCard.tsx`; modify `frontend/src/scene/{geometry.ts,Building.tsx,Scene.tsx,CameraRig.tsx,FirePicker.tsx,RiskOverlay.tsx}`, `frontend/src/replay/{Agents,Trails,AgentCam,Fire,Smoke,Heatmap,QueueRings}.tsx`, `frontend/src/store/app.ts`, `frontend/src/ui/{TopNav,FloorStrip,LegendCard,LayersCard}.tsx`, `frontend/src/dashboard/{WeakSpots.tsx,curves.ts}`, `frontend/src/model/link.ts`, `frontend/src/App.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.

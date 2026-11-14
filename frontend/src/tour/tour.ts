@@ -51,7 +51,7 @@ export const useTour = create<TourState>((set, get) => ({
   },
 }))
 
-/** Keys: 1-6 jump (manual pacing); while a scene is on, arrows and PageUp/Down step and Esc stops. Space belongs to Scrubber. */
+/** Keys: 1-6 jump (manual pacing); while a scene is on, arrows and PageUp/Down step and Esc stops. Space belongs to Timeline. */
 export function useTourKeys() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

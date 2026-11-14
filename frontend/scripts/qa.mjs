@@ -97,6 +97,33 @@ try {
       })
     }
   }
+  // The nav is a drawer, collapsed by default: open it to reach a menu or the toolbar, and leave it collapsed again.
+  const nav = async (pg, open) => {
+    const t = pg.locator('#nav-toggle')
+    if (((await t.getAttribute('aria-expanded')) === 'true') !== open) await t.click()
+    await pg.waitForFunction((o) => document.getElementById('nav-toggle')?.getAttribute('aria-expanded') === String(o), open, { timeout: 5000 })
+  }
+  const pickMenu = async (pg, menu, item) => {
+    await pg.locator('#topnav .menus').getByRole('button', { name: menu, exact: true }).click()
+    await pg.locator('[role=menu] .mi-label', { hasText: new RegExp(`^${item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }).first().click()
+  }
+  const AXE = join(root, 'node_modules', 'axe-core', 'axe.min.js')
+  const axeOn = async (pg, label, sel) => {
+    if (!existsSync(AXE)) return void lines.push('axe skipped: not installed')
+    if (!(await pg.evaluate(() => !!window.axe))) await pg.addScriptTag({ path: AXE })
+    const res = await pg.evaluate(
+      async (sel) => {
+        const r = await window.axe.run(document.querySelector(sel), { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })
+        return r.violations.map((v) => ({ id: v.id, impact: v.impact, target: String(v.nodes[0]?.target?.[0] ?? ''), n: v.nodes.length }))
+      },
+      sel,
+    )
+    for (const v of res) {
+      if ((v.impact === 'serious' || v.impact === 'critical') && !AXE_ALLOW.includes(v.id)) problems.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
+      else lines.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
+    }
+    lines.push(`axe ${label}: ${res.length} violations`)
+  }
   const changedShare = (b64) =>
     page.evaluate(async (b64) => {
         const img = new Image()
@@ -150,8 +177,86 @@ try {
     await page.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
     webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'))
   })
+  await step('shell', async () => {
+    const bad = (m) => problems.push(`shell: ${m}`)
+    const toggle = page.locator('#nav-toggle')
+    // Default state: nav collapsed, analytics open, timeline in the dock.
+    if ((await toggle.getAttribute('aria-label')) !== 'Expand navigation' || (await toggle.getAttribute('aria-expanded')) !== 'false') bad('#nav-toggle is not "Expand navigation" / aria-expanded=false by default')
+    if (await page.locator('#topnav').isVisible()) bad('#topnav is visible by default')
+    if (!(await page.getByRole('button', { name: 'Hide analytics' }).isVisible())) bad('"Hide analytics" is not visible by default')
+    if (!(await page.locator('footer.dock #play').isVisible())) bad('#play is not visible inside footer.dock')
+    // Speeds.
+    const speeds = (await page.locator('select[aria-label="Playback speed"] option').allTextContents()).map((t) => t.trim())
+    if (speeds.join(' ') !== '0.25× 0.5× 1× 2× 4× 10×') bad(`speed options read "${speeds.join(' ')}"`)
+    await page.locator('select[aria-label="Playback speed"]').selectOption('4')
+    if ((await page.evaluate(() => window.__clock.getState().speed)) !== 4) bad('choosing 4× did not set the clock speed to 4')
+    await page.locator('select[aria-label="Playback speed"]').selectOption('1')
+    if ((await page.evaluate(() => window.__clock.getState().speed)) !== 1) bad('choosing 1× did not set the clock speed to 1')
+    // Floor strip and legend.
+    const floors = (await page.locator('nav.floorstrip button').allInnerTexts()).map((t) => t.trim())
+    if (floors.join('|') !== 'Whole building|Floor 1|Floor 2') bad(`floor strip reads "${floors.join('|')}"`)
+    if ((await page.locator('nav.floorstrip button').first().getAttribute('aria-pressed')) !== 'true') bad('Whole building is not pressed by default')
+    if (!(await page.locator('section.legendcard').isVisible())) bad('the legend card is not visible')
+    await shot('shell')
+    // Navigation drawer and menus.
+    await toggle.click()
+    await page.waitForFunction(() => document.getElementById('nav-toggle')?.getAttribute('aria-label') === 'Collapse navigation', null, { timeout: 5000 }).catch(() => bad('one click did not turn #nav-toggle into "Collapse navigation"'))
+    const menus = (await page.locator('#topnav .menus > .menuwrap > button').allInnerTexts()).map((t) => t.trim())
+    if (menus.join(' ') !== 'File Edit View Simulation Analysis Settings') bad(`menus read "${menus.join(' ')}"`)
+    await page.locator('#topnav .menus').getByRole('button', { name: 'View', exact: true }).click()
+    await page.locator('[role=menu][aria-label=View]').waitFor({ timeout: 5000 })
+    await page.waitForTimeout(300)
+    await shot('nav-view')
+    await page.keyboard.press('Escape')
+    if ((await page.locator('[role=menu]').count()) !== 0) bad('Escape did not close the View menu')
+    if ((await page.evaluate(() => document.activeElement?.textContent?.trim())) !== 'View') bad('Escape did not put focus back on the View button')
+    // Focus mode: both drawers collapsed, the viewer takes the full width, and the toggles stay.
+    await pickMenu(page, 'View', 'Focus mode')
+    await page.waitForTimeout(500)
+    const fm = await page.evaluate(() => ({ nav: window.__app.getState().navOpen, side: window.__app.getState().sidebarOpen, w: document.querySelector('main.center').getBoundingClientRect().width, focus: document.activeElement?.id }))
+    if (fm.nav || fm.side) bad(`Focus mode left navOpen=${fm.nav}, sidebarOpen=${fm.side}`)
+    if (fm.w < 1400) bad(`in Focus mode main.center is ${Math.round(fm.w)} px wide, want at least 1400`)
+    if (fm.focus !== 'nav-toggle') bad(`Focus mode left focus on "${fm.focus}", want nav-toggle`)
+    await shot('focus-mode')
+    await page.getByRole('button', { name: 'Show analytics' }).click()
+    if (!(await page.evaluate(() => window.__app.getState().sidebarOpen)) || !(await page.getByRole('button', { name: 'Hide analytics' }).isVisible())) bad('"Show analytics" did not restore the sidebar')
+    // Floor strip: one floor, then the whole building.
+    await page.locator('nav.floorstrip button', { hasText: 'Floor 2' }).click()
+    await page.waitForTimeout(2500)
+    const f2 = await page.evaluate(() => ({ v: window.__app.getState().visibleFloors, p: [...document.querySelectorAll('nav.floorstrip button')].map((b) => b.getAttribute('aria-pressed')) }))
+    if (JSON.stringify(f2.v) !== '["F2"]') bad(`Floor 2 set visibleFloors to ${JSON.stringify(f2.v)}`)
+    if (f2.p.join() !== 'false,false,true') bad(`pressed states after Floor 2: ${f2.p.join()}`)
+    await shot('floor-2')
+    await blankCheck('floor-2')
+    await page.locator('nav.floorstrip button', { hasText: 'Whole building' }).click()
+    await page.waitForTimeout(500)
+    if ((await page.evaluate(() => window.__app.getState().visibleFloors)) !== null) bad('Whole building did not set visibleFloors to null')
+    // Alerts: paused, a chokepoint alert flies to its floor. (The first run may have none at 60 s: other times are tried before giving up.)
+    let alerted = false
+    for (const t of [60, 75, 90, 105, 120, 140]) {
+      await page.evaluate((t) => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(t)
+      }, t)
+      await page.waitForTimeout(800)
+      if ((await page.locator('ul.alerts button').count()) === 0) continue
+      alerted = true
+      await page.locator('ul.alerts button').first().click()
+      await page.waitForTimeout(2500)
+      const v = await page.evaluate(() => window.__app.getState().visibleFloors)
+      if (!v || v.length !== 1) bad(`an alert click left visibleFloors ${JSON.stringify(v)}`)
+      await shot('alert-fly')
+      lines.push(`alerts: clicked the first at ${t} s`)
+      await page.locator('nav.floorstrip button', { hasText: 'Whole building' }).click()
+      break
+    }
+    if (!alerted) lines.push('alerts: none at 60 s')
+    await page.evaluate(() => window.__clock.getState().seek(0))
+    await nav(page, false)
+  })
   await step('whatif-static', async () => {
     // No VITE_API_URL here, so the app is in static mode: the Sprinklers box must be off and quote the measured what-if.
+    await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
     const box = page.locator('.scenario .whatif')
     await box.scrollIntoViewIfNeeded()
     await page.waitForFunction(() => /fires:/.test(document.querySelector('.scenario .whatif .note')?.textContent ?? ''), null, { timeout: 5000 }).catch(() => {})
@@ -162,6 +267,7 @@ try {
     if (!/Sprinklers need the live backend/.test(note)) problems.push(`whatif-static: note lacks "Sprinklers need the live backend": "${note}"`)
     if (!/fires:/.test(note)) problems.push(`whatif-static: note lacks the measured "fires:" quote: "${note}"`)
     await shot('whatif-static')
+    await page.evaluate(() => window.__app.setState({ card: null }))
   })
   await step('replay-60s', async () => {
     const t0 = Date.now()
@@ -198,20 +304,24 @@ try {
     await shot('cred-limits')
   })
   await step('about', async () => {
-    await page.locator('header.topbar button', { hasText: 'About' }).click()
+    await nav(page, true)
+    await page.locator('#topnav .menubar').getByRole('button', { name: 'About', exact: true }).click()
     await page.locator('[role=dialog]').waitFor({ timeout: 10000 })
     await page.waitForTimeout(500)
     await shot('about')
     await page.keyboard.press('Escape')
+    await nav(page, false)
   })
   await step('tracer', async () => {
-    await page.locator('.topbar .tabs button', { hasText: 'Tracer' }).click()
+    await nav(page, true)
+    await pickMenu(page, 'File', 'Trace a floor plan')
     await page.locator('.tr-page').waitFor({ timeout: 15000 })
     await page.waitForTimeout(500)
     await shot('tracer')
     cur = 'tracer→replay'
-    await page.locator('.topbar .tabs button', { hasText: 'Replay' }).click()
+    await page.locator('header.topbar button', { hasText: 'Back to 3D replay' }).click()
     await page.locator('main.center canvas').first().waitFor({ timeout: 15000 })
+    await nav(page, false)
   })
   await step('scene4', async () => {
     await page.evaluate(() => window.__tour.getState().go(3, false))
@@ -219,6 +329,69 @@ try {
     await shot('scene4')
     await blankCheck('scene4')
     await page.evaluate(() => window.__tour.getState().stop())
+  })
+  await step('tour', async () => {
+    // The whole demo, in a fresh page, with timers of 10 s or more shortened tenfold so six scenes take about 20 s. Every scene must find its
+    // panel and tab on the new layout: the sidebar open, the nav and cards closed, and scenes 5 and 6 on their tabs.
+    const p4 = await ctx.newPage()
+    p4.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[tour] ${m.text()}`)
+    })
+    p4.on('pageerror', (e) => errors.push(`[tour] ${String(e)}`))
+    await p4.addInitScript(() => {
+      const real = window.setTimeout.bind(window)
+      window.setTimeout = (fn, ms, ...a) => real(fn, typeof ms === 'number' && ms >= 10000 ? ms / 10 : ms, ...a)
+    })
+    try {
+      await p4.goto(`${server.resolvedUrls.local[0]}?qa&demo`)
+      // Each poll records what the page shows while a scene is current. resetStage runs in the same tick that the scene starts, so the first
+      // poll of a scene already sees the nav, cards and sidebar as the scene left them.
+      const rec = new Map()
+      const t0 = Date.now()
+      let settled = 0
+      while (Date.now() - t0 < 90000) {
+        const s = await p4.evaluate(() => {
+          const a = window.__app.getState()
+          return {
+            scene: window.__tour.getState().scene,
+            tab: a.resultsTab,
+            nav: a.navOpen,
+            card: a.card,
+            side: a.sidebarOpen,
+            tabSel: document.querySelector('.results [role=tab][aria-selected=true]')?.textContent ?? null,
+            sideVisible: !!document.querySelector('#analytics')?.offsetParent,
+            cap: !!document.querySelector('.tourcap'),
+          }
+        })
+        if (s.scene !== null) {
+          const r = rec.get(s.scene) ?? { first: s, tabs: new Set(), caps: 0, polls: 0 }
+          r.tabs.add(`${s.tab}/${s.tabSel}`)
+          r.caps += s.cap ? 1 : 0
+          r.polls++
+          rec.set(s.scene, r)
+          if ((s.scene === 4 || s.scene === 5) && r.polls === 3) await p4.screenshot({ path: join(out, `tour-scene${s.scene + 1}.png`) })
+          if (s.scene === 5 && r.polls >= 4) break
+        }
+        await p4.waitForTimeout(400)
+        settled++
+      }
+      for (let i = 0; i < 6; i++) {
+        const r = rec.get(i)
+        if (!r) {
+          problems.push(`tour: scene ${i + 1} never ran (ran: ${[...rec.keys()].map((k) => k + 1).join(', ') || 'none'})`)
+          continue
+        }
+        if (r.caps === 0) problems.push(`tour: scene ${i + 1} shows no caption`)
+        if (r.first.nav || r.first.card) problems.push(`tour: scene ${i + 1} started with navOpen=${r.first.nav}, card=${r.first.card}`)
+        if (!r.first.side || !r.first.sideVisible) problems.push(`tour: scene ${i + 1} has no visible analytics sidebar`)
+      }
+      const tabs = (i) => [...(rec.get(i)?.tabs ?? [])].join(', ')
+      if (rec.get(4) && !rec.get(4).tabs.has('risk/Risk')) problems.push(`tour: scene 5 never showed the Risk tab (saw ${tabs(4)})`)
+      if (rec.get(5) && !rec.get(5).tabs.has('cred/Credibility')) problems.push(`tour: scene 6 never showed the Credibility tab (saw ${tabs(5)})`)
+      lines.push(`tour: scenes ${[...rec.keys()].map((k) => k + 1).join(', ')} ran (${settled} polls)`)
+    } finally {
+      await p4.close()
+    }
   })
   await step('deeplink', async () => {
     await page.evaluate(() => {
@@ -244,7 +417,7 @@ try {
       await p2.goto(url)
       await p2.waitForFunction(() => {
         const g = window.__app?.getState()
-        return g && g.resultsTab === 'risk' && g.activeRunKey && Math.abs(window.__clock.getState().t - 42) < 0.11
+        return g && g.resultsTab === 'risk' && g.sidebarOpen === true && g.activeRunKey && Math.abs(window.__clock.getState().t - 42) < 0.11
       }, null, { timeout: 30000, polling: 250 })
       await p2.waitForTimeout(2000)
       const b = await p2.evaluate(() => ({ pose: { p: [...window.__pose.p], t: [...window.__pose.t] }, explode: window.__app.getState().explode, heat: window.__app.getState().layers.heatmap, labels: window.__app.getState().layers.labels }))
@@ -259,11 +432,13 @@ try {
     lines.push('deeplink ok')
   })
   await step('share', async () => {
-    await page.locator('header.topbar button', { hasText: 'Share' }).click()
+    await nav(page, true)
+    await page.locator('.ctxbar').getByRole('button', { name: 'Share', exact: true }).click()
     await page.locator('[role=dialog][aria-label="Share this view"]').waitFor({ timeout: 10000 })
     await page.waitForTimeout(500)
     await shot('share')
     await page.keyboard.press('Escape')
+    await nav(page, false)
   })
   await step('print', async () => {
     await page.locator('.results [role=tab]').nth(2).click()
@@ -281,7 +456,9 @@ try {
     await page.waitForFunction(() => !document.querySelector('.printreport'), null, { timeout: 10000 })
   })
   await step('save-png', async () => {
-    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.locator('.toolbar3d button', { hasText: 'Save PNG' }).click()])
+    await nav(page, true)
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.locator('.ctxbar').getByRole('button', { name: 'Save PNG', exact: true }).click()])
+    await nav(page, false)
     const f = join(out, 'save-3d.png')
     await dl.saveAs(f)
     const share = await changedShare(readFileSync(f).toString('base64'))
@@ -289,25 +466,7 @@ try {
     if (share < 0.01) problems.push('blank Save PNG')
   })
   await step('a11y', async () => {
-    const axePath = join(root, 'node_modules', 'axe-core', 'axe.min.js')
-    let haveAxe = existsSync(axePath)
-    if (haveAxe) await page.addScriptTag({ path: axePath })
-    else lines.push('axe skipped: not installed')
-    const runAxe = async (label, sel) => {
-      if (!haveAxe) return
-      const res = await page.evaluate(
-        async (sel) => {
-          const r = await window.axe.run(document.querySelector(sel), { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })
-          return r.violations.map((v) => ({ id: v.id, impact: v.impact, target: String(v.nodes[0]?.target?.[0] ?? ''), n: v.nodes.length }))
-        },
-        sel,
-      )
-      for (const v of res) {
-        if ((v.impact === 'serious' || v.impact === 'critical') && !AXE_ALLOW.includes(v.id)) problems.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
-        else lines.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
-      }
-      lines.push(`axe ${label}: ${res.length} violations`)
-    }
+    const runAxe = (label, sel) => axeOn(page, label, sel)
     await page.evaluate(() => {
       window.__tour.getState().stop()
       window.__clock.setState({ playing: false })
@@ -318,25 +477,56 @@ try {
       await page.waitForTimeout(600)
       await runAxe(`tab ${names[i]}`, '.app')
     }
-    await page.locator('header.topbar button', { hasText: 'About' }).click()
+    await nav(page, true)
+    await page.locator('#topnav .menubar').getByRole('button', { name: 'About', exact: true }).click()
     await page.locator('[role=dialog]').waitFor({ timeout: 10000 })
     await runAxe('about', '[role=dialog]')
     await page.keyboard.press('Escape')
     await page.locator('.results [role=tab]').first().click()
+    // The new surfaces: the nav, two menus, the two cards and Focus mode.
+    await runAxe('nav open', '.app')
+    for (const menu of ['View', 'Simulation']) {
+      await page.locator('#topnav .menus').getByRole('button', { name: menu, exact: true }).click()
+      await page.locator(`[role=menu][aria-label=${menu}]`).waitFor({ timeout: 5000 })
+      await runAxe(`${menu} menu`, '.app')
+      await page.keyboard.press('Escape')
+    }
+    await nav(page, false)
+    for (const card of ['scenario', 'layers']) {
+      await page.evaluate((c) => window.__app.setState({ card: c }), card)
+      await page.waitForTimeout(400)
+      await runAxe(`card ${card}`, '.app')
+    }
+    await page.evaluate(() => window.__app.setState({ card: null, navOpen: false, sidebarOpen: false }))
+    await page.waitForTimeout(300)
+    await runAxe('focus mode', '.app')
+    await page.evaluate(() => window.__app.setState({ sidebarOpen: true }))
+    await page.waitForTimeout(300)
 
     await page.evaluate(() => document.body.focus())
     await page.evaluate(() => document.activeElement && document.activeElement.blur())
-    for (let i = 1; i <= 60; i++) {
-      await page.keyboard.press('Tab')
-      const bad = await page.evaluate(() => {
+    const unnamed = () =>
+      page.evaluate(() => {
         const el = document.activeElement
         if (!el || el === document.body) return null
         const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim() || (el.labels && el.labels.length ? el.labels[0].textContent.trim() : '') || (el.getAttribute('aria-labelledby') ? 'x' : '')
         return name ? null : `${el.tagName.toLowerCase()}.${el.className}`
       })
+    for (let i = 1; i <= 60; i++) {
+      await page.keyboard.press('Tab')
+      const bad = await unnamed()
       if (bad) problems.push(`tab ${i}: focused element has no accessible name: ${bad}`)
       if (i === 8) await shot('a11y-focus')
     }
+    // And through the open nav: the menu buttons, the building select and every toolbar button need names too.
+    await nav(page, true)
+    await page.evaluate(() => document.getElementById('nav-toggle').focus())
+    for (let i = 1; i <= 26; i++) {
+      await page.keyboard.press('Tab')
+      const bad = await unnamed()
+      if (bad) problems.push(`nav tab ${i}: focused element has no accessible name: ${bad}`)
+    }
+    await nav(page, false)
 
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.reload()
@@ -354,16 +544,73 @@ try {
       window.__app.setState({ autoRotate: false })
     })
 
-    await page.locator('header.topbar button', { hasText: 'Display' }).click()
-    await page.locator('#display-panel label', { hasText: 'High contrast' }).click()
+    // High contrast through Settings; the shot is of the collapsed layout.
+    await nav(page, true)
+    await pickMenu(page, 'Settings', 'High contrast')
+    await nav(page, false)
     await page.waitForTimeout(500)
     await shot('contrast')
-    await page.locator('#display-panel label', { hasText: 'High contrast' }).click()
-    await page.keyboard.press('Escape')
+    await runAxe('high contrast', '.app')
+    await nav(page, true)
+    await pickMenu(page, 'Settings', 'High contrast')
+    await nav(page, false)
+    if ((await page.evaluate(() => document.documentElement.dataset.contrast)) === 'high') problems.push('High contrast did not turn off')
+  })
+  await step('phone', async () => {
+    // A 390 x 844 phone with the same init script: panels overlay the viewer, the floor strip scrolls, the timeline stays usable.
+    const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+    await pctx.addInitScript(() => {
+      try {
+        localStorage['fes.aboutSeen'] = '1'
+      } catch {
+        /* ignore */
+      }
+    })
+    const ph = await pctx.newPage()
+    ph.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[phone] ${m.text()}`)
+    })
+    ph.on('pageerror', (e) => errors.push(`[phone] ${String(e)}`))
+    try {
+      await ph.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await ph.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await ph.waitForTimeout(2000)
+      const bad = (m) => problems.push(`phone: ${m}`)
+      if (!(await ph.getByRole('button', { name: 'Show analytics' }).isVisible())) bad('the sidebar does not start collapsed ("Show analytics" is missing)')
+      if (!(await ph.locator('#play').isVisible())) bad('#play is not visible')
+      const strip = await ph.locator('nav.floorstrip').evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, shown: el.getBoundingClientRect().height > 0 }))
+      if (!strip.shown) bad('the floor strip is not visible')
+      if (strip.sw < strip.cw) bad(`the floor strip's scrollWidth ${strip.sw} is under its clientWidth ${strip.cw}`)
+      const tl = await ph.locator('.timeline').evaluate((el) => ({ right: el.getBoundingClientRect().right, w: window.innerWidth, scroll: document.documentElement.scrollWidth }))
+      if (tl.right > tl.w + 1 || tl.scroll > tl.w + 1) bad(`the timeline or page overflows sideways (timeline right ${Math.round(tl.right)}, page scrollWidth ${tl.scroll}, window ${tl.w})`)
+      await ph.screenshot({ path: join(out, 'phone.png') })
+      shots.push('phone')
+      const before = await ph.locator('main.center').boundingBox()
+      await ph.getByRole('button', { name: 'Show analytics' }).click()
+      await ph.waitForTimeout(1500)
+      const after = await ph.locator('main.center').boundingBox()
+      const side = await ph.locator('#analytics').boundingBox()
+      if (!before || !after || !side) bad('could not measure main.center and the sidebar')
+      else {
+        if (Math.abs(after.width - before.width) > 1 || Math.abs(after.height - before.height) > 1) bad(`opening the sidebar resized the viewer (${Math.round(before.width)}x${Math.round(before.height)} to ${Math.round(after.width)}x${Math.round(after.height)})`)
+        if (side.x < after.x - 1 || side.x + side.width > after.x + after.width + 1 || side.y + side.height > after.y + after.height + 1) bad('the open sidebar is not inside the viewer box')
+      }
+      await ph.screenshot({ path: join(out, 'phone-sidebar.png') })
+      shots.push('phone-sidebar')
+      await axeOn(ph, 'phone', '.app')
+      await ph.evaluate(() => window.__app.setState({ sidebarOpen: false }))
+      await ph.locator('#nav-toggle').click()
+      await ph.waitForTimeout(400)
+      await ph.screenshot({ path: join(out, 'phone-nav.png') })
+      shots.push('phone-nav')
+      await axeOn(ph, 'phone nav', '.app')
+    } finally {
+      await pctx.close()
+    }
   })
   for (let n = 0; n < opens.length; n++) {
     await step(`open-${n + 1}`, async () => {
-      await page.locator('header.topbar label.file input').setInputFiles(opens[n])
+      await page.locator('#open-file').setInputFiles(opens[n])
       await page.waitForTimeout(500)
       await page.waitForFunction(() => window.__app.getState().loading === null, null, { timeout: 60000 })
     })
@@ -447,6 +694,7 @@ try {
         const d = window.__app.getState().draft
         window.__app.getState().patchDraft({ fire: { ...d.fire, floor: fire.floor, room: fire.room, x: fire.x, y: fire.y } })
       }, t.fire)
+      await p3.evaluate(() => window.__app.setState({ card: 'scenario' }))
       const runButton = p3.locator('.scenario > button.run')
       const read = () =>
         p3.evaluate(() => {

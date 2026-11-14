@@ -120,7 +120,7 @@ export default function WhatIfCard() {
       {err && <p className="err">{err}</p>}
       {head && <p className="whatif-card"><b>{head.main}</b></p>}
       {cmp && variant && (
-        <p className="whatif-card" style={{ color: cmp.dT90 != null ? (cmp.dT90 > 0 || cmp.dTrapped > 0 ? '#f87171' : '#4ade80') : cmp.dTrapped > 0 ? '#f87171' : undefined }}>
+        <p className={'whatif-card' + (cmp.dT90 != null ? (cmp.dT90 > 0 || cmp.dTrapped > 0 ? ' worse' : ' better') : cmp.dTrapped > 0 ? ' worse' : '')}>
           t90 {fmt(cmp.t90[0])} → {fmt(cmp.t90[1])}
           {cmp.dT90 != null ? ` (${signed(cmp.dT90)})` : ''}, trapped {base!.run.metrics.trapped} → {variant.run.metrics.trapped}
         </p>

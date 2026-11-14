@@ -75,7 +75,7 @@ export default function AboutOverlay() {
   return (
     <div className="about-backdrop" role="dialog" aria-modal="true" aria-label="About" onClick={close}>
       <div className="about-card" ref={cardRef} onClick={(e) => e.stopPropagation()}>
-        <h2>Fire evacuation sim</h2>
+        <h2>Ember</h2>
         <p className="pitch">Give us a building, and we'll show where people get stuck before a fire does.</p>
         <h3>How it works</h3>
         <ol>

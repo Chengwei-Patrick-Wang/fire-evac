@@ -15,6 +15,7 @@ import { CameraSyncPane } from './cameraSync'
 import { CaptureHook } from './capture'
 import { useA11y } from '../ui/a11y'
 import { perfOn, perfStats } from '../ui/perf'
+import { sceneBg } from '../ui/theme'
 
 // Copies the previous frame's render totals (read inside useFrame they are last frame's).
 function PerfProbe() {
@@ -39,7 +40,7 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
       aria-describedby="replay-summary"
       style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%', isolation: 'isolate' }}>
       <Canvas dpr={[1, 1.5]} camera={{ fov: 50, near: 0.1, far: 1000 }}>
-        <color attach="background" args={[contrast ? '#000000' : '#0b1220']} />
+        <color attach="background" args={[sceneBg(contrast)]} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[20, 40, 20]} intensity={0.8} />
         <OrbitControls makeDefault enabled={!following} autoRotate={autoRotate && !reduceMotion} autoRotateSpeed={0.5} />

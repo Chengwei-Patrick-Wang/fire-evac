@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as THREE from 'three'
 import { Html } from '@react-three/drei'
 import { useApp } from '../store/app'
+import { useA11y } from '../ui/a11y'
 import { floorY, toWorld } from './geometry'
 import { centroidOf, rampColor, riskRange, roomRiskColor, stairScore } from '../model/spots'
 import Heatmap from '../replay/Heatmap'
@@ -23,6 +24,7 @@ function RoomFill({ poly, color, onClick }: { poly: Vec2[]; color: string; onCli
 }
 
 function PulseRing({ pos, y }: { pos: Vec2; y: number }) {
+  const contrast = useA11y((s) => s.contrast)
   const [on, setOn] = useState(true)
   useEffect(() => {
     const t = setTimeout(() => setOn(false), 3000)
@@ -32,8 +34,22 @@ function PulseRing({ pos, y }: { pos: Vec2; y: number }) {
   return (
     <mesh position={toWorld(pos[0], pos[1], y + 0.15)} rotation-x={-Math.PI / 2}>
       <ringGeometry args={[1.0, 1.3, 40]} />
-      <meshBasicMaterial color="#f8fafc" transparent opacity={0.9} depthWrite={false} />
+      <meshBasicMaterial color={contrast ? '#FFD400' : '#2563EB'} transparent opacity={0.9} depthWrite={false} />
     </mesh>
+  )
+}
+
+/** The ring that marks where flyTo went (a chokepoint alert, a weak spot). It shows whether or not the risk layer is on. */
+function FocusPulse() {
+  const focus = useApp((s) => s.focus)
+  const building = useApp((s) => s.building)
+  const explode = useApp((s) => s.explode)
+  const floor = focus && building ? building.floors.find((f) => f.id === focus.floorId) : undefined
+  if (!focus || !floor) return null
+  return (
+    <group position-y={floorY(floor, explode)}>
+      <PulseRing key={focus.nonce} pos={focus.pos} y={0} />
+    </group>
   )
 }
 
@@ -42,7 +58,6 @@ function FloorRisk({ floor }: { floor: BuildingFloor }) {
   const batch = useApp((s) => s.batch)
   const metric = useApp((s) => s.riskMetric)
   const building = useApp((s) => s.building)
-  const focus = useApp((s) => s.focus)
   const range = useMemo(() => (batch ? riskRange(batch, metric) : null), [batch, metric])
   if (!batch || !building) return null
   const maxScore = Math.max(1e-9, ...batch.doors.map((d) => d.score))
@@ -76,7 +91,6 @@ function FloorRisk({ floor }: { floor: BuildingFloor }) {
         const v = stairScore(building, batch, s.room) / maxScore
         return <RoomFill key={s.id} poly={s.polygon} color={rampColor(v)} onClick={() => undefined} />
       })}
-      {focus && focus.floorId === floor.id && <PulseRing key={focus.nonce} pos={focus.pos} y={0} />}
     </group>
   )
 }
@@ -94,7 +108,8 @@ export default function RiskOverlay() {
   useEffect(() => {
     if (on && crowding && !heat) useApp.setState((s) => ({ layers: { ...s.layers, heatmap: true } }))
   }, [on, crowding, heat])
-  if (!building || !batch) return null
+  if (!building) return null
+  if (!batch) return <FocusPulse />
   const sel = selected ? batch.rooms.find((r) => r.id === selected) : null
   const selFloor = sel ? building.floors.find((f) => f.id === sel.floor) : null
   const selRoom = selFloor?.rooms.find((r) => r.id === selected)
@@ -103,6 +118,7 @@ export default function RiskOverlay() {
   const stab = readStability(batch)
   return (
     <>
+      <FocusPulse />
       {on &&
         building.floors
           .filter((f) => !visible || visible.includes(f.id))
@@ -110,7 +126,7 @@ export default function RiskOverlay() {
       {on && crowding && <Heatmap source="batch" />}
       {on && sel && selFloor && selRoom && (
         <Html position={toWorld(...centroidOf(selRoom.polygon), floorY(selFloor, 0) + 1.5)} center style={{ pointerEvents: 'none' }}>
-          <div style={{ background: '#0f172ae6', border: '1px solid #475569', borderRadius: 4, padding: '4px 8px', fontSize: 12, whiteSpace: 'nowrap' }}>
+          <div className="tip3d" style={{ whiteSpace: 'nowrap' }}>
             <b>{sel.id}</b> {selRoom.name}
             <br />
             riskT90: {sel.riskT90 === null ? 'not reached' : `${sel.riskT90.toFixed(0)} s`}

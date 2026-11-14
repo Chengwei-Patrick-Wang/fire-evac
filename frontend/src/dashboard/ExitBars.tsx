@@ -2,12 +2,14 @@ import { useMemo } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useApp } from '../store/app'
 import { PROFILE_HEX, PROFILE_LABELS } from './curves'
+import { useChartTheme } from '../ui/theme'
 
 type Row = Record<string, number | string>
 
 export default function ExitBars() {
   const lr = useApp((s) => (s.activeRunKey ? s.runs[s.activeRunKey] : null))
   const building = useApp((s) => s.building)
+  const ct = useChartTheme()
   const data = useMemo(() => {
     if (!lr) return { rows: [] as Row[], used: [] as number[], any: false }
     const run = lr.run
@@ -49,10 +51,10 @@ export default function ExitBars() {
       </p>
       <ResponsiveContainer>
         <BarChart accessibilityLayer={false} data={data.rows} margin={{ top: 8, right: 12, bottom: 4, left: -20 }}>
-          <CartesianGrid stroke="#1e293b" />
-          <XAxis dataKey="id" stroke="#94a3b8" fontSize={11} />
-          <YAxis allowDecimals={false} stroke="#94a3b8" fontSize={11} />
-          <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #334155' }} />
+          <CartesianGrid stroke={ct.grid} />
+          <XAxis dataKey="id" stroke={ct.axis} fontSize={11} />
+          <YAxis allowDecimals={false} stroke={ct.axis} fontSize={11} />
+          <Tooltip contentStyle={{ background: ct.tipBg, border: `1px solid ${ct.tipBorder}` }} labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
           {data.used.map((p) => (
             <Bar key={p} dataKey={'p' + p} name={PROFILE_LABELS[p]} stackId="a" fill={PROFILE_HEX[p]} isAnimationActive={false} />
           ))}

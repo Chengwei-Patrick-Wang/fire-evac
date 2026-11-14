@@ -38,6 +38,10 @@ export function resetStage() {
     crowding: false,
     riskMetric: 'riskT90',
     resultsTab: 'results',
+    navOpen: false,
+    card: null,
+    // The sidebar holds the tabs scenes 5 and 6 switch to: open on a desktop, closed on a phone (where it would cover the picture).
+    sidebarOpen: window.matchMedia('(min-width: 901px)').matches,
     lens: [true, true, true, true, true, true],
     layers: { ...DEFAULT_LAYERS, labels: b ? labelsFor(b) : DEFAULT_LAYERS.labels },
   })
@@ -83,7 +87,7 @@ export async function variant(baseKey: string): Promise<string | null> {
 
 /** A run plays in about 35 s. */
 export function tourSpeed(duration: number): number {
-  return [2, 5, 10].find((s) => s >= duration / 35) ?? 10
+  return [2, 4, 10].find((s) => s >= duration / 35) ?? 10
 }
 
 function play(key: string) {
