@@ -11,6 +11,8 @@ import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import Scrubber from './ui/Scrubber'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
+import AgentLegend from './ui/AgentLegend'
+import ErrorBoundary from './ui/ErrorBoundary'
 import TourCaption from './tour/TourCaption'
 import { useTour, useTourKeys } from './tour/tour'
 import { makeDraft } from './model/scenarioDraft'
@@ -121,7 +123,7 @@ function s_notice(m: string) {
 }
 
 export default function App() {
-  const { view, building, split, runs, runOrder, activeRunKey } = useApp()
+  const { view, building, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
@@ -173,8 +175,22 @@ export default function App() {
           </Suspense>
         ) : (
           <>
-            {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
+            <ErrorBoundary label="3D view">
+              {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
+            </ErrorBoundary>
             <Toolbar3D />
+            {notice && (
+              <div className="banner" role="status">
+                <span>{notice}</span>
+                <button aria-label="Dismiss" onClick={() => useApp.getState().setNotice(null)}>×</button>
+              </div>
+            )}
+            {loading && !activeRunKey && (
+              <div className="loadingcover">
+                <span className="spinner" /> {loading}
+              </div>
+            )}
+            <AgentLegend />
             <AgentReadout />
             <TourCaption />
           </>
@@ -182,7 +198,9 @@ export default function App() {
       </main>
       <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>
         <Suspense fallback={<div className="pad dim">Loading…</div>}>
-          <ResultsPanel />
+          <ErrorBoundary label="Results">
+            <ResultsPanel />
+          </ErrorBoundary>
         </Suspense>
       </aside>
       <footer className="bottom"><Scrubber /></footer>

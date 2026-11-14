@@ -9,7 +9,7 @@ export default function TopBar({
   onSelectBuilding: (id: string) => void
   onOpenFile: (f: File) => void
 }) {
-  const { buildings, building, runOrder, runs, activeRunKey, view, setView, switchRun, notice, mode, loading } = useApp()
+  const { buildings, building, runOrder, runs, activeRunKey, view, setView, switchRun, mode, loading } = useApp()
   const touring = useTour((s) => s.scene !== null)
   const fileRef = useRef<HTMLInputElement>(null)
   return (
@@ -62,9 +62,13 @@ export default function TopBar({
           }}
         />
       </label>
-      <span className="mode mode-label">{mode}</span>
+      <span
+        className="mode mode-label"
+        title={mode === 'live' ? 'Live: the backend runs new simulations' : 'Static: precomputed runs only, no backend'}
+      >
+        {mode}
+      </span>
       {loading && <span className="spinner" aria-label="loading" />}
-      {notice && <span className="notice">{notice}</span>}
     </header>
   )
 }

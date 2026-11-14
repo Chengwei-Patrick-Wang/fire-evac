@@ -36,7 +36,7 @@ export default function WeakSpots() {
       )}
       {err && <p className="err">{err}</p>}
       {!batch ? (
-        <p className="dim">No batch for this building. {mode === 'live' ? 'Run a batch to see the risk map.' : 'Static mode needs a precomputed batch.'}</p>
+        <div className="empty"><b>No batch for this building</b><span>{mode === 'live' ? 'Run a batch to see the risk map.' : 'Static mode needs a precomputed batch.'}</span></div>
       ) : (
         <>
           <Stamps />

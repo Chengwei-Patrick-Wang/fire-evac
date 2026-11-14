@@ -12,6 +12,7 @@ import FirePicker from './FirePicker'
 import RiskOverlay from './RiskOverlay'
 import AgentCam from '../replay/AgentCam'
 import { CameraSyncPane } from './cameraSync'
+import { perfOn } from '../ui/perf'
 
 export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: string }) {
   const autoRotate = useApp((s) => s.autoRotate)
@@ -34,7 +35,7 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
         <QueueRings runKey={runKey} />
         <RiskOverlay />
         {!runKey && <FirePicker />}
-        {import.meta.env.DEV && <Stats />}
+        {perfOn() && <Stats />}
       </Canvas>
     </div>
   )
