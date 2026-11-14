@@ -10,6 +10,11 @@ import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
 import { spotPosition } from '../model/spots'
 import type { HeadlinePack } from '../model/headlines'
 import { findPrecomputedVariant, makeVariant } from '../model/whatif'
+import { floorsByLevel } from '../model/floors'
+import type { ViewMode } from '../scene/geometry'
+
+/** The floor gap a fresh page starts with: with opaque slabs, no gap would hide the lower floors. */
+export const DEFAULT_EXPLODE = 0.6
 
 /** Room labels start on only for small buildings (up to 40 rooms over all floors). */
 export function labelsFor(building: Building): boolean {
@@ -29,7 +34,7 @@ export interface LoadedRun {
 export type View = 'replay' | 'tracer'
 export type ResultsTab = 'results' | 'risk' | 'report' | 'cred'
 /** The floating card open over the viewer, if any (one at a time). */
-export type Card = 'scenario' | 'layers' | null
+export type Card = 'scenario' | 'layers' | 'visibility' | null
 
 /** Phones (900 px and under) start with the analytics sidebar collapsed, so it doesn't cover the 3D view. */
 const phoneAtStart = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 900px)').matches
@@ -66,7 +71,18 @@ interface AppState {
   headlines: HeadlinePack | null
   explode: number
   reveal: number
+  /** The floors every layer draws (null: all). Written only by setViewMode and flyTo. */
   visibleFloors: string[] | null
+  /** Stacked (all floors, a gap apart), single (one floor alone), side (all in a row on the ground) or ghost (all, one solid). */
+  viewMode: ViewMode
+  /** The floor that single and ghost centre on; null in stacked and side. */
+  focusFloor: string | null
+  /** Switches the floor view. Single and ghost take `floor`, else the current focus floor, else the run's fire floor, else the lowest. Clears the camera focus; `fit` (default true) also re-frames the camera. */
+  setViewMode: (mode: ViewMode, floor?: string, fit?: boolean) => void
+  /** How big and bright the fire is drawn, 0 to 2 (a picture setting; the simulation never changes). */
+  fireGlow: number
+  /** How dense the smoke is drawn, 0 to 1.5. */
+  smokeOpacity: number
   layers: Layers
   topView: number
   split: boolean
@@ -81,7 +97,8 @@ interface AppState {
   crowding: boolean
   lens: boolean[]
   trails: boolean
-  agentColor: 'status' | 'profile'
+  /** People are coloured by what they are doing (status) or by their mobility profile (type). */
+  colorBy: 'status' | 'type'
   follow: number | null
   pickAgent: boolean
   setFollow: (i: number | null) => void
@@ -145,10 +162,32 @@ export const useApp = create<AppState>((set) => ({
   notice: null,
   batch: null,
   headlines: null,
-  explode: 0,
+  explode: DEFAULT_EXPLODE,
   reveal: 0,
   visibleFloors: null,
-  layers: { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
+  viewMode: 'stacked',
+  focusFloor: null,
+  setViewMode: (mode, floor, fit = true) =>
+    set((s) => {
+      const ids = s.building ? floorsByLevel(s.building).map((f) => f.id) : []
+      const fireFloor = s.activeRunKey ? s.runs[s.activeRunKey]?.run.fire.floor : undefined
+      const known = (id: string | null | undefined): id is string => !!id && ids.includes(id)
+      const pick = [floor, s.focusFloor, fireFloor, ids[0]].find(known) ?? null
+      const needsFloor = mode === 'single' || mode === 'ghost'
+      // Single and ghost centre on a floor; with none to pick (no building yet) they fall back to stacked.
+      const m: ViewMode = needsFloor && pick === null ? 'stacked' : mode
+      const focusFloor = needsFloor ? pick : null
+      return {
+        viewMode: m,
+        focusFloor: m === 'stacked' ? null : focusFloor,
+        visibleFloors: m === 'single' && focusFloor ? [focusFloor] : null,
+        focus: null,
+        ...(fit ? { fitView: s.fitView + 1 } : {}),
+      }
+    }),
+  fireGlow: 1,
+  smokeOpacity: 1,
+  layers: { rooms: false, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
   topView: 0,
   split: false,
   draft: null,
@@ -164,7 +203,7 @@ export const useApp = create<AppState>((set) => ({
   crowding: false,
   lens: [true, true, true, true, true, true],
   trails: false,
-  agentColor: 'status',
+  colorBy: 'status',
   follow: null,
   pickAgent: false,
   setFollow: (follow) => set({ follow, pickAgent: false }),
@@ -191,7 +230,7 @@ export const useApp = create<AppState>((set) => ({
   activeSpot: null,
   fitView: 0,
   autoRotate: false,
-  flyTo: (floorId, pos) => set((s) => ({ visibleFloors: [floorId], focus: { floorId, pos, nonce: (s.focus?.nonce ?? 0) + 1 } })),
+  flyTo: (floorId, pos) => set((s) => ({ viewMode: 'single', focusFloor: floorId, visibleFloors: [floorId], focus: { floorId, pos, nonce: (s.focus?.nonce ?? 0) + 1 } })),
   goToSpot: (id, floor) => {
     const b = useApp.getState().building
     const p = b ? spotPosition(b, { id, floor }) : null
@@ -338,7 +377,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

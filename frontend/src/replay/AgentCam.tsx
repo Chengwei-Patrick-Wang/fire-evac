@@ -4,7 +4,7 @@ import * as THREE from 'three'
 import { useApp } from '../store/app'
 import type { Layers } from '../store/app'
 import { useClock } from '../store/clock'
-import { floorY, toWorld } from '../scene/geometry'
+import { floorPlace, toPlaced } from '../scene/geometry'
 import { sampleAgent } from './runIndex'
 import type { AgentSample } from './runIndex'
 import { smokeDensityAt, useAgentView, visibility } from './agentView'
@@ -110,10 +110,10 @@ export default function AgentCam() {
           }
         }
         const h = st.head ?? 0
-        const y = floorY(f, app.explode) + 1.6
+        const place = floorPlace(building, f, app.viewMode, app.explode)
         st.pose = {
-          p: new THREE.Vector3(...toWorld(out.x, out.y, y)),
-          look: new THREE.Vector3(...toWorld(out.x + Math.cos(h) * 5, out.y + Math.sin(h) * 5, y)),
+          p: new THREE.Vector3(...toPlaced(place, out.x, out.y, 1.6)),
+          look: new THREE.Vector3(...toPlaced(place, out.x + Math.cos(h) * 5, out.y + Math.sin(h) * 5, 1.6)),
         }
         const d = smokeDensityAt(lr.run, f.id, out.x, out.y, t)
         const S = visibility(d)

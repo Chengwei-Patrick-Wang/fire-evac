@@ -1,28 +1,41 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useApp } from '../store/app'
-import { PROFILE_COLORS, STATUS_COLORS } from '../replay/Agents'
+import { STATUS_COLORS, TYPE_COLORS } from '../replay/Agents'
 import { PROFILE_NAMES } from '../replay/runIndex'
 import { DOOR_COLORS } from '../scene/Building'
 
-const STATUS_ITEMS: [string, string][] = [
-  ['Not moving yet', STATUS_COLORS.notMoving],
-  ['Moving', STATUS_COLORS.moving],
-  ['Waiting for help', STATUS_COLORS.waiting],
-  ['In a stairwell', STATUS_COLORS.stairwell],
-  ['Trapped', STATUS_COLORS.trapped],
+interface Row {
+  name: string
+  color: string
+  /** drawn smaller, as the people in a stairwell are */
+  small?: boolean
+  /** a dot with the red ring that trapped people get */
+  ringed?: boolean
+  /** only the red ring, no dot */
+  ringOnly?: boolean
+}
+
+const STATUS_ROWS: Row[] = [
+  { name: 'Moving', color: STATUS_COLORS.moving },
+  { name: 'In a stairwell', color: STATUS_COLORS.stairwell, small: true },
+  { name: 'Delayed or waiting', color: STATUS_COLORS.waiting },
+  { name: 'Trapped', color: STATUS_COLORS.trapped, ringed: true },
+]
+const TYPE_ROWS: Row[] = [
+  ...PROFILE_NAMES.map((name, i) => ({ name, color: TYPE_COLORS[i] })),
+  { name: 'Trapped (red ring)', color: STATUS_COLORS.trapped, ringOnly: true },
 ]
 
-/** What the colours in the viewer mean. Replaces AgentLegend; the "Color by type" switch replaces the Toolbar3D toggle. */
+/** What the colours in the viewer mean. The "Color by type" switch swaps the people rows between status and mobility type. */
 export default function LegendCard() {
-  const mode = useApp((s) => s.agentColor)
+  const colorBy = useApp((s) => s.colorBy)
   const hasRun = useApp((s) => s.activeRunKey !== null)
   // Open on a desktop; on a phone it starts collapsed, because the card would cover most of the picture.
   const [open, setOpen] = useState(() => !window.matchMedia('(max-width: 900px)').matches)
   if (!hasRun) return null
-  const people: [string, string][] =
-    mode === 'status' ? STATUS_ITEMS : PROFILE_NAMES.map((n, i) => [n, PROFILE_COLORS[i % PROFILE_COLORS.length]])
-  const byType = mode === 'profile'
+  const byType = colorBy === 'type'
+  const people = byType ? TYPE_ROWS : STATUS_ROWS
   return (
     <section className={'legendcard' + (open ? '' : ' closed')} aria-label="Legend">
       <div className="lc-head">
@@ -42,10 +55,14 @@ export default function LegendCard() {
       {open && (
         <div id="legend-body" className="lc-body">
           <ul>
-            {people.map(([name, c]) => (
-              <li key={name}>
-                <i className="sw dot" style={{ background: c }} />
-                {name}
+            {people.map((r) => (
+              <li key={r.name}>
+                {r.ringOnly ? (
+                  <i className="sw ring red" />
+                ) : (
+                  <i className={'sw dot' + (r.small ? ' small' : '') + (r.ringed ? ' ringed' : '')} style={{ background: r.color }} />
+                )}
+                {r.name}
               </li>
             ))}
           </ul>
@@ -54,7 +71,7 @@ export default function LegendCard() {
             role="switch"
             aria-checked={byType}
             className="lc-switch"
-            onClick={() => useApp.setState({ agentColor: byType ? 'status' : 'profile' })}
+            onClick={() => useApp.setState({ colorBy: byType ? 'status' : 'type' })}
           >
             <span className="lc-track" aria-hidden="true">
               <span className="lc-thumb" />
@@ -81,6 +98,7 @@ export default function LegendCard() {
               Smoke
             </li>
           </ul>
+          <p className="lc-note">People who are out leave the view.</p>
         </div>
       )}
     </section>

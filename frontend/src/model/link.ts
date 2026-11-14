@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useApp } from '../store/app'
+import { DEFAULT_EXPLODE, useApp } from '../store/app'
 import type { Layers, ResultsTab } from '../store/app'
 import { useClock } from '../store/clock'
 import { loadIndex } from '../data/loader'
@@ -13,8 +13,12 @@ export interface LinkState {
   tab?: ResultsTab
   m?: 'riskT90' | 'riskTrapped'
   l?: string[]
+  /** the floor gap, written only when it differs from the default */
   x?: number
+  /** the focus floor of the single and ghost views */
   f?: string
+  /** the floor view when it is side or ghost (single is `f` alone, stacked is neither) */
+  v?: 'side' | 'ghost'
   split?: boolean
   cam?: number[]
   ff?: string
@@ -35,8 +39,9 @@ export function encodeLink(s: LinkState): string {
   if (s.tab) p.set('tab', s.tab)
   if (s.m === 'riskTrapped') p.set('m', s.m)
   if (s.l) p.set('l', s.l.join('_'))
-  if (s.x) p.set('x', s.x.toFixed(2))
+  if (s.x !== undefined) p.set('x', s.x.toFixed(2))
   if (s.f) p.set('f', s.f)
+  if (s.v) p.set('v', s.v)
   if (s.split) p.set('split', '1')
   if (s.cam) p.set('cam', s.cam.map(r1).join('_'))
   if (s.ff) p.set('ff', s.ff)
@@ -70,6 +75,8 @@ export function decodeLink(hash: string): LinkState | null {
   if (x !== undefined && x >= 0 && x <= 1) out.x = x
   const f = p.get('f')
   if (f) out.f = f
+  const v = p.get('v')
+  if (v === 'side' || v === 'ghost') out.v = v
   if (p.get('split') === '1') out.split = true
   const cam = p.get('cam')
   if (cam) {
@@ -110,8 +117,9 @@ export function readLinkState(): LinkState | null {
   out.tab = s.resultsTab
   out.m = s.riskMetric
   out.l = LAYER_KEYS.filter((k) => s.layers[k])
-  out.x = s.explode
-  if (s.visibleFloors?.length === 1) out.f = s.visibleFloors[0]
+  if (s.explode !== DEFAULT_EXPLODE) out.x = s.explode
+  if ((s.viewMode === 'single' || s.viewMode === 'ghost') && s.focusFloor) out.f = s.focusFloor
+  if (s.viewMode === 'side' || s.viewMode === 'ghost') out.v = s.viewMode
   if (s.split) out.split = true
   if (s.follow === null && !s.split) out.cam = [...cameraPose.p, ...cameraPose.t]
   const fire = active?.run.fire

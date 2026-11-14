@@ -1,5 +1,11 @@
 import type { Building, BuildingFloor, Vec2 } from '../data/types'
 
+/** How the floors are laid out: stacked with a gap, one floor alone, all in a row on the ground, or all stacked with one solid. */
+export type ViewMode = 'stacked' | 'single' | 'side' | 'ghost'
+
+/** Opacity multiplier of every floor but the focus floor in ghost view. */
+export const GHOST = 0.15
+
 export function toWorld(x: number, y: number, elev = 0): [number, number, number] {
   return [x, elev, -y]
 }
@@ -8,6 +14,67 @@ export function fromWorld(v: { x: number; z: number }): Vec2 {
 }
 export function floorY(floor: BuildingFloor, explode: number): number {
   return floor.elevation + explode * floor.level * 4
+}
+
+/** Where a floor sits in the scene: its shift along x (side view) and its height. */
+export interface Place {
+  dx: number
+  y: number
+}
+
+interface Row {
+  /** the x extent of the whole building */
+  w: number
+  gap: number
+  /** floor id to its position by level */
+  rank: Map<string, number>
+}
+const rows = new WeakMap<Building, Row>()
+
+function rowOf(b: Building): Row {
+  let r = rows.get(b)
+  if (!r) {
+    let x0 = Infinity
+    let x1 = -Infinity
+    for (const f of b.floors)
+      for (const w of f.walkable)
+        for (const p of w.outer) {
+          x0 = Math.min(x0, p[0])
+          x1 = Math.max(x1, p[0])
+        }
+    const w = isFinite(x0) ? x1 - x0 : 10
+    const rank = new Map<string, number>()
+    ;[...b.floors].sort((a, c) => a.level - c.level).forEach((f, i) => rank.set(f.id, i))
+    r = { w, gap: Math.max(4, 0.15 * w), rank }
+    rows.set(b, r)
+  }
+  return r
+}
+
+/**
+ * Stacked, single and ghost put a floor at its (exploded) height. Side lays every floor flat on the ground in a row along +x, ordered
+ * by level, a building width plus a gap apart. Without a building, side falls back to stacked.
+ */
+export function floorPlace(b: Building | null, f: BuildingFloor, mode: ViewMode, explode: number): Place {
+  if (mode === 'side' && b) {
+    const r = rowOf(b)
+    return { dx: (r.rank.get(f.id) ?? 0) * (r.w + r.gap), y: 0 }
+  }
+  return { dx: 0, y: floorY(f, explode) }
+}
+
+/** The ghost view's opacity multiplier for one floor: GHOST for every floor but the focus floor, else 1. */
+export function floorAlpha(mode: ViewMode, focusFloor: string | null, floorId: string): number {
+  return mode === 'ghost' && focusFloor !== null && floorId !== focusFloor ? GHOST : 1
+}
+
+/** Plan (x, y) and a height above the floor to scene coordinates, in a floor's place. */
+export function toPlaced(p: Place, x: number, y: number, h = 0): [number, number, number] {
+  return [x + p.dx, p.y + h, -y]
+}
+/** The plan position under a scene point on a floor placed at p. */
+export function fromPlaced(p: Place, v: { x: number; z: number }): Vec2 {
+  return [v.x - p.dx, -v.z]
 }
 
 export interface Segment {
@@ -43,17 +110,76 @@ export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
   return inside
 }
 
-export function buildingBounds(b: Building, floorIds?: string[] | null, explode = 0) {
+export interface WallSplit {
+  interior: Segment[]
+  exterior: Segment[]
+}
+
+const PROBE = 0.6
+const walls = new WeakMap<BuildingFloor, WallSplit>()
+
+/**
+ * Walls between rooms (interior) and walls with the outside behind them (exterior), from the walkable rings. The outer ring also
+ * traces the interior walls as narrow notches, so a segment is exterior only when one point 0.6 m to a side of its middle is walkable
+ * and the point 0.6 m to the other side is outside every room and outside the walkable area. Hole rings (pillars, shafts, courtyards)
+ * are always interior. A floor with no rooms has nothing to tell the sides apart, so every outer segment is exterior. Memoized per floor.
+ */
+export function classifyWalls(floor: BuildingFloor): WallSplit {
+  const hit = walls.get(floor)
+  if (hit) return hit
+  const interior: Segment[] = []
+  const exterior: Segment[] = []
+  const rooms = floor.rooms
+    .filter((r) => r.polygon.length >= 3)
+    .map((r) => {
+      let x0 = Infinity
+      let y0 = Infinity
+      let x1 = -Infinity
+      let y1 = -Infinity
+      for (const [x, y] of r.polygon) {
+        x0 = Math.min(x0, x)
+        y0 = Math.min(y0, y)
+        x1 = Math.max(x1, x)
+        y1 = Math.max(y1, y)
+      }
+      return { poly: r.polygon, x0, y0, x1, y1 }
+    })
+  const walkable = (p: Vec2) => floor.walkable.some((w) => pointInPolygon(p, w.outer) && !w.holes.some((h) => pointInPolygon(p, h)))
+  const inRoom = (p: Vec2) => rooms.some((r) => p[0] >= r.x0 && p[0] <= r.x1 && p[1] >= r.y0 && p[1] <= r.y1 && pointInPolygon(p, r.poly))
+  for (const w of floor.walkable) {
+    for (const s of ringSegments(w.outer)) {
+      if (rooms.length === 0) {
+        exterior.push(s)
+        continue
+      }
+      const nx = -Math.sin(s.angle) * PROBE
+      const ny = Math.cos(s.angle) * PROBE
+      const a: Vec2 = [s.mx + nx, s.my + ny]
+      const b: Vec2 = [s.mx - nx, s.my - ny]
+      const wa = walkable(a)
+      const wb = walkable(b)
+      // one side walkable, the other neither walkable nor inside a room
+      ;((wa && !wb && !inRoom(b)) || (wb && !wa && !inRoom(a)) ? exterior : interior).push(s)
+    }
+    for (const h of w.holes) interior.push(...ringSegments(h))
+  }
+  const out = { interior, exterior }
+  walls.set(floor, out)
+  return out
+}
+
+/** The box around the drawn floors, each in its place (so `mode` and `explode` move it); span is its longest side. */
+export function buildingBounds(b: Building, floorIds?: string[] | null, explode = 0, mode: ViewMode = 'stacked') {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   let minZ = Infinity, maxZ = -Infinity
   for (const f of b.floors) {
     if (floorIds && !floorIds.includes(f.id)) continue
-    const y = floorY(f, explode)
-    minZ = Math.min(minZ, y)
-    maxZ = Math.max(maxZ, y + f.height)
+    const p = floorPlace(b, f, mode, explode)
+    minZ = Math.min(minZ, p.y)
+    maxZ = Math.max(maxZ, p.y + f.height)
     for (const w of f.walkable)
       for (const [x, y] of w.outer) {
-        minX = Math.min(minX, x); maxX = Math.max(maxX, x)
+        minX = Math.min(minX, x + p.dx); maxX = Math.max(maxX, x + p.dx)
         minY = Math.min(minY, y); maxY = Math.max(maxY, y)
       }
   }

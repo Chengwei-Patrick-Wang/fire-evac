@@ -6,7 +6,7 @@ import { useTour } from '../tour/tour'
 import { creditParts } from '../model/buildingIndex'
 import { phoneReachable, shareUrl } from '../model/link'
 import { spotLabel } from '../model/spots'
-
+import { BRAND } from './theme'
 
 export function markAboutSeen() {
   try {
@@ -75,7 +75,7 @@ export default function AboutOverlay() {
   return (
     <div className="about-backdrop" role="dialog" aria-modal="true" aria-label="About" onClick={close}>
       <div className="about-card" ref={cardRef} onClick={(e) => e.stopPropagation()}>
-        <h2>Ember</h2>
+        <h2>{BRAND}</h2>
         <p className="pitch">Give us a building, and we'll show where people get stuck before a fire does.</p>
         <h3>How it works</h3>
         <ol>

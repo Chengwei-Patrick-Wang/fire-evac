@@ -5,24 +5,32 @@ import Trails from './Trails'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
 import { useClock } from '../store/clock'
-import { toWorld, floorY } from '../scene/geometry'
+import { floorAlpha, floorPlace, toPlaced } from '../scene/geometry'
+import type { Place } from '../scene/geometry'
+import { usePlace } from '../scene/usePlace'
 import { nearestIndex, sampleAgent } from './runIndex'
 import type { AgentSample } from './runIndex'
 
-const PROFILE_COLORS = ['#38bdf8', '#a78bfa', '#facc15', '#f472b6', '#fb7185', '#34d399']
-export { PROFILE_COLORS }
-export const STATUS_COLORS = {
-  notMoving: '#94a3b8',
-  moving: '#38bdf8',
-  waiting: '#fbbf24',
-  stairwell: '#c084fc',
-  trapped: '#ef4444',
-}
-const WAITING = STATUS_COLORS.waiting
-const NOT_MOVING = STATUS_COLORS.notMoving
-const TRAPPED = STATUS_COLORS.trapped
+const GREEN = '#16A34A'
+const AMBER = '#F59E0B'
+const RED = '#DC2626'
+/** Colour by status, the default: green when moving or in a stairwell, amber when not moving yet or waiting for help, red when trapped. */
+export const STATUS_COLORS = { moving: GREEN, stairwell: GREEN, notMoving: AMBER, waiting: AMBER, trapped: RED }
+/**
+ * Colour by type, in PROFILE_NAMES order: the Okabe-Ito set without yellow (it vanishes on the light slab) and without vermillion (it
+ * reads as fire). It also colours the exit-use bars and the mobility table.
+ */
+export const TYPE_COLORS = ['#0072B2', '#CC79A7', '#56B4E9', '#009E73', '#E69F00', '#000000']
 const DIM = '#CBD5E1'
-const STATUS_NAMES = ['not moving', 'moving', 'waiting', 'exiting']
+const STATUS_NAMES = ['not moving yet', 'moving', 'waiting for help', 'in a stairwell']
+
+// Colour keys, cached per agent so a colour is written only when it changes.
+const K_MOVING = 1
+const K_DELAYED = 2
+const K_TRAPPED = 100
+const K_DIM = 200
+const K_TYPE = 10 // + profile
+
 type Timer = { i: number; p: [number, number, number]; s: number }
 
 export default function Agents({ runKey }: { runKey?: string }) {
@@ -34,9 +42,16 @@ export default function Agents({ runKey }: { runKey?: string }) {
   const n = ix?.nAgents ?? 0
   const mesh = useRef<THREE.InstancedMesh>(null)
   const ring = useRef<THREE.InstancedMesh>(null)
+  const trapRing = useRef<THREE.InstancedMesh>(null)
   const lens = useApp((s) => s.lens)
   const trails = useApp((s) => s.trails)
-  const agentColor = useApp((s) => s.agentColor)
+  const colorBy = useApp((s) => s.colorBy)
+  const viewMode = useApp((s) => s.viewMode)
+  const focusFloor = useApp((s) => s.focusFloor)
+  const explode = useApp((s) => s.explode)
+  const visibleFloors = useApp((s) => s.visibleFloors)
+  const place = usePlace()
+  const byType = colorBy === 'type'
   const lensOn = !lens.every(Boolean)
   const lensKey = lens.map((v) => (v ? 1 : 0)).join('')
   const [hover, setHover] = useState<number | null>(null)
@@ -50,20 +65,37 @@ export default function Agents({ runKey }: { runKey?: string }) {
     }
     return [...set].filter((i) => i >= 0 && i < n).sort((a, b) => a - b)
   }, [lr, n])
-  const keys = useMemo(() => new Int16Array(n).fill(-2), [n, key, lensKey, agentColor])
-  const colors = useMemo(
-    () => (agentColor === 'profile' ? PROFILE_COLORS : [0, 1, 2, 3, 4, 5].map(() => STATUS_COLORS.moving)).map((c) => new THREE.Color(c)),
-    [agentColor],
+  // Everyone who is trapped at some point gets a slot for the red ring that marks them besides their colour.
+  const trapIdx = useMemo(() => {
+    const out: number[] = []
+    if (ix) for (let i = 0; i < n; i++) if (Number.isFinite(ix.trapT[i])) out.push(i)
+    return out
+  }, [ix, n])
+  // The colours depend on the scheme, the view mode and the focus floor (ghost floors are drawn pale): all start over when one changes.
+  const keys = useMemo(() => new Int16Array(n).fill(-2), [n, key, lensKey, colorBy, viewMode, focusFloor])
+  const pal = useMemo(
+    () => ({
+      moving: new THREE.Color(STATUS_COLORS.moving),
+      delayed: new THREE.Color(STATUS_COLORS.waiting),
+      trapped: new THREE.Color(STATUS_COLORS.trapped),
+      dim: new THREE.Color(DIM),
+      types: TYPE_COLORS.map((c) => new THREE.Color(c)),
+    }),
+    [],
   )
-  const stairColor = useMemo(() => new THREE.Color(STATUS_COLORS.stairwell), [])
   const tmp = useMemo(
     () => ({
       m: new THREE.Matrix4(),
       q: new THREE.Quaternion(),
+      /** lies a ring flat on the floor */
+      qFlat: new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)),
       p: new THREE.Vector3(),
       s: new THREE.Vector3(),
       c: new THREE.Color(),
       out: { x: 0, y: 0, fl: 0, st: 0, trapped: false } as AgentSample,
+      /** per run floor, rewritten every frame: where it sits (null: not drawn) and whether the ghost view paints it pale */
+      pl: [] as (Place | null)[],
+      ghost: [] as boolean[],
     }),
     [],
   )
@@ -76,23 +108,42 @@ export default function Agents({ runKey }: { runKey?: string }) {
   useEffect(() => {
     keys.fill(-2)
   }, [keys])
+  // The waiting timers are placed when they refresh (twice a second): when the picture is rearranged while paused they refresh at once.
+  useEffect(() => {
+    timerKey.current = -1
+  }, [viewMode, focusFloor, explode, visibleFloors, lensKey])
 
   useFrame(() => {
     const m = mesh.current
     if (!m || !ix) return
-    const { explode, visibleFloors } = useApp.getState()
+    const st = useApp.getState()
+    const { explode, visibleFloors, viewMode, focusFloor, follow } = st
     const t = useClock.getState().t
-    const { out, m: mat, q, p, s, c } = tmp
+    const { out, m: mat, q, qFlat, p, s, c, pl, ghost } = tmp
+    for (let fi = 0; fi < floors.length; fi++) {
+      const f = floors[fi]
+      pl[fi] = f && (!visibleFloors || visibleFloors.includes(f.id)) ? floorPlace(building, f, viewMode, explode) : null
+      ghost[fi] = !!f && floorAlpha(viewMode, focusFloor, f.id) < 1
+    }
     for (let i = 0; i < n; i++) {
       let ok = sampleAgent(ix, i, t, out)
-      const f = ok ? floors[out.fl] : undefined
-      if (!f || (visibleFloors && !visibleFloors.includes(f.id))) ok = false
+      const at = ok ? pl[out.fl] : null
+      if (!at) ok = false
       let k = -1
-      if (ok && f) {
-        k = lensOn && !lens[ix.profile[i]] ? 200 : out.trapped ? 100 : out.st === 0 ? 0 : out.st === 2 ? 2 : out.st === 3 ? 30 + ix.profile[i] : 10 + ix.profile[i]
-        const w = toWorld(out.x, out.y, floorY(f, useApp.getState().explode) + 0.87)
-        p.set(w[0], w[1], w[2])
-        const sc = i === useApp.getState().follow ? 0 : k >= 30 && k < 100 ? 0.6 : 1
+      if (ok && at) {
+        const prof = ix.profile[i]
+        k = (lensOn && !lens[prof]) || ghost[out.fl]
+          ? K_DIM
+          : byType
+            ? K_TYPE + prof
+            : out.trapped
+              ? K_TRAPPED
+              : out.st === 0 || out.st === 2
+                ? K_DELAYED
+                : K_MOVING
+        p.set(out.x + at.dx, at.y + 0.87, -out.y)
+        // people in a stairwell are drawn smaller, whatever colour the scheme gives them
+        const sc = i === follow ? 0 : out.st === 3 ? 0.6 : 1
         s.set(sc, sc, sc)
       } else {
         p.set(0, 0, 0)
@@ -102,35 +153,45 @@ export default function Agents({ runKey }: { runKey?: string }) {
       m.setMatrixAt(i, mat)
       if (k !== keys[i] && k >= 0) {
         keys[i] = k
-        if (k === 200) c.set(DIM)
-        else if (k === 100) c.set(TRAPPED)
-        else if (k === 0) c.set(NOT_MOVING)
-        else if (k === 2) c.set(WAITING)
-        else if (k >= 30) c.copy(agentColor === 'profile' ? colors[k - 30] : stairColor)
-        else c.copy(colors[k - 10])
+        c.copy(k === K_DIM ? pal.dim : k === K_TRAPPED ? pal.trapped : k === K_DELAYED ? pal.delayed : k === K_MOVING ? pal.moving : pal.types[k - K_TYPE])
         m.setColorAt(i, c)
         if (m.instanceColor) m.instanceColor.needsUpdate = true
       }
     }
-    void explode
     m.instanceMatrix.needsUpdate = true
     const r = ring.current
     if (r) {
       for (let j = 0; j < llmIdx.length; j++) {
-        const ok = sampleAgent(ix, llmIdx[j], t, out)
-        const f = ok ? floors[out.fl] : undefined
-        if (!f || (visibleFloors && !visibleFloors.includes(f.id))) {
+        const at = sampleAgent(ix, llmIdx[j], t, out) ? pl[out.fl] : null
+        if (!at || ghost[out.fl]) {
           p.set(0, 0, 0)
           s.set(0, 0, 0)
         } else {
-          const w = toWorld(out.x, out.y, floorY(f, explode) + 0.05)
-          p.set(w[0], w[1], w[2])
+          p.set(out.x + at.dx, at.y + 0.05, -out.y)
           s.set(1, 1, 1)
         }
         mat.compose(p, q, s)
         r.setMatrixAt(j, mat)
       }
       r.instanceMatrix.needsUpdate = true
+    }
+    // the red ring under everyone who is trapped (not on pale floors, and not for people the lens dims)
+    const tr = trapRing.current
+    if (tr) {
+      for (let j = 0; j < trapIdx.length; j++) {
+        const i = trapIdx[j]
+        const at = sampleAgent(ix, i, t, out) && out.trapped ? pl[out.fl] : null
+        if (!at || ghost[out.fl] || (lensOn && !lens[ix.profile[i]])) {
+          p.set(0, 0, 0)
+          s.set(0, 0, 0)
+        } else {
+          p.set(out.x + at.dx, at.y + 0.05, -out.y)
+          s.set(1, 1, 1)
+        }
+        mat.compose(p, qFlat, s)
+        tr.setMatrixAt(j, mat)
+      }
+      tr.instanceMatrix.needsUpdate = true
     }
     // waiting timers, refreshed twice a second
     const tk = Math.floor(t * 2)
@@ -141,15 +202,14 @@ export default function Agents({ runKey }: { runKey?: string }) {
       for (let i = 0; i < n && list.length < 30 && fi >= 0; i++) {
         if (lensOn && !lens[ix.profile[i]]) continue
         if (!sampleAgent(ix, i, t, out) || out.st !== 2) continue
-        const f = floors[out.fl]
-        if (!f || (visibleFloors && !visibleFloors.includes(f.id))) continue
+        const at = pl[out.fl]
+        if (!at || ghost[out.fl]) continue
         let g = fi
         while (g > 0 && ix.st[(g - 1) * n + i] === 2) g--
-        const w = toWorld(out.x, out.y, floorY(f, explode) + 2.3)
-        list.push({ i, p: [w[0], w[1], w[2]], s: Math.max(0, Math.round(t - ix.times[g])) })
+        list.push({ i, p: [out.x + at.dx, at.y + 2.3, -out.y], s: Math.max(0, Math.round(t - ix.times[g])) })
       }
       setTimers((cur) =>
-        cur.length === list.length && cur.every((c, j) => c.i === list[j].i && c.s === list[j].s) ? cur : list,
+        cur.length === list.length && cur.every((c, j) => c.i === list[j].i && c.s === list[j].s && c.p[0] === list[j].p[0] && c.p[1] === list[j].p[1]) ? cur : list,
       )
     }
   })
@@ -163,11 +223,8 @@ export default function Agents({ runKey }: { runKey?: string }) {
     const t = useClock.getState().t
     if (sampleAgent(ix, hv.idx, t, tmp.out)) {
       const f = floors[tmp.out.fl]
-      if (f) {
-        const w = toWorld(tmp.out.x, tmp.out.y, floorY(f, useApp.getState().explode) + 2.2)
-        hp = [w[0], w[1], w[2]]
-      }
-      hst = STATUS_NAMES[tmp.out.st] ?? ''
+      if (f) hp = toPlaced(place(f), tmp.out.x, tmp.out.y, 2.2)
+      hst = tmp.out.trapped ? 'trapped' : STATUS_NAMES[tmp.out.st] ?? ''
     }
     for (const e of lr.run.events) if (e.idx === hv.idx && e.reason && e.t <= t) hreason = e.reason
   }
@@ -196,6 +253,12 @@ export default function Agents({ runKey }: { runKey?: string }) {
         <instancedMesh key={`ring-${key}-${llmIdx.length}`} ref={ring} args={[undefined, undefined, llmIdx.length]} frustumCulled={false}>
           <ringGeometry args={[0.45, 0.6, 24]} />
           <meshBasicMaterial color="#e879f9" side={THREE.DoubleSide} />
+        </instancedMesh>
+      )}
+      {trapIdx.length > 0 && (
+        <instancedMesh key={`trapped-${key}-${trapIdx.length}`} ref={trapRing} args={[undefined, undefined, trapIdx.length]} frustumCulled={false}>
+          <ringGeometry args={[0.45, 0.62, 28]} />
+          <meshBasicMaterial color={STATUS_COLORS.trapped} side={THREE.DoubleSide} toneMapped={false} />
         </instancedMesh>
       )}
       {timers.map((tm) => (

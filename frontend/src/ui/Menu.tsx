@@ -5,7 +5,7 @@ import { Check } from 'lucide-react'
 export type MenuItem =
   | { kind: 'item'; label: string; onSelect: () => void; disabled?: boolean; title?: string; keys?: string; sepAbove?: boolean }
   | { kind: 'check'; label: string; checked: boolean; onSelect: () => void; disabled?: boolean; title?: string; sepAbove?: boolean }
-  | { kind: 'radios'; label: string; value: string; options: { label: string; value: string }[]; onSelect: (value: string) => void; sepAbove?: boolean }
+  | { kind: 'radios'; label: string; value: string; options: { label: string; value: string; disabled?: boolean; title?: string }[]; onSelect: (value: string) => void; sepAbove?: boolean }
 
 export interface MenuDef {
   id: string
@@ -141,6 +141,8 @@ export default function MenuBar({ menus }: { menus: MenuDef[] }) {
                             aria-checked={it.value === o.value}
                             tabIndex={-1}
                             className="menuitem"
+                            disabled={o.disabled}
+                            title={o.title}
                             onClick={() => pick(i, () => it.onSelect(o.value))}
                           >
                             {mark(it.value === o.value, true)}

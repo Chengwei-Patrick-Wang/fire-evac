@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { Html } from '@react-three/drei'
 import { useApp } from '../store/app'
 import { useA11y } from '../ui/a11y'
-import { floorY, toWorld } from './geometry'
+import { floorAlpha, toPlaced, toWorld } from './geometry'
+import { usePlace } from './usePlace'
 import { centroidOf, rampColor, riskRange, roomRiskColor, stairScore } from '../model/spots'
 import Heatmap from '../replay/Heatmap'
 import type { BuildingFloor, Vec2 } from '../data/types'
@@ -43,18 +44,19 @@ function PulseRing({ pos, y }: { pos: Vec2; y: number }) {
 function FocusPulse() {
   const focus = useApp((s) => s.focus)
   const building = useApp((s) => s.building)
-  const explode = useApp((s) => s.explode)
+  const place = usePlace()
   const floor = focus && building ? building.floors.find((f) => f.id === focus.floorId) : undefined
   if (!focus || !floor) return null
+  const { dx, y } = place(floor)
   return (
-    <group position-y={floorY(floor, explode)}>
+    <group position={[dx, y, 0]}>
       <PulseRing key={focus.nonce} pos={focus.pos} y={0} />
     </group>
   )
 }
 
 function FloorRisk({ floor }: { floor: BuildingFloor }) {
-  const explode = useApp((s) => s.explode)
+  const place = usePlace()
   const batch = useApp((s) => s.batch)
   const metric = useApp((s) => s.riskMetric)
   const building = useApp((s) => s.building)
@@ -62,9 +64,9 @@ function FloorRisk({ floor }: { floor: BuildingFloor }) {
   if (!batch || !building) return null
   const maxScore = Math.max(1e-9, ...batch.doors.map((d) => d.score))
   const stairRooms = new Set(floor.stairs.map((s) => s.room))
-  const y = floorY(floor, explode)
+  const { dx, y } = place(floor)
   return (
-    <group position-y={y}>
+    <group position={[dx, y, 0]}>
       {floor.rooms
         .filter((r) => r.type !== 'stair' && !stairRooms.has(r.id))
         .map((r) => (
@@ -100,6 +102,9 @@ export default function RiskOverlay() {
   const building = useApp((s) => s.building)
   const batch = useApp((s) => s.batch)
   const visible = useApp((s) => s.visibleFloors)
+  const viewMode = useApp((s) => s.viewMode)
+  const focusFloor = useApp((s) => s.focusFloor)
+  const place = usePlace()
   const crowding = useApp((s) => s.crowding)
   const selected = useApp((s) => s.selectedRoom)
   const metric = useApp((s) => s.riskMetric)
@@ -121,11 +126,12 @@ export default function RiskOverlay() {
       <FocusPulse />
       {on &&
         building.floors
-          .filter((f) => !visible || visible.includes(f.id))
+          // The risk fills are left off the faint floors of the ghost view.
+          .filter((f) => (!visible || visible.includes(f.id)) && floorAlpha(viewMode, focusFloor, f.id) === 1)
           .map((f) => <FloorRisk key={f.id} floor={f} />)}
       {on && crowding && <Heatmap source="batch" />}
       {on && sel && selFloor && selRoom && (
-        <Html position={toWorld(...centroidOf(selRoom.polygon), floorY(selFloor, 0) + 1.5)} center style={{ pointerEvents: 'none' }}>
+        <Html position={toPlaced(place(selFloor), ...centroidOf(selRoom.polygon), 1.5)} center style={{ pointerEvents: 'none' }}>
           <div className="tip3d" style={{ whiteSpace: 'nowrap' }}>
             <b>{sel.id}</b> {selRoom.name}
             <br />

@@ -4,6 +4,7 @@ import { PROFILE_NAMES } from '../replay/runIndex'
 /** Everything Toolbar3D used to hold, minus the camera and agent buttons (they moved to the toolbar and View menu). */
 export default function LayersCard() {
   const explode = useApp((s) => s.explode)
+  const viewMode = useApp((s) => s.viewMode)
   const labels = useApp((s) => s.layers.labels)
   const rooms = useApp((s) => s.layers.rooms)
   const smoke = useApp((s) => s.layers.smoke)
@@ -24,12 +25,14 @@ export default function LayersCard() {
   })
   const hasBatch = useApp((s) => s.batch !== null)
   const set = useApp.setState
+  // A single floor has no neighbour to be a gap from, and the side view lays the floors on the ground.
+  const gapOff = viewMode === 'single' || viewMode === 'side'
 
   return (
     <div className="layers">
-      <label className="slider">
+      <label className={'slider' + (gapOff ? ' off' : '')} title={gapOff ? 'The floor gap does not apply in this view' : undefined}>
         <span>Floor gap</span>
-        <input type="range" min={0} max={1} step={0.05} value={explode} onChange={(e) => set({ explode: +e.target.value })} />
+        <input type="range" min={0} max={1} step={0.05} value={explode} disabled={gapOff} onChange={(e) => set({ explode: +e.target.value })} />
       </label>
       <label className="check">
         <input type="checkbox" checked={labels} onChange={(e) => set((s) => ({ layers: { ...s.layers, labels: e.target.checked } }))} />

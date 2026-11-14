@@ -1,6 +1,6 @@
 import { useApp } from '../store/app'
 import { readAccess, waitLine, fmtDuration } from '../model/access'
-import { PROFILE_HEX } from './curves'
+import { TYPE_COLORS } from '../replay/Agents'
 import { PROFILE_NAMES } from '../replay/runIndex'
 
 const KNOWN: readonly string[] = PROFILE_NAMES
@@ -34,7 +34,7 @@ export default function AccessStats() {
             {rows.map((r) => (
               <tr key={r.name}>
                 <td>
-                  <span className="swatch" style={{ background: PROFILE_HEX[KNOWN.indexOf(r.name)] ?? '#94a3b8' }} />
+                  <span className="swatch" style={{ background: TYPE_COLORS[KNOWN.indexOf(r.name)] ?? '#94a3b8' }} />
                 </td>
                 <td>{r.name}</td>
                 <td>{r.agents}</td>

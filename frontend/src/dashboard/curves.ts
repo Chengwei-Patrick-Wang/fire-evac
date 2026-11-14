@@ -15,5 +15,4 @@ export function evacCurve(run: Run, times: number[]): number[] {
 
 /** Run line colours: each passes 3:1 on white, and the legend writes names in the text colour, so no text depends on them. */
 export const RUN_COLORS = ['#2563EB', '#C2410C', '#7C3AED', '#15803D', '#BE185D', '#A16207']
-export const PROFILE_HEX = ['#38bdf8', '#a78bfa', '#facc15', '#f472b6', '#fb7185', '#34d399']
 export const PROFILE_LABELS = ['typical', 'older', 'visitor', 'cane', 'walker', 'wheelchair']

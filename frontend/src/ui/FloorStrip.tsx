@@ -50,23 +50,29 @@ function silhouettes(b: Building): Map<string, Sil> {
   return out
 }
 
-/** Whole building, then one button per floor by level. A click shows that floor alone (what Toolbar3D's floor select did). */
+/**
+ * Whole building, then one button per floor by level. "Whole building" goes to the stacked view (in the side view it is already the lit
+ * item). A floor shows alone; in the ghost view it moves the solid floor instead. The lit floor is the focus floor of the single and
+ * ghost views.
+ */
 export default function FloorStrip() {
   const building = useApp((s) => s.building)
-  const visible = useApp((s) => s.visibleFloors)
+  const viewMode = useApp((s) => s.viewMode)
+  const focusFloor = useApp((s) => s.focusFloor)
   const fire = useApp((s) => (s.activeRunKey ? s.runs[s.activeRunKey]?.run.fire : undefined))
   const sils = useMemo(() => (building ? silhouettes(building) : new Map<string, Sil>()), [building])
   if (!building || building.floors.length === 0) return null
-  const show = (ids: string[] | null) => useApp.setState((s) => ({ visibleFloors: ids, focus: null, fitView: s.fitView + 1 }))
-  const whole = visible === null
+  const focused = viewMode === 'single' || viewMode === 'ghost'
+  const whole = !focused
+  const setView = useApp.getState().setViewMode
   return (
     <nav className="floorstrip" aria-label="Floors">
-      <button type="button" className={'fs-item' + (whole ? ' on' : '')} aria-pressed={whole} onClick={() => show(null)}>
+      <button type="button" className={'fs-item' + (whole ? ' on' : '')} aria-pressed={whole} onClick={() => setView('stacked')}>
         <Layers size={20} strokeWidth={1.75} aria-hidden="true" className="fs-ico" />
         <span>Whole building</span>
       </button>
       {floorsByLevel(building).map((f) => {
-        const on = !!visible && visible.length === 1 && visible[0] === f.id
+        const on = focused && focusFloor === f.id
         const sil = sils.get(f.id)
         const dot = fire && fire.floor === f.id && sil ? sil.at(fire.x, fire.y) : null
         return (
@@ -76,7 +82,7 @@ export default function FloorStrip() {
             className={'fs-item' + (on ? ' on' : '')}
             aria-pressed={on}
             title={dot ? 'The fire starts on this floor' : undefined}
-            onClick={() => show([f.id])}
+            onClick={() => setView(viewMode === 'ghost' ? 'ghost' : 'single', f.id)}
           >
             <span>{floorName(building, f.id)}</span>
             {sil && (
