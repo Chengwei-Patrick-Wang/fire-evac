@@ -146,6 +146,20 @@ def _records(building, tasks, workers, timeout_s, progress):
     return [records[i] for i in range(len(tasks))]
 
 
+def door_label(building: dict, floor_id: str, door_id: str) -> tuple[str, str]:
+    """Label a door, including stair and exterior openings; tolerate unknown ids."""
+    floor = next((f for f in building.get("floors", []) if f["id"] == floor_id), {})
+    door = next((d for d in floor.get("doors", []) if d["id"] == door_id), {})
+    if "outside" in door.get("connects", []):
+        info = next((e for e in floor.get("exits", []) if e["door"] == door_id), {})
+        return "exit", f"Exit {info.get('name') or door_id}"
+    stair = next((r for r in floor.get("rooms", [])
+                  if r["id"] in door.get("connects", []) and r.get("type") == "stair"), None)
+    if stair:
+        return "stair", f"Stair {stair.get('group', stair['id'])} door"
+    return "door", f"Door {door_id}"
+
+
 def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
     """Summarize successful runs without importing the simulator or mutating inputs."""
     records = [record for record in records if record["ok"]]
@@ -202,22 +216,11 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
         heatmaps.append({**header, "d": base64.b64encode(scaled.tobytes()).decode("ascii")})
 
     room_info = {(f["id"], r["id"]): r for f in building["floors"] for r in f["rooms"]}
-    door_info = {(f["id"], d["id"]): (f, d) for f in building["floors"] for d in f["doors"]}
     top = []
     for door in sorted(doors, key=lambda d: -d["score"])[:4]:
         if door["score"] <= 0:
             continue
-        floor, info = door_info[(door["floor"], door["id"])]
-        connected = [room_info.get((floor["id"], rid), {}) for rid in info["connects"]]
-        stair = next((r for r in connected if r.get("type") == "stair"), None)
-        if "outside" in info["connects"]:
-            kind = "exit"
-            exit_info = next((e for e in floor["exits"] if e["door"] == door["id"]), {})
-            label = f"Exit {exit_info.get('name', door['id'])}"
-        elif stair:
-            kind, label = "stair", f"Stair {stair.get('group', stair['id'])} door"
-        else:
-            kind, label = "door", f"Door {door['id']}"
+        kind, label = door_label(building, door["floor"], door["id"])
         smoke_clause = (f", {door['meanSmokeWait']:,.0f} of them in smoke,"
                         if door.get("meanSmokeWait", 0) >= 1 else "")
         why = (f"{label}: {door['peakQueue']} people queued at peak; "
@@ -344,6 +347,8 @@ def main():
     parser.add_argument("--exits", action="store_true", help="rerun worst ignition rooms with each exit blocked")
     parser.add_argument("--whatif", action="store_true", help="run paired default what-if variants")
     parser.add_argument("--whatif-rooms", type=int, help="compare only N highest-risk ignition rooms")
+    parser.add_argument("--fixes", action="store_true", help="measure suggested fixes")
+    parser.add_argument("--fix-rooms", type=int, help="fix only N highest-risk ignition rooms")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     building = json.loads(args.building.read_text(encoding="utf-8"))
@@ -382,6 +387,9 @@ def main():
     if args.whatif:
         from fire.whatif import add_whatif
         batch = add_whatif(building, base, batch, rooms=args.whatif_rooms, workers=args.workers)
+    if args.fixes:
+        from fire.fixes import add_fixes
+        batch = add_fixes(building, base, batch, rooms=args.fix_rooms, workers=args.workers)
     out = args.out if args.out is not None else Path(f"data/runs/batch-{building['id']}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(batch, separators=(",", ":")), encoding="utf-8")
@@ -397,6 +405,11 @@ def main():
 
     for comparison in batch.get("whatIf", []):
         print(comparison["why"], flush=True)
+
+    for fix in batch.get("fixes", []):
+        print(fix["why"], flush=True)
+    for skipped in batch.get("fixesSkipped", []):
+        print(f"Skipped {skipped['id']}: {skipped['reason']}", flush=True)
 
 
 if __name__ == "__main__":

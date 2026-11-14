@@ -37,3 +37,9 @@ def hrr_kw(params: dict, tau: float) -> float:
         return 0.0
     alpha = params["alpha"]
     return float(params["peakKw"] if alpha is None else min(alpha * tau ** 2, params["peakKw"]))
+
+
+def sprinklers_matter(base: dict) -> bool:
+    """Whether the illustrative sprinkler cap reduces this preset's peak."""
+    return (not base.get("sprinklers", False)
+            and fire_params(base["fire"], True)["peakKw"] < fire_params(base["fire"])["peakKw"])

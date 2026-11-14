@@ -885,6 +885,136 @@ def check_whatif_slow():
     print("what-if: three variants with two matched fires each", flush=True)
 
 
+def check_fixes():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from shapely.geometry import Polygon
+    from fire.fixes import renormalize, widen_door, candidate_fixes, add_fixes
+    from fire.batch import door_label
+    from fire.presets import sprinklers_matter
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    original = deepcopy(building)
+    for path in (root / "contracts/building.example.json", root / "data/buildings/office.json"):
+        source = json.loads(path.read_text())
+        rebuilt = renormalize(source)
+        for before, after in zip(source["floors"], rebuilt["floors"]):
+            area = lambda f: sum(Polygon(w["outer"], w["holes"]).area for w in f["walkable"])
+            assert abs(area(before) - area(after)) < .01
+            for field in ("exits", "stairs"):
+                assert [v["id"] for v in before[field]] == [v["id"] for v in after[field]]
+            assert [d["connects"] for d in before["doors"]] == [d["connects"] for d in after["doors"]]
+    widened = widen_door(building, "DSB1")
+    floor = widened["floors"][0]
+    door = next(d for d in floor["doors"] if d["id"] == "DSB1")
+    assert door["width"] == 1.5 and np.isclose(np.linalg.norm(np.array(door["a"]) - door["b"]), 1.5)
+    assert door["connects"] == ["SB1", "C1"]
+    assert abs(sum(Polygon(w["outer"], w["holes"]).area for w in floor["walkable"]) - 542.36) < .02
+    exit_area = lambda b: Polygon(next(e for f in b["floors"] for e in f["exits"] if e["id"] == "E1")["polygon"]).area
+    assert np.isclose(exit_area(building), 1.9) and np.isclose(exit_area(widen_door(building, "E1")), 2.15)
+    assert building == original
+    for did, extra in (("missing", .5), ("DSB1", 0), ("DSB1", float("nan"))):
+        try:
+            widen_door(building, did, extra)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid widening accepted")
+    # Reject a normalization that silently changes connectivity or components.
+    altered = deepcopy(widened)
+    altered["floors"][0]["walkable"].append(altered["floors"][0]["walkable"][0])
+    with patch("fire.fixes.renormalize", return_value=altered):
+        try:
+            widen_door(building, "DSB1")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("topology change accepted")
+    assert door_label(building, "F1", "missing") == ("door", "Door missing")
+    unnamed = deepcopy(building)
+    next(e for e in unnamed["floors"][0]["exits"] if e["door"] == "E1").pop("name", None)
+    assert door_label(unnamed, "F1", "E1") == ("exit", "Exit E1")
+    assert sprinklers_matter(base)
+    trash = deepcopy(base)
+    trash["fire"]["type"] = "trash"
+    assert not sprinklers_matter(trash) and not sprinklers_matter({**base, "sprinklers": True})
+    record = lambda room, seed, time, smoke: dict(ignition=dict(floor="F1", room=room), seed=seed,
+                                                t90=time, trapped=0, smokeSeconds=smoke)
+    batch = dict(top=[dict(kind="stair", id="DSB1", floor="F1")],
+                 rooms=[dict(id="R101", floor="F1", riskT90=80), dict(id="R105", floor="F1", riskT90=None)],
+                 runs=[record("R101", 1, 80, 100), record("R105", 2, 100, 300)])
+    fixes, skipped = candidate_fixes(building, trash, batch)
+    assert "sprinklers" in {f["id"] for f in skipped} and "sprinklers" not in {f["id"] for f in fixes}
+    assert "sprinklers" in {f["id"] for f in candidate_fixes(building, base, batch)[0]}
+    propped = {**base, "doors": {"DSA1": "propped", "D101": "blocked"}}
+    candidates, _ = candidate_fixes(building, propped, batch)
+    assert next(f for f in candidates if f["id"] == "selfClosers")["doors"] == {"DSA1": "closed"}
+    assert next(f for f in candidates if f["id"] == "keepClear-D101")["doors"]["D101"] == next(
+        d["state"] for d in building["floors"][0]["doors"] if d["id"] == "D101")
+    snapshot, base_snapshot = deepcopy(batch), deepcopy(base)
+    calls = []
+
+    def rerun(b, scenario, ignitions, seeds, workers, timeout, progress):
+        assert seeds == sorted({r["seed"] for r in batch["runs"] if r["ignition"] in ignitions})
+        assert workers == 1 and timeout == 12 and not progress
+        assert scenario["id"].startswith(base["id"] + "-")
+        if scenario["id"].endswith("widen-DSB1"):
+            assert b is not building
+            assert next(d for d in b["floors"][0]["doors"] if d["id"] == "DSB1")["width"] == 1.5
+            delta = -10
+        else:
+            assert b is building and scenario["sprinklers"]
+            delta = 2
+        calls.append(ignitions)
+        return dict(runs=[{**r, "t90": r["t90"] + delta, "smokeSeconds": r["smokeSeconds"] * .8}
+                          for r in batch["runs"] if r["ignition"] in ignitions])
+
+    with patch("fire.fixes.run_many", side_effect=rerun):
+        result = add_fixes(building, base, batch, workers=1, timeout_s=12, progress=False)
+        subset = add_fixes(building, base, batch, rooms=1, workers=1, timeout_s=12, progress=False)
+    assert result["fixes"][0]["id"] == "widen-DSB1"
+    assert all(f["helps"] and np.isclose(f["smokePct"], -20) for f in result["fixes"])
+    assert all(f["n"] == 1 for f in subset["fixes"])
+    assert calls[0] == [dict(floor="F1", room="R101"), dict(floor="F1", room="R105")]
+    assert calls[-1] == [dict(floor="F1", room="R105")]
+    assert all(f["why"].isascii() and any(c.isdigit() for c in f["why"]) for f in result["fixes"])
+    assert batch == snapshot and base == base_snapshot
+    variant = dict(id="proppedStairs", n=2, dT90=3, dT90Min=-2, dT90Max=8,
+                   slower=1, faster=0, dTrapped=.5, dDosed=1, dSmokeSeconds=40)
+    derived = {**batch, "top": [], "whatIf": [variant, {**variant, "id": "blockedExit", "doors": {"E1": "blocked"}}]}
+    with patch("fire.fixes.run_many", side_effect=AssertionError("derived fix reran")):
+        inverses = add_fixes(building, trash, derived)
+    assert len(inverses["fixes"]) == 2
+    for fix in inverses["fixes"]:
+        assert fix["dT90"] == -3 and fix["dT90Min"] == -8 and fix["dT90Max"] == 2
+        assert fix["slower"] == 0 and fix["faster"] == 1 and fix["dTrapped"] == -.5
+        assert fix["dDosed"] == -1 and fix["dSmokeSeconds"] == -40 and fix["smokePct"] is None and fix["helps"]
+    json.dumps(result, allow_nan=False)
+    json.dumps(inverses, allow_nan=False)
+
+
+def check_fixes_slow():
+    from fire.batch import run_many
+    from fire.fixes import add_fixes
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 240
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    ignitions = [dict(floor="F1", room=r) for r in ("R101", "R105")]
+    batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert not batch["failed"]
+    result = add_fixes(building, base, batch, top=1, workers=2, timeout_s=240)
+    assert len(result["fixes"]) == 2, result["fixesSkipped"]
+    assert {f["kind"] for f in result["fixes"]} == {"widen", "sprinklers"}
+    assert all(f["n"] == 2 and all(np.isfinite(f[k]) for k in ("dT90", "dTrapped", "dSmokeSeconds"))
+               for f in result["fixes"])
+    print("fixes: widened door and sprinklers with two matched fires each", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

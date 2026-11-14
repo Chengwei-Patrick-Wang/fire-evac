@@ -604,3 +604,60 @@ six-minute verification limit. The smoke test and slow checks also cover worker
 failures, empty batches, ETA output, budget clamping, CLI what-if wiring and
 spawned/inline result equality. The lobby routing artifact remains unsuitable
 for demo headlines, as noted by the lead.
+
+## Suggested fixes (D14)
+
+`python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2 --whatif --fixes --out debug/batch-fixes.json`
+
+`--fixes` measures 0.5 m wider openings at the first two ranked doors, stairs or
+exits; sprinklers when their cap reduces the fire's peak; self-closers for open
+stair doors; and keeping blocked doors clear. `--fix-rooms N` limits reruns to
+N highest-risk ignition rooms, with null risk counted as the scenario's time
+limit. Geometry changes rebuild a copy through the normalizer, update both the
+opening and capacity width, and reject changes in room connections or the
+number of walkable pieces. Existing outside-facing doors are never promoted to
+new exits.
+
+Every rerun pairs the same ignition and seed with the baseline. Deltas are fix
+minus baseline; a null t90 counts as `maxTime`. `smokePct` is the mean change in
+person-seconds in smoke divided by the matched baseline mean, times 100; it is
+null when exposure is absent or the denominator is zero. `helps` means at least
+1 s sooner to 90% out, fewer trapped, or at least 5% less smoke exposure. Results
+sort helping fixes first, then lower dT90, then lower dSmokeSeconds. Failed or
+unmatched runs do not contribute to comparisons; `n` is the matched count.
+
+With `--whatif`, closing already-closed stair doors is instead compared against
+the saved propped-door variant, and keeping an exit clear against its saved
+blocked-exit variant. These derived results negate the original deltas and
+reverse their ranges and faster/slower counts without rerunning. Their
+`derivedFrom` names the comparison, their labels say "vs propped open" or
+"vs blocked", and `smokePct` is null: the original variant's exposure mean was
+not saved. Any reduction in smoke exposure qualifies a derived fix as helping.
+Derived results retain the original what-if's matched fires, even if a different
+`--fix-rooms` subset is requested. Inapplicable or unsafe suggestions are recorded
+in `fixesSkipped` with a reason.
+
+These are illustrative model numbers. A fix is an idea for a fire protection
+engineer to check, not a design or a compliance result. Geometry checks do not
+establish structural feasibility, available wall space, or actual fire-door
+performance.
+
+Handoff for A: show `fixes[].why` verbatim as measured fixes in the report card;
+Gemini may phrase around these lines but must never change their numbers.
+Handoff for E: `fixes` and `fixesSkipped` are optional batch fields; surface the
+comparison label, matched `n`, `helps`, and skipped reasons. Smoke exposure is
+the primary what-if story, as in D10/D11.
+
+Verified example output (6 sampled rooms x 2 seeds, 12 matched fires per fix;
+`LLM_PROVIDER=off`; zero baseline failures):
+
+```text
+Keep Exit Main entrance clear (vs blocked): 90% out 55 s sooner on average and 1472 fewer person-seconds in smoke across 12 fires (faster in 12); +1.9 trapped per fire.
+Sprinklers: 90% out 2 s sooner on average and 3% less time in smoke across 12 fires (faster in 5); -1.9 trapped per fire.
+Self-closers on stair doors (vs propped open): 90% out 0 s later on average and 394 fewer person-seconds in smoke across 12 fires (faster in 0); -0.0 trapped per fire.
+Widen Door DL1 from 4.00 m to 4.50 m: 90% out 0 s sooner on average and 1% less time in smoke across 12 fires (faster in 4); +0.2 trapped per fire.
+Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 18 s later on average and 3% less time in smoke across 12 fires (faster in 7); +0.5 trapped per fire.
+```
+
+Verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
+both printed `fire checks OK`; the command above wrote `debug/batch-fixes.json`.
