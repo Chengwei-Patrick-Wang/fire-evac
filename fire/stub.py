@@ -37,3 +37,13 @@ class NoFire:
     def hrr(self, t: float) -> float:
         """Heat release rate in kW at time t."""
         return 0.0
+
+    def burning_rooms(self, t: float) -> set:
+        """(floor id, room id) of every room on fire at time t: none. FireModel also lists the ignition room.
+        NoFire has no `material` attribute, so a run made with it carries no fire.rooms or fire.material."""
+        return set()
+
+    def ignition_times(self) -> list:
+        """[{"room", "floor", "ignite"}] for the rooms that ignite by maxTime: none. FireModel lists the ignition
+        room first, then every room the fire spreads to."""
+        return []
