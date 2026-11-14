@@ -288,9 +288,9 @@ Verification note: office output has 213 successful runs and 3 excluded R203b fa
 
 **Interfaces:** Consumes `data/buildings/office.json`. Produces checks that read expected exit labels, door widths and exit-zone areas from the building file at test time, so B13 (readable names, e.g. "Exit Entry (south)", "Exit Stair S1 (west)") and B16 (clear widths, e.g. 1.41 → 1.36 m) don't turn the fire checks red.
 
-- [ ] Replace pinned strings and numbers with values computed from the loaded building (e.g. the label of the exit whose door is X; the width of door X; the area of zone X), keeping what each check actually tests (labels are readable, widths are used, zones are positive and inside walkable).
-- [ ] **Verify:** `python -m fire.smoke_test` passes on today's office, and still passes on a copy of office.json with exits renamed and a door narrowed by 0.05 m (do this in a temp dir inside the check).
-- [ ] **Commit** `test(fire): office label and width checks read the building file`.
+- [x] Replace pinned strings and numbers with values computed from the loaded building (e.g. the label of the exit whose door is X; the width of door X; the area of zone X), keeping what each check actually tests (labels are readable, widths are used, zones are positive and inside walkable).
+- [x] **Verify:** `python -m fire.smoke_test` passes on today's office, and still passes on a copy of office.json with exits renamed and a door narrowed by 0.05 m (do this in a temp dir inside the check).
+- [x] **Commit** `test(fire): office label and width checks read the building file`.
 
 ### Task D17 (P2 · Sat 11 AM): Smoke-model sensitivity for the credibility panel
 

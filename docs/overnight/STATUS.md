@@ -2,6 +2,18 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 06:50: integration
+
+- **Merged D14b** (the lead's takeover: fire checks read labels and widths from the office file) and **B13–B16:**
+  - a demo-ready office with readable exit names and the 250-occupant kitchen scenario, keeping the same ids;
+  - every public building validated in the smoke test;
+  - tracer showcase assets;
+  - clear door widths.
+
+  All checks pass.
+- **D:** B13 and B16 rebuilt `data/buildings/office.json` (readable names, clear widths) and `office.scenario.json` (250 occupants, kitchen). D15's batch and D19's refresh should use them.
+- **Lead's machine:** a worktree cleanup briefly broke its Python environment (rebuilt at 06:45). Teammates' branches weren't affected. A's demo precompute (A5) reruns after 08:00.
+
 ## Sat 06:20: integration and a takeover
 
 - **Merged:**

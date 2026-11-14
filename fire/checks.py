@@ -1,8 +1,15 @@
-"""Small executable checks: python -m fire.checks [--slow]."""
+"""Small executable checks: python -m fire.checks [--slow].
+
+The office checks read data/buildings/office.json, or the building file named in $FIRE_CHECK_OFFICE. They take
+exit names, door widths and exit zones from that file, so a rebuilt office stays green.
+"""
 import argparse
 import base64
 import json
+import math
+import os
 from pathlib import Path
+import tempfile
 import time
 
 import numpy as np
@@ -11,6 +18,17 @@ from shapely.geometry import box
 
 from fire.grid import BuildingGraph, CLOSED_DOOR_M, MAX_CELLS, get_graph, grid_specs
 from fire.presets import fire_params, hrr_kw
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def office_path() -> Path:
+    """The office building file the office checks read: $FIRE_CHECK_OFFICE, else data/buildings/office.json."""
+    return Path(os.environ.get("FIRE_CHECK_OFFICE") or ROOT / "data/buildings/office.json")
+
+
+def load_office(path=None) -> dict:
+    return json.loads(Path(path or office_path()).read_text(encoding="utf-8"))
 
 
 def _ring(polygon):
@@ -974,8 +992,8 @@ def check_fixes():
     building = json.loads((root / "contracts/building.example.json").read_text())
     base = json.loads((root / "contracts/scenario.example.json").read_text())
     original = deepcopy(building)
-    for path in (root / "contracts/building.example.json", root / "data/buildings/office.json"):
-        source = json.loads(path.read_text())
+    for path in (root / "contracts/building.example.json", office_path()):
+        source = json.loads(path.read_text(encoding="utf-8"))
         rebuilt = renormalize(source)
         for before, after in zip(source["floors"], rebuilt["floors"]):
             area = lambda f: sum(Polygon(w["outer"], w["holes"]).area for w in f["walkable"])
@@ -1092,24 +1110,114 @@ def check_fixes_slow():
     print("fixes: widened door and sprinklers with two matched fires each", flush=True)
 
 
+def _long_side(polygon) -> float:
+    corners = list(polygon.minimum_rotated_rectangle.exterior.coords)
+    return max(math.dist(corners[i], corners[i + 1]) for i in range(4))
+
+
+def office_checks(path) -> str:
+    """Labels, widths and exit zones of the office file at `path`; every expected value comes from that file.
+
+    Labels are readable (an exit's label carries its name, or the stair or room it leaves when that name is
+    machine text), widening uses the file's door width, and exit zones are positive and inside walkable.
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    from fire.batch import door_label
+    from fire.fixes import widen_door
+
+    office = load_office(path)
+    doors = {d["id"]: d for f in office["floors"] for d in f["doors"]}
+
+    def label(floor, door_id):
+        kind, text = door_label(office, floor["id"], door_id)
+        assert text.isascii() and ":" not in text, text  # a Revit family string never reaches a reader
+        return kind, text
+
+    def walkable(floor):
+        return unary_union([Polygon(w["outer"], w["holes"]) for w in floor["walkable"]])
+
+    count = 0
+    for floor in office["floors"]:
+        rooms, walk, seen = {r["id"]: r for r in floor["rooms"]}, walkable(floor), []
+        for zone in floor["exits"]:
+            area = Polygon(zone["polygon"])
+            assert area.area > 0 and area.difference(walk).area < .01, (floor["id"], zone["id"])
+            name = zone.get("name", "")
+            inside = next(rooms[r] for r in doors[zone["door"]]["connects"] if r in rooms)
+            if name and ":" not in name and len(name) <= 30:  # readable, by door_label's own cut-off
+                want = f"Exit {name}"
+            elif inside.get("type") == "stair":
+                want = f"Stair {inside.get('group', inside['id'])} exit"
+            else:
+                want = f"Exit from {inside.get('name', inside['id'])} ({inside['id']})"
+            assert label(floor, zone["door"]) == ("exit", want), (label(floor, zone["door"]), want)
+            seen.append(want)
+        assert len(set(seen)) == len(seen), seen  # exits read differently from each other
+        count += len(seen)
+    assert count, "no exits in the office file"
+    floor, door, stair = next((f, d, r) for f in office["floors"] for d in f["doors"] for r in f["rooms"]
+                              if r.get("type") == "stair" and r["id"] in d["connects"] and "outside" not in d["connects"])
+    assert label(floor, door["id"]) == ("stair", f"Stair {stair.get('group', stair['id'])} door")
+    floor, door = next((f, d) for f in office["floors"] for d in f["doors"] if "outside" not in d["connects"]
+                       and not any(r.get("type") == "stair" and r["id"] in d["connects"] for r in f["rooms"]))
+    names = " to ".join(r.get("name", r["id"]) for r in floor["rooms"] if r["id"] in door["connects"])
+    assert label(floor, door["id"]) == ("door", f"Door {door['id']} ({names})")
+    # Widening uses the width the file declares, and the exit zone follows it.
+    floor, zone = min(((f, z) for f in office["floors"] for z in f["exits"]),
+                      key=lambda fz: (doors[fz[1]["door"]]["width"], fz[1]["door"]))
+    did = zone["door"]
+    after_floor = next(f for f in widen_door(office, did)["floors"] if f["id"] == floor["id"])
+    before, after = doors[did], next(d for d in after_floor["doors"] if d["id"] == did)
+    assert after["width"] == round(before["width"] + .5, 3), (before["width"], after["width"])
+    opening = lambda d: float(np.linalg.norm(np.array(d["a"]) - d["b"]))
+    assert abs(opening(after) - opening(before) - .5) < .01
+    wide = Polygon(next(e for e in after_floor["exits"] if e["door"] == did)["polygon"])
+    assert wide.area > 0 and wide.difference(walkable(after_floor)).area < .01
+    assert abs((_long_side(wide) - after["width"]) - (_long_side(Polygon(zone["polygon"])) - before["width"])) < .05
+    return f"{count} exits, widen {did} {before['width']:g} -> {after['width']:g} m"
+
+
+def _office_variant(office: dict) -> dict:
+    """The office as a rebuild could leave it: its narrowest exit door 5 cm narrower, every exit renamed."""
+    from copy import deepcopy
+    from fire.fixes import renormalize
+
+    variant = deepcopy(office)
+    doors = {d["id"]: d for f in variant["floors"] for d in f["doors"]}
+    door = doors[min((z for f in variant["floors"] for z in f["exits"]),
+                     key=lambda z: (doors[z["door"]]["width"], z["door"]))["door"]]
+    a, b = np.array(door["a"]), np.array(door["b"])
+    u = (b - a) / np.linalg.norm(b - a)
+    door["a"], door["b"] = (a + u * .025).tolist(), (b - u * .025).tolist()
+    door["width"] = round(door["width"] - .05, 3)
+    door.pop("rect", None)  # the normalizer cuts the opening again from a and b
+    variant = renormalize(variant)
+    for floor in variant["floors"]:
+        for i, zone in enumerate(floor["exits"]):  # the first keeps an unreadable name, the rest get new ones
+            zone["name"] = "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184259" if i == 0 else f"Renamed exit {i}"
+    return variant
+
+
 def check_labels():
     from contextlib import redirect_stdout, redirect_stderr
     from copy import deepcopy
     from io import StringIO
     from unittest.mock import patch
-    from shapely.geometry import Polygon
     from fire.batch import door_label, main
-    from fire.fixes import planned_fix_runs, widen_door
-    from fire.whatif import default_variants
+    from fire.fixes import planned_fix_runs
+    from fire.whatif import default_variants, stair_doors
 
     root = Path(__file__).resolve().parents[1]
-    office = json.loads((root / "data/buildings/office.json").read_text())
+    path = office_path()
+    office = load_office(path)
     base = json.loads((root / "data/buildings/office.scenario.json").read_text())
     example = json.loads((root / "contracts/building.example.json").read_text())
-    expected = {"DrRS91$": "Exit from ENTRY (R101)", "D$77wwb": "Stair S1 exit",
-                "D$77xsW": "Stair S1 door", "D$77xVs": "Door D$77xVs (OPEN OFFICE to CORRIDOR)"}
-    for did, label in expected.items():
-        assert door_label(office, "F1", did)[1] == label, door_label(office, "F1", did)
+    summary = office_checks(path)
+    with tempfile.TemporaryDirectory() as tmp:  # the same checks on a renamed, narrowed copy of the file
+        copy = Path(tmp) / "office.json"
+        copy.write_text(json.dumps(_office_variant(office)), encoding="utf-8")
+        variant_summary = office_checks(copy)
     for did, label in {"E1": "Exit Main entrance", "DSB1": "Stair SB door",
                        "D101": "Door D101 (Kitchen to Corridor 1)"}.items():
         assert door_label(example, "F1", did)[1] == label
@@ -1119,17 +1227,15 @@ def check_labels():
     kitchen["fire"].update(type="kitchen", growth="slow")
     assert "sprinklers" not in {v["id"] for v in default_variants(office, trash, [])}
     assert "sprinklers" in {v["id"] for v in default_variants(office, kitchen, [])}
-    assert planned_fix_runs(office, trash) == 2
-    assert planned_fix_runs(office, kitchen) == 3
+    stairs = stair_doors(office)
+    states = {d["id"]: d["state"] for f in office["floors"] for d in f["doors"]}
+    open_stairs = int(any(states[did] in ("open", "propped") for did in stairs))  # as the file has them
+    assert planned_fix_runs(office, trash) == 2 + open_stairs
+    assert planned_fix_runs(office, kitchen) == 3 + open_stairs
     changed = deepcopy(kitchen)
-    changed["doors"] = {"D$77xsW": "propped", "DrRS91$": "blocked"}
+    changed["doors"] = {stairs[0]: "propped", office["floors"][0]["exits"][0]["door"]: "blocked"}
     assert planned_fix_runs(office, changed) == 5
-    widened = widen_door(office, "D$77wwb")
-    floor = widened["floors"][0]
-    assert next(d for d in floor["doors"] if d["id"] == "D$77wwb")["width"] == 1.41
-    zone = next(e for e in floor["exits"] if e["door"] == "D$77wwb")
-    assert abs(Polygon(zone["polygon"]).area - 1.70) < .02
-    argv = ["fire.batch", str(root / "data/buildings/office.json"),
+    argv = ["fire.batch", str(path),
             str(root / "data/buildings/office.scenario.json"), "--occupants", "250",
             "--fire-type", "kitchen", "--rooms", "1", "--seeds", "1"]
     empty = {"runs": [], "failed": [], "top": []}
@@ -1156,13 +1262,14 @@ def check_labels():
                 assert error.code == 2
             else:
                 raise AssertionError("bad override accepted")
-    print("labels: office labels, widening, overrides and fix budgeting checked", flush=True)
+    print(f"labels: {path.name} ({summary}) and a renamed, narrowed copy ({variant_summary}); "
+          "overrides and fix budgeting checked", flush=True)
 
 
 def check_office_slow():
     from fire.batch import run_many
     root = Path(__file__).resolve().parents[1]
-    office = json.loads((root / "data/buildings/office.json").read_text())
+    office = load_office()
     base = json.loads((root / "data/buildings/office.scenario.json").read_text())
     base["occupants"] = {"total": 250, "mix": base["occupants"]["mix"]}
     base["fire"]["type"] = "kitchen"
