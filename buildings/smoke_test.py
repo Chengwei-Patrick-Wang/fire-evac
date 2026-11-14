@@ -154,6 +154,10 @@ def check_problems():
                  'stairGroups': {'SA': ['SL', 'SU']}, 'exits': {'remove': ['DU']}}
     fixed = plan_to_building(plan, overrides=overrides)
     assert not problems(fixed), problems(fixed)
+    for width, flagged in ((4.0, False), (7.0, True)):
+        bad = copy.deepcopy(fixed)
+        bad['floors'][0]['doors'][0]['width'] = width
+        assert any('width outside 0.6-6.0 m' in issue for issue in problems(bad)) == flagged
     bad = copy.deepcopy(fixed)
     bad['credits'] = ''
     assert any('credits' in s for s in problems(bad))
@@ -334,6 +338,7 @@ def main() -> int:
     check_clinic()
     check_office()
     check_door_widths()
+    check_plan_images()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
@@ -350,6 +355,53 @@ def main() -> int:
 
 
 
+
+
+def check_plan_images():
+    import contextlib
+    import io
+    import math
+    from PIL import Image
+    from buildings.plan_images import OUT as images_dir, build
+    from buildings.validate import problems, validate
+
+    generated = build()
+    for name, value in generated.items():
+        path = images_dir / name
+        assert path.exists() and json.loads(path.read_text(encoding="utf-8")) == value, "run python -m buildings.plan_images"
+    index = generated['index.json']
+    for rec in index['images']:
+        with Image.open(images_dir / rec['file']) as image:
+            assert image.size == (rec['width'], rec['height'])
+        assert math.dist(rec['scaleBar']['p1'], rec['scaleBar']['p2']) == 10 * rec['pxPerM']
+    rec = next(r for r in index['images'] if r['file'] == 'example-F1.png')
+    with Image.open(images_dir / rec['file']) as image:
+        def pixel(x, y):
+            return image.getpixel((round(rec['origin'][0] + x * rec['pxPerM']),
+                                   round(rec['origin'][1] - y * rec['pxPerM'])))
+        assert pixel(8, 3) == (255, 255, 255)
+        assert pixel(12, 3) == (0, 0, 0)
+    example = json.loads((ROOT / 'contracts/building.example.json').read_text(encoding='utf-8'))
+    trace = generated['example.trace.json']
+    for floor, source in zip(trace['floors'], example['floors']):
+        scale = floor['scale']['meters'] / math.dist(floor['scale']['p1'], floor['scale']['p2'])
+        def original(point):
+            return [(point[0] - floor['ref'][0]) * scale, (floor['ref'][1] - point[1]) * scale]
+        for room, expected in zip(floor['rooms'], source['rooms']):
+            assert room['id'] == expected['id']
+            assert len(room['polygon']) == len(expected['polygon'])
+            assert all(math.dist(original(p), q) <= 0.001 for p, q in zip(room['polygon'], expected['polygon']))
+        for door, expected in zip(floor['doors'], source['doors']):
+            assert door['id'] == expected['id']
+            assert all(math.dist(original(door[k]), expected[k]) <= 0.001 for k in ('a', 'b'))
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        building = plan_to_building(generated['example.plan.json'])
+    assert 'WARNING (normalize)' not in stderr.getvalue(), stderr.getvalue()
+    assert validate(building)['ok']
+    assert {e['name'] for f in building['floors'] for e in f['exits']} == {'Main entrance', 'East stair exit'}
+    assert all({s['group'] for s in f['stairs']} == {'SA', 'SB'} for f in building['floors'])
+    assert not problems(building), problems(building)
 
 
 def check_budget():
