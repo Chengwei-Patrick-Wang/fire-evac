@@ -41,9 +41,9 @@ def inspect(path):
             if storey is not None and storey.id() in counts:
                 counts[storey.id()][i] += 1
     empty_storeys = [s.Name or str(s.id()) for s in storeys if counts[s.id()][0] == 0]
-    missing_spaces = len(empty_storeys)
+    occupied_storeys = len(storeys) - len(empty_storeys)
     stairs = totals[2] if totals[2] else totals[3]
-    pickable = bool(storeys) and not missing_spaces and stairs >= 2
+    pickable = occupied_storeys >= 2 and stairs >= 2
     print(f"\n{path}\n  schema: {model.schema}; unit scale: {scale:g}")
     print("  storey | elevation (m) | spaces | doors | stairs | flights")
     for s in storeys:
@@ -52,7 +52,7 @@ def inspect(path):
     print(f"  totals: spaces={totals[0]}, doors={totals[1]}, stairs={totals[2]}, flights={totals[3]}")
     print("  " + ("PICKABLE" if pickable else "NOT PICKABLE"))
     return {"path": path, "storeys": len(storeys), "spaces": totals[0],
-            "missing": missing_spaces, "empty_storeys": empty_storeys,
+            "occupied_storeys": occupied_storeys,
             "stairs": stairs, "pickable": pickable}
 
 
@@ -77,14 +77,16 @@ def main():
     if not results:
         parser.exit(1, "No readable IFC models found.\n")
     pickable = [r for r in results if r["pickable"]]
-    if pickable:
-        pick = max(pickable, key=lambda r: (r["storeys"], r["spaces"]))
+    qualified = [r for r in pickable if r["spaces"] >= 50]
+    if qualified:
+        pick = min(qualified, key=lambda r: (r["path"].stat().st_size, str(r["path"]).lower()))
     else:
-        pick = max(results, key=lambda r: (r["storeys"] - r["missing"], min(r["stairs"], 2), r["spaces"]))
-        print(f"No pickable model: closest is missing spaces on {pick['missing']} storeys "
-              f"and needs {max(0, 2 - pick['stairs'])} more stairs or flights.")
-        if pick["empty_storeys"]:
-            print("Storeys without spaces: " + ", ".join(pick["empty_storeys"]))
+        pick = max(results, key=lambda r: (min(r["occupied_storeys"], 2),
+                                            min(r["stairs"], 2), min(r["spaces"], 50),
+                                            -r["path"].stat().st_size))
+        print(f"No qualifying model: closest needs {max(0, 2 - pick['occupied_storeys'])} "
+              f"more occupied storeys, {max(0, 2 - pick['stairs'])} more stairs or flights, "
+              f"and {max(0, 50 - pick['spaces'])} more spaces.")
     print(f"PICK: {pick['path'].as_posix()}")
 
 
