@@ -45,7 +45,7 @@ export default function EvacCurve() {
             <XAxis dataKey="t" type="number" domain={[0, 'dataMax']} stroke="#94a3b8" fontSize={11} unit=" s" />
             <YAxis domain={[0, 100]} stroke="#94a3b8" fontSize={11} unit="%" />
             {keys.map((k) => (
-              <Line key={k} dataKey={k} name={runs[k].label} type="stepAfter" stroke={color(k)} dot={false} isAnimationActive={false} strokeWidth={2} />
+              <Line key={k} dataKey={k} name={runs[k].label} type="stepAfter" stroke={color(k)} dot={false} isAnimationActive={false} strokeWidth={2} strokeDasharray={runs[k].whatIf ? '6 3' : undefined} />
             ))}
             <ReferenceLine x={Math.round(t)} stroke="#e2e8f0" strokeDasharray="3 3" />
             {keys.map((k) => {

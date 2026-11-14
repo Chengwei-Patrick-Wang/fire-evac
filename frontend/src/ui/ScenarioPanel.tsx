@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useApp } from '../store/app'
 import { FIRE_TYPES, roomAt } from '../model/scenarioDraft'
+import WhatIfCard from './WhatIfCard'
 import type { DoorState, Profile } from '../data/types'
 
 const MIX: Profile[] = ['typical', 'older', 'visitor']
@@ -120,6 +121,7 @@ export default function ScenarioPanel() {
       </button>
       {runError && <p className="err">{runError}</p>}
       {runNote && <p className="dim">{runNote}</p>}
+      <WhatIfCard />
     </div>
   )
 }

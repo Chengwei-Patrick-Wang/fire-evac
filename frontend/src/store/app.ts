@@ -6,6 +6,7 @@ import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
 import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
+import { findPrecomputedVariant, makeVariant } from '../model/whatif'
 
 export interface LoadedRun {
   key: string
@@ -68,6 +69,9 @@ interface AppState {
   patchDraft: (p: Partial<Scenario>) => void
   setPlacing: (b: boolean) => void
   runScenario: (s: Scenario) => Promise<void>
+  runWhatIf: (door: string, state: DoorState, sprinklers: boolean) => Promise<void>
+  whatIfBusy: string | null
+  whatIfError: string | null
   setMode: (m: Mode) => void
   setView: (v: View) => void
   setLoading: (s: string | null) => void
@@ -98,6 +102,8 @@ export const useApp = create<AppState>((set) => ({
   placing: true,
   running: null,
   runError: null,
+  whatIfBusy: null,
+  whatIfError: null,
   runNote: null,
   riskMetric: 'riskT90',
   crowding: false,
@@ -166,6 +172,57 @@ export const useApp = create<AppState>((set) => ({
       set({ running: null })
     }
   },
+  runWhatIf: async (door, state, sprinklers) => {
+    const st = useApp.getState()
+    const b = st.building
+    const active = st.activeRunKey ? st.runs[st.activeRunKey] : null
+    if (!b || !active || st.whatIfBusy) return
+    const base = active.whatIf ? st.runs[active.whatIf.baselineKey] ?? active : active
+    set({ whatIfBusy: 'Running…', whatIfError: null })
+    try {
+      if (useApp.getState().mode === 'live') {
+        try {
+          const f = base.run.fire
+          const room = st.draft?.fire.room
+          const baseSc: Scenario = base.scenario ?? {
+            ...(st.draft ?? makeDraftFallback(b.id)),
+            id: base.key,
+            seed: base.run.seed,
+            fire: { ...(st.draft?.fire ?? { type: 'kitchen', start: 0 }), floor: f.floor, x: f.x, y: f.y, room: st.draft?.fire.room ?? room },
+            doors: base.doors,
+          }
+          const sc = makeVariant({ ...baseSc, buildingId: b.id, occupants: { ...baseSc.occupants, mix: normalizeMix(baseSc.occupants.mix) } }, door, state, sprinklers)
+          const runId = await startRun(sc)
+          const run = await pollRun(runId, (el) => set({ whatIfBusy: `Running… ${el} s` }))
+          const key = sc.id as string
+          const prev = useClock.getState().t
+          useApp.getState().addRun({ key, label: `What-if: ${door} ${state}${sprinklers ? ' +sprinklers' : ''}`, run, doors: sc.doors ?? {}, scenario: sc, whatIf: { baselineKey: base.key, door, state } })
+          useClock.getState().seek(prev)
+          return
+        } catch (e) {
+          const unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
+          if (!unreachable) throw e
+          setLoaderMode('static')
+          set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
+        }
+      }
+      const entries = await listDemoRuns(b.id)
+      const hit = findPrecomputedVariant(entries, { buildingId: b.id, room: entries.find((e) => e.id === base.key)?.fire.room ?? st.draft?.fire.room, doors: base.doors })
+      if (!hit) throw new ApiError('No precomputed what-if for this fire')
+      const { entry } = hit
+      if (useApp.getState().runs[entry.id]) useApp.getState().switchRun(entry.id)
+      else {
+        const prev = useClock.getState().t
+        const run = await loadDemoRun(entry)
+        useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, whatIf: { baselineKey: base.key, door: hit.door, state: hit.state } })
+        useClock.getState().seek(prev)
+      }
+    } catch (e) {
+      set({ whatIfError: e instanceof Error ? e.message : String(e) })
+    } finally {
+      set({ whatIfBusy: null })
+    }
+  },
   setMode: (mode) => set({ mode }),
   setView: (view) => set({ view }),
   setLoading: (loading) => set({ loading }),
@@ -193,5 +250,9 @@ export const useApp = create<AppState>((set) => ({
       return { activeRunKey: key }
     }),
 }))
+
+function makeDraftFallback(buildingId: string): Scenario {
+  return { version: 'scenario/v0', buildingId, seed: 1, occupants: { total: 160, mix: { typical: 1 } }, fire: { type: 'kitchen', start: 0 }, sprinklers: false, doors: {}, alarmTime: 30, maxTime: 400 }
+}
 
 if (import.meta.env.DEV) (window as unknown as { __app: typeof useApp }).__app = useApp
