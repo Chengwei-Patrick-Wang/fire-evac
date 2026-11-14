@@ -4,7 +4,8 @@
 
 - contracts/building.example.json  <- buildings.normalize(plan.example)
 - contracts/run.example.json       <- sim.run(building, scenario.example, ToyFire) + fire.metrics
-- contracts/batch.example.json     <- placeholder batch/v0 (seeded random numbers, "placeholder": true)
+- contracts/batch.example.json     <- placeholder batch/v0 (seeded random numbers, "placeholder": true);
+                                      its doors are named by fire.batch.door_label, as in D's real batches
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import numpy as np  # noqa: E402
 from shapely.geometry import Point, Polygon  # noqa: E402
 
 from buildings.normalize import plan_to_building  # noqa: E402
+from fire.batch import door_label  # noqa: E402  (D23: the one rule for door names)
 from sim.run import run as run_sim  # noqa: E402
 
 CONTRACTS = ROOT / "contracts"
@@ -68,16 +70,6 @@ def _door_kind(door: dict, room_types: dict) -> str:
     return "door"
 
 
-def _door_label(door: dict, kind: str, rooms: dict, floor_id: str) -> str:
-    if kind == "exit":
-        return f"Exit {door.get('name') or door['id']} ({door['id']})"
-    if kind == "stair":
-        stair = next(r for r in door["connects"] if rooms.get(r, {}).get("type") == "stair")
-        return f"{rooms[stair]['name']} door {door['id']} on {floor_id}"
-    a, b = (rooms.get(r, {}).get("name", r) for r in door["connects"])
-    return f"Door {door['id']} ({a} to {b}) on {floor_id}"
-
-
 def make_batch(building: dict, base: dict, heatmaps: list | None) -> dict:
     """Placeholder batch/v0: one ignition per non-corridor room x seeds 1-3, plausible numbers."""
     rng = np.random.default_rng(int(base.get("seed", 1)))
@@ -112,8 +104,7 @@ def make_batch(building: dict, base: dict, heatmaps: list | None) -> dict:
     ranges = {"stair": ((18, 42), (900, 2600)), "exit": ((10, 30), (500, 1600)), "door": ((2, 9), (20, 260))}
     doors_out, meta = [], {}
     for f in building["floors"]:
-        rooms = {r["id"]: r for r in f["rooms"]}
-        room_types = {rid: r["type"] for rid, r in rooms.items()}
+        room_types = {r["id"]: r["type"] for r in f["rooms"]}
         for d in f["doors"]:
             kind = _door_kind(d, room_types)
             (q0, q1), (w0, w1) = ranges[kind]
@@ -121,7 +112,7 @@ def make_batch(building: dict, base: dict, heatmaps: list | None) -> dict:
             peak = int(round(rng.uniform(q0, q1) * width_factor))
             wait = round(float(rng.uniform(w0, w1)) * width_factor, 1)
             doors_out.append({"id": d["id"], "floor": f["id"], "meanWait": wait, "peakQueue": peak, "score": 0.0})
-            meta[(f["id"], d["id"])] = (kind, _door_label(d, kind, rooms, f["id"]))
+            meta[(f["id"], d["id"])] = (kind, door_label(building, f["id"], d["id"])[1])
     max_wait = max(d["meanWait"] for d in doors_out) or 1.0
     max_peak = max(d["peakQueue"] for d in doors_out) or 1
     for d in doors_out:
