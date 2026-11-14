@@ -348,6 +348,22 @@ try {
     })
     await tabShots(`open-${n + 1}-`)
   }
+  if (opens.length > 0)
+    await step('fixes', async () => {
+      await page.locator('.results [role=tab]').nth(1).click()
+      await page.waitForTimeout(500)
+      const list = page.locator('.results .fixes')
+      if ((await list.count()) === 0) return
+      await list.first().scrollIntoViewIfNeeded()
+      await shot('fixes-list')
+      const btn = list.locator('button.spot').first()
+      const id = await btn.getAttribute('data-spot')
+      await btn.click()
+      await page.waitForTimeout(2000)
+      const st = await page.evaluate(() => ({ a: window.__app.getState().activeSpot, v: window.__app.getState().visibleFloors }))
+      if (st.a !== id || !st.v || st.v.length !== 1) problems.push(`fixes: activeSpot ${st.a} (want ${id}), visibleFloors ${JSON.stringify(st.v)}`)
+      await shot('fixes-fly')
+    })
   if (FPS && opens.length > 0)
     await step('fps', async () => {
       await page.locator('.results [role=tab]').first().click()

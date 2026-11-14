@@ -138,6 +138,29 @@ for (const j of jobs) {
   })
 }
 
+// Real batches from --runs DIR (default data/runs): batch-<buildingId>.json for each indexed building
+{
+  const args = process.argv.slice(2)
+  const ri = args.indexOf('--runs')
+  const dir = ri >= 0 && args[ri + 1] ? resolve(process.cwd(), args[ri + 1]) : join(root, 'data', 'runs')
+  if (existsSync(dir)) {
+    for (const bl of index.buildings) {
+      const f = `batch-${bl.id}.json`
+      const p = join(dir, f)
+      if (!existsSync(p)) continue
+      let b
+      try { b = readJson(p) } catch { console.log(`skip ${f} (not valid JSON)`); continue }
+      if (b.version !== 'batch/v0' || b.buildingId !== bl.id || b.placeholder === true || isPrivate(p) || statSync(p).size > 8 * 1024 * 1024) {
+        console.log(`skip ${f} (not a public, real batch/v0 for ${bl.id} under 8 MB)`)
+        continue
+      }
+      copyFile(p, f)
+      const old = index.batches.find((x) => x.file === f || x.id === b.id)
+      upsert(index.batches, { ...old, id: b.id, buildingId: bl.id, file: f })
+    }
+  }
+}
+
 // Batch
 if (isPrivate(batch)) console.warn(`sync-demo: skipping private source ${batch}`)
 else if (copyFile(batch, 'batch.example.json')) {

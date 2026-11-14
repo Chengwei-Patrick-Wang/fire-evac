@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
 import WhatIfHeadline from './WhatIfHeadline'
+import MeasuredFixes from './MeasuredFixes'
+import { readFixes, readSkipped } from '../model/fixes'
 import { fetchReport } from '../data/loader'
 import type { Batch } from '../data/types'
 
@@ -57,6 +59,7 @@ export default function ReportCard() {
     <div className="report">
       {printBtn}
       <WhatIfHeadline />
+      {batch && <MeasuredFixes fixes={readFixes(batch)} skipped={readSkipped(batch)} top={batch.top} />}
       {mode === 'live' && (
         <button disabled={busy} onClick={() => void load(md !== null)}>
           {busy ? 'Generating…' : md !== null ? 'Regenerate' : 'Generate'}

@@ -9,6 +9,8 @@ import { Limits } from '../dashboard/Credibility'
 import RiskLegend, { Stamps } from '../dashboard/RiskLegend'
 import RiskMapSvg from '../dashboard/RiskMapSvg'
 import WhatIfHeadline from '../dashboard/WhatIfHeadline'
+import MeasuredFixes from '../dashboard/MeasuredFixes'
+import { readFixes } from '../model/fixes'
 
 export default function PrintReport() {
   const building = useApp((s) => s.building)
@@ -101,6 +103,7 @@ export default function PrintReport() {
             <p>No batch for this building: no risk map or weak spots.</p>
           )}
         </section>
+        {batch && <MeasuredFixes print fixes={readFixes(batch)} top={batch.top} />}
         <section>
           <h2>Risk map</h2>
           {batch ? (
