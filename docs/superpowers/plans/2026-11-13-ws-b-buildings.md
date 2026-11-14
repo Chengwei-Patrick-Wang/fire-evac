@@ -265,7 +265,7 @@ Handoff for A and E: python -m buildings.validate FILE (or problems(building)) n
 
 ### Task B15 (P1 · Sat 10 AM): Plan images and a ready trace for the "plan to 3D" demo moment
 
-BLOCKED: Example door DL1 is 4.0 m wide, but B14 problems() rejects widths above 3.0 m. B15 requires preserving all door endpoints and an empty problems() result; resolving this needs a team decision on the shared example or validation contract.
+> Lead ruling (Sat 11:35): DL1's 4.0 m is right: it's the example's wide lobby opening, and the example contract stays as it is. B14's 0.6-3.0 m range guards against unit and extraction errors; it is not a rule against wide openings. In `buildings/validate.py`, change it to 0.6-6.0 m (message `width outside 0.6-6.0 m`) and add a smoke-test case where a 4.0 m door passes and a 7.0 m door is flagged. Then finish B15 with an empty problems() result.
 
 > Lead ruling (Sat 09:55): the example's credits now read "Synthetic example building made by the team; license: free to use, no attribution needed.", so B14's license check passes. Keep every building's credits unchanged in the trace and the normalized building.
 
