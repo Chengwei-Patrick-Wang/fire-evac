@@ -643,6 +643,83 @@ def check_aggregate():
     json.dumps(result, allow_nan=False)
 
 
+def check_ranges():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.batch import aggregate, run_many, seed_ranges
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    records = []
+    for seed, t90 in zip((1, 2, 3), (100, None, 120)):
+        for room in ("R101", "R102"):
+            records.append({"ok": True, "scenarioId": f"{room}-{seed}", "seed": seed,
+                            "ignition": {"floor": "F1", "room": room},
+                            "t90": t90 if room == "R101" else None, "t100": None,
+                            "trapped": seed if room == "R101" else 0, "dosed": seed * 2,
+                            "heatmaps": [],
+                            "doors": [{"id": ident, "floor": "F1", "peakQueue": wait // 10,
+                                       "waitPersonSeconds": wait}
+                                      for ident, wait in (("DSB1", 100), ("E1", 80),
+                                                          ("D101", 20 if seed == 3 else 60),
+                                                          ("D104", 40 if seed == 3 else 10))]})
+    original = deepcopy(records)
+    result = seed_ranges(building, base, records + [{"ok": False, "error": "ignored"}])
+    assert records == original
+    rooms = {r["id"]: r for r in result["rooms"]}
+    assert rooms["R101"]["riskT90Range"] == {"min": 100., "median": 120., "max": float(base["maxTime"])}
+    assert rooms["R102"]["riskT90Range"] is None
+    assert rooms["R101"]["riskTrappedRange"] == {"min": 1., "median": 2., "max": 3.}
+    assert rooms["R101"]["riskDosedRange"] == {"min": 2., "median": 4., "max": 6.}
+    assert result["stability"]["heldIn"] == 2 and not result["stability"]["stable"]
+    assert result["stability"]["seeds"] == [1, 2, 3]
+    assert next(t for t in result["top"] if t["id"] == "D101")["seedsInTop3"] == 2
+    assert next(t for t in result["top"] if t["kind"] == "room")["seedsInTop3"] == 3
+    summaries = [aggregate(building, base, [r for r in records if r["seed"] == seed])
+                 for seed in (1, 2, 3)]
+    for door in result["doors"]:
+        for source, field in (("score", "scoreRange"), ("meanWait", "meanWaitRange")):
+            values = sorted(next(d[source] for d in summary["doors"] if d["id"] == door["id"])
+                            for summary in summaries)
+            assert door[field] == dict(zip(("min", "median", "max"), values))
+    assert result["stability"]["why"].isascii() and "ranks first in 3 of 3" in result["stability"]["why"]
+    with patch("fire.batch._records", return_value=records):
+        batch = run_many(building, base, [], progress=False)
+    assert batch["stability"] == result["stability"]
+    single = [r for r in records if r["seed"] == 1]
+    assert seed_ranges(building, base, single) == {}
+    with patch("fire.batch._records", return_value=single):
+        batch = run_many(building, base, [], progress=False)
+    assert "stability" not in batch
+    assert all(not any(key.endswith("Range") for key in item)
+               for item in batch["rooms"] + batch["doors"])
+    missing = deepcopy(records)
+    for record in missing:
+        record.pop("dosed")
+    assert all("riskDosedRange" not in r for r in seed_ranges(building, base, missing)["rooms"])
+    json.dumps(result, allow_nan=False)
+    print("ranges: room bounds, per-seed scores, ranking stability and single-seed compatibility checked", flush=True)
+
+
+def check_ranges_slow():
+    from fire.batch import run_many
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["occupants"]["total"] = 60
+    base["maxTime"] = 120
+    result = run_many(building, base, [dict(floor="F1", room=r) for r in ("R101", "R105")],
+                      seeds=(1, 2), workers=2, timeout_s=600)
+    assert not result["failed"], result["failed"]
+    assert result["stability"]["n"] == 2
+    for room in result["rooms"]:
+        for field in ("riskT90Range", "riskTrappedRange", "riskDosedRange"):
+            limits = room[field]
+            assert limits is None or limits["min"] <= limits["median"] <= limits["max"]
+    print(result["stability"]["why"], flush=True)
+
+
 def check_timing():
     from contextlib import redirect_stdout
     from io import StringIO
