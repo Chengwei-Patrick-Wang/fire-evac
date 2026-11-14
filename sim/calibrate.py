@@ -17,6 +17,7 @@ from sim.run import floor_walkable, run, smoke_speed
 
 ROOT = Path(__file__).resolve().parents[1]
 WIDTHS = (0.8, 0.9, 1.0, 1.2, 1.6)
+STEADY_DENSITIES = (0.25, 0.5, 1.0, 1.5, 2.0)
 VISIBILITIES = (1.0, 1.5, 2.0, 2.5, 3.0, 5.0, 30.0)
 SMOKE_RULE_LIMIT = ("Walking speed in smoke: the published rule is a model input; this curve "
                     "checks that the simulator applies it as published, not independent validation.")
@@ -141,14 +142,17 @@ def sfpe(rho):
     return max(0, 1.4 * (1 - 0.266 * max(rho, 0.54)))
 
 
-def speed_density(run, area, t_min=5.0, bin=0.5, min_samples=5):
-    """Frame-pair means in a single-floor measurement polygon (m/s, persons/m²)."""
-    if area.area <= 0 or not math.isfinite(bin) or bin <= 0 or min_samples < 1:
-        raise ValueError("area, bin and min_samples must be positive")
-    bins = defaultdict(list)
+def speed_density(run, area, t_min=5.0, bin=0.5, min_samples=5, t_max=math.inf):
+    """Frame-pair means in a single-floor polygon, with both times in the window."""
+    return _bin_points(_pair_samples(run, area, t_min, t_max), bin, min_samples)
+
+
+def _pair_samples(run, area, t_min, t_max):
+    if area.area <= 0:
+        raise ValueError("area must be positive")
     for first, second in zip(run["frames"], run["frames"][1:]):
         dt = second["t"] - first["t"]
-        if first["t"] < t_min or dt <= 0:
+        if first["t"] < t_min or second["t"] > t_max or dt <= 0:
             continue
         inside = [r for r in first["a"] if r[4] in (0, 1) and area.covers(Point(r[1:3]))]
         following = {r[0]: r for r in second["a"]}
@@ -157,7 +161,15 @@ def speed_density(run, area, t_min=5.0, bin=0.5, min_samples=5):
         if not speeds:
             continue
         density = len(inside) / area.area
-        bins[math.floor(density / bin)].append((density, mean(speeds)))
+        yield density, mean(speeds)
+
+
+def _bin_points(samples, bin, min_samples):
+    if not math.isfinite(bin) or bin <= 0 or min_samples < 1:
+        raise ValueError("bin and min_samples must be positive")
+    bins = defaultdict(list)
+    for density, speed in samples:
+        bins[math.floor(density / bin)].append((density, speed))
     points = []
     for index, samples in sorted(bins.items()):
         if len(samples) < min_samples:
@@ -171,27 +183,58 @@ def speed_density(run, area, t_min=5.0, bin=0.5, min_samples=5):
     return points
 
 
+def steady_corridor(density, seed=1):
+    """Short, immediate-start walk; unfinished evacuation is outside this measurement."""
+    if not math.isfinite(density) or density <= 0:
+        raise ValueError("density must be finite and positive")
+    building = corridor_building(length=60.0, width=3.0, door=2.6)
+    scenario = _scenario(building, round(density * 60 * 3), 2.6, seed)
+    scenario["maxTime"] = 16
+    return run(building, scenario, NoFire(building, scenario))
+
+
+def steady_points(densities=STEADY_DENSITIES, seed=1):
+    building = corridor_building(length=60.0, width=3.0, door=2.6)
+    area = box(10, 0, 20, 3).intersection(floor_walkable(building["floors"][0]))
+    samples = []
+    for density in densities:
+        samples.extend(_pair_samples(steady_corridor(density, seed), area, 3, 15))
+    return _bin_points(samples, 0.5, 5)
+
+
 def corridor_points():
-    building = corridor_building()
-    scenario = _scenario(building, 100, 1.0)
-    result = run(building, scenario, NoFire(building, scenario))
-    area = box(18, 0, 26, 2.4).intersection(floor_walkable(building["floors"][0]))
-    return speed_density(result, area)
+    return steady_points()
 
 
 def corridor_limits(points):
     """Disclose failed reference checks; measurements must never be tuned to pass."""
     if len(points) < 3:
         return ["Corridor speed-density: fewer than three sampled density bins; insufficient coverage."]
-    low, high = points[0]["simulated"], points[-1]["simulated"]
-    if 0.7 <= low <= 1.5 and high < 0.7 * low:
-        return []
-    return [(f"Corridor speed-density comparison does not meet the planned reference checks: "
-             f"lowest-density bin {low:.2f} m/s (expected 0.7–1.5), highest-density bin "
-             f"{high:.2f} m/s (expected below 70% of the lowest-bin speed). "
-             "These are full-strip averages during a draining bottleneck queue, not a "
-             "validated steady-state walking-speed curve; low average density can include "
-             "slow people left behind as the queue drains.")]
+    limits, failures = [], []
+    low = points[0]["simulated"]
+    if not 0.7 <= low <= 1.5:
+        failures.append(f"lowest-density bin {low:.2f} m/s (expected 0.7–1.5)")
+    if not all(a["simulated"] > b["simulated"] for a, b in zip(points, points[1:])):
+        failures.append("speed does not fall strictly from bin to bin")
+    if failures:
+        limits.append("Corridor speed-density comparison does not meet the planned reference checks: "
+                      + "; ".join(failures) + ".")
+    deviations = []
+    for point in points:
+        refs = point["references"]
+        lower = min(r["value"] for r in refs)
+        upper = max(r["value"] for r in refs)
+        speed = point["simulated"]
+        if speed < 0.8 * lower or speed > 1.2 * upper:
+            ref = refs[0]
+            pct = abs(speed / ref["value"] - 1) * 100
+            direction = "below" if speed < lower else "above"
+            deviations.append(f"{point['density']:.2f} persons/m2 ({pct:.0f}% {direction} {ref['name']})")
+    if deviations:
+        limits.append("Corridor speed-density: simulated speeds differ by more than 20% from "
+                      "both references at " + ", ".join(deviations)
+                      + "; the crowd model differs from the reference walking speeds at these densities.")
+    return limits
 
 
 def calibration(agents=200):
@@ -218,9 +261,10 @@ def calibration(agents=200):
                                       {"name": "Hydraulic 1.3 × (width − 0.3)", "value": round(hydraulic, 4)}]})
     speeds = corridor_points()
     limits.extend(corridor_limits(speeds))
-    print("density bin | density | speed m/s | samples", flush=True)
+    print("density bin | density | speed m/s | Weidmann | SFPE | samples", flush=True)
     for p in speeds:
-        print(f"{p['label']} | {p['density']:.2f} | {p['simulated']:.2f} | {p['samples']}", flush=True)
+        print(f"{p['label']} | {p['density']:.2f} | {p['simulated']:.2f} | {p['references'][0]['value']:.2f} | "
+              f"{p['references'][1]['value']:.2f} | {p['samples']}", flush=True)
     visibility = speed_visibility()
     limits.extend([SMOKE_RULE_LIMIT, *visibility_limits(visibility)])
     print("visibility | simulated | formula | simulated/formula | samples", flush=True)
@@ -232,8 +276,9 @@ def calibration(agents=200):
             "source": f"JuPedSim 1.4.2 CollisionFreeSpeedModel, {agents} agents, seed 1, NoFire, immediate start",
             "points": points, "limits": limits,
             "speedDensity": {"title": "Corridor walking speed against density",
-                             "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 100 typical agents, seed 1; "
-                             "30 × 2.4 m corridor, 1 m door; 8 m measurement strip, t ≥ 5 s; "
+                             "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, typical agents at 0.25–2.0 persons/m², seed 1; "
+                             "60 × 3 m corridor, 2.6 m exit 40 m past the 10 m strip (x = 10–20 m); "
+                             "3–15 s, immediate start; "
                              "Weidmann (1993) and SFPE corridor reference curves",
                              "points": speeds}, "speedVisibility": visibility}
 

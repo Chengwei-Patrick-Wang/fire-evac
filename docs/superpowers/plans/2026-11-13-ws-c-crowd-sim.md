@@ -640,23 +640,23 @@ Handoff for A: copy `data/calibration.json` to `frontend/public/demo/calibration
   - A new `corridor_limits` rule.
   - The same calibration/v0 schema: no field renamed or removed.
 
-- [ ] **Step 1: Steady corridor.**
+- [x] **Step 1: Steady corridor.**
   - Use `corridor_building(length=60.0, width=3.0, door=2.6)`. The 2.6 m exit, in a 2.8 m-wide walkable corridor, is no bottleneck.
   - For each target density ρ, place `perRoom R1: round(ρ × 60 × 3)` typical agents with `alarmTime` 0, `premovement {lobby: [0, 0]}` and `maxTime` 16. Only the window matters; agents still inside at the end don't count.
   - Measure on the full-width strip x = 10–20 m ∩ walkable, 40 m upstream of the door. Use frame pairs with 3 ≤ t ≤ 15 s: after the start-up acceleration, and long before any queue at the door could reach the strip.
-- [ ] **Step 2: Pool and bin.**
+- [x] **Step 2: Pool and bin.**
   - Pool the frame-pair samples of all targets into 0.5 persons/m² bins by measured strip density.
   - Give each point the same label, rounding and references as `speed_density`, and keep bins with at least 5 samples.
   - The strip empties as each crowd's tail passes. Those samples land in lower bins, and they are free walkers, so they stay.
-- [ ] **Step 3: Honest limits.** `corridor_limits(points)` keeps today's line for fewer than 3 bins.
+- [x] **Step 3: Honest limits.** `corridor_limits(points)` keeps today's line for fewer than 3 bins.
   - If the lowest bin is outside 0.7–1.5 m/s, or speed doesn't fall from bin to bin, add one line saying which.
   - Add one more line naming every bin whose `simulated` is below 0.8 × its lower reference or above 1.2 × its higher one. For example: `Corridor speed-density: at 1.6 and 2.1 persons/m2 the simulated speed is 32-33% below Weidmann (1993); the crowd model walks slower than the references in dense crowds.`
   - Drop the draining-queue wording.
   - The `speedDensity.source` names the steady setup: 60 × 3 m corridor, 2.6 m exit 40 m past the strip, 10 m strip, 3–15 s, typical agents at 0.25–2.0 persons/m², seed 1. The `title` stays.
-- [ ] **Step 4: Regenerate.** Run `python -m sim.calibrate`.
+- [x] **Step 4: Regenerate.** Run `python -m sim.calibrate`.
   - `version`, `title`, `source`, `points` (door flow), `speedVisibility` and every limits line other than the corridor one stay byte-identical; compare with `git show HEAD:data/calibration.json`.
   - Only `speedDensity` and the corridor lines change.
-- [ ] **Step 5: Smoke test** `check_calibration(slow=False)`.
+- [x] **Step 5: Smoke test** `check_calibration(slow=False)`.
   - **Fast:**
     - The hand-made `speed_density` assertions still pass with the `t_max` default.
     - One `steady_corridor(0.5)` run (90 agents, about 1 s) has a strip mean speed in 0.7–1.5 m/s.
@@ -665,6 +665,23 @@ Handoff for A: copy `data/calibration.json` to `frontend/public/demo/calibration
     - `corridor_points()` has at least 4 bins, each with at least 5 samples.
     - The lowest bin is at 0.7–1.5 m/s, and speeds fall strictly from bin to bin.
     - The points equal the saved `speedDensity.points`, and every `corridor_limits` line is in the saved `limits`.
-- [ ] **Step 6: Verify:** With `LLM_PROVIDER=off`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the CLI's speed table and its run time under this heading: bin, density, simulated, Weidmann, SFPE, samples.
-- [ ] **Step 7: Commit:** `git add sim data/calibration.json docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "fix(sim): corridor speed-density measured in steady walking, not a draining queue"` (no attribution lines).
+- [x] **Step 6: Verify:** With `LLM_PROVIDER=off`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the CLI's speed table and its run time under this heading: bin, density, simulated, Weidmann, SFPE, samples.
+- [x] **Step 7: Commit:** `git add sim data/calibration.json docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "fix(sim): corridor speed-density measured in steady walking, not a draining queue"` (no attribution lines).
   - Handoff for E and A: the schema is unchanged. E30's `sync-demo.mjs` copies the file into `frontend/public/demo/` on the next `npm run build`; commit that copy. The chart and its "Known limits" list update by themselves.
+
+
+**C22 results:** The five immediate-start, NoFire corridor runs pool frame-pair mean speeds by measured strip density. Both frame times must lie in 3–15 s, and the 10 m measurement strip spans the walkable width 40 m upstream of the exit. Existing `speed_density` defaults, labels, rounding and reference formulas are preserved; no crowd-model constants changed.
+
+| Bin (persons/m²) | Density | Simulated m/s | Weidmann m/s | SFPE m/s | Samples |
+| --- | --- | --- | --- | --- | --- |
+| 0.0–0.5 | 0.21 | 1.19 | 1.34 | 1.20 | 23 |
+| 0.5–1.0 | 0.66 | 1.04 | 1.23 | 1.15 | 22 |
+| 1.0–1.5 | 1.09 | 0.86 | 1.01 | 0.99 | 15 |
+| 1.5–2.0 | 1.61 | 0.52 | 0.76 | 0.80 | 24 |
+| 2.0–2.5 | 2.09 | 0.39 | 0.58 | 0.62 | 24 |
+
+`LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1 .venv/bin/python -m sim.calibrate` finished in **47.6 s**. The lowest-density speed is inside 0.7–1.5 m/s and speed falls strictly at every step. The limits name the 1.61 and 2.09 persons/m² bins, whose speeds are 32% and 33% below Weidmann and more than 20% below both references. The old draining-queue wording is removed. After excluding `speedDensity` and corridor limits, serialized calibration content is byte-identical to `git show HEAD:data/calibration.json`, including door flow and `speedVisibility`.
+
+Handoff for E and A: schema unchanged; E30's `sync-demo.mjs` copies this file into `frontend/public/demo/` on the next `npm run build`. Commit that generated copy; the chart and Known limits list update automatically.
+
+**Final verification:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `.venv/bin/python -m sim.smoke_test` passed in **14.4 s** and `--slow` passed in **224.8 s** (fast is 6.4% of slow, within C9's 25% budget). The full curve exactly matches the saved points and all its limits are present. `git diff --check` passed. Logs: `/tmp/c22-calibrate.log`, `/tmp/c22-fast.log`, `/tmp/c22-slow.log`. Only `sim/`, the explicitly authorized generated calibration file, and this plan changed. No live LLM calls or git syncing.
