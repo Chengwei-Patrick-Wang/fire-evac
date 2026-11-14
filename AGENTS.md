@@ -33,6 +33,11 @@ Shared files (`contracts/`, `AGENTS.md`, `requirements.txt`, `frontend/src/data/
 - Work on your branch (`ws-a` … `ws-e`). Push at least hourly. Open a PR to `main` at least every 2 hours. Merge `main` into your branch at each sync point.
 - Never force-push, never push to `main` directly, never commit `.env` or anything in `data/private/`.
 
+## Overnight runs
+
+- `tools/overnight/run.sh <claude|codex> <letter> [hours]` works through your plan one task per agent run, unattended, and pushes your branch. Usage notes are at the top of the script.
+- The lead's machine merges green branches into `main` about every 45 minutes and leaves notes in `docs/overnight/STATUS.md`. Read it before each task. Only the lead edits it.
+
 ## Running things (always from the repo root)
 
 - Setup: `python -m venv .venv`, activate it (`source .venv/bin/activate` on macOS, `.venv\Scripts\activate` on Windows), then `pip install -r requirements.txt`.
