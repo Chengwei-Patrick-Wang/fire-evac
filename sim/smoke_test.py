@@ -834,7 +834,8 @@ def check_keepout_rooms():
     from sim.run import keepout_cut
     from fire.model import FireModel
     counts = []
-    for name, maximum in (("office", 1), ("clinic", 7)):
+    # Closing hairlines (C23 cause 2) leaves the clinic's R1B12, R2C11 and R2D12 without a cut: 7 -> 10 rooms.
+    for name, maximum in (("office", 1), ("clinic", 10)):
         path = ROOT / f"data/buildings/{name}.json"
         if not path.exists():
             print(f"keep-out rooms skipped: {name} building missing")
@@ -948,6 +949,20 @@ def check_keepout_slot():
     # C23: a 0.35 m gap beside the disc is narrower than a body (0.4 m): skip it; 0.45 m is wide enough.
     assert keepout_cut(poly, floor, "r", 5, 2.85, 2.5)[1] == 1.5
     assert keepout_cut(poly, floor, "r", 5, 2.95, 2.5)[1] == 2.5
+    # C23: a disc 0.01 m from the wall counts as flush, but the 1 cm strip under it stays walkable and the router
+    # sends people through it. A strip that opens into body-wide space at both ends is cut out; a dead-end cusp stays.
+    from unittest.mock import patch
+    from shapely.geometry import box
+    from sim.run import close_through_hairlines
+    strip = Point(5, 0.005)
+    with patch("sim.run.close_through_hairlines", lambda cut, removed, body=0.2: cut):
+        assert keepout_cut(poly, floor, "r", 5, 2.51, 2.5)[0].intersects(strip)
+    cut, radius = keepout_cut(poly, floor, "r", 5, 2.51, 2.5)
+    assert radius == 2.5 and not cut.intersects(strip) and cut.contains(Point(5, 7))
+    block = box(2, 0.01, 8, 6)
+    assert not close_through_hairlines(poly.difference(block), block).intersects(strip)
+    east = box(2, 0.01, 10, 6)  # the same strip ending at the east wall opens at one end only
+    assert close_through_hairlines(poly.difference(east), east).equals(poly.difference(east))
     building = load_building()
     floor = building["floors"][0]
     walk = floor_walkable(floor)
@@ -1421,10 +1436,13 @@ def check_room_sweep(building, fast, slow=False):
     assert report["fallback"]["clinic"] == {"0.5": ["R9"]} and "example" in report["fallback"]
     assert report["unrun"] == ["clinic-R9"] + [c["id"] for c in left]
     if slow:
-        # Repros of the cause C23 fixed: a keep-out gap of 0.3-0.4 m beside the disc wedged people (office R113a:
+        # Repros of the causes C23 fixed: a keep-out gap of 0.3-0.4 m beside the disc wedged people (office R113a:
         # 1.5 m disc, 4 stuck events); the disc now steps down (R113a 1.5 -> 1.0 m, clinic R1D30 0.75 -> 0.5 m).
+        # A hairline between the 2.5 m disc and a wall (office R201: 13 stuck events, 26 trapped; R237b: 11 stuck,
+        # 12 trapped) is now cut out of the walkable area, so both finish clean.
         both = load_buildings(["office", "clinic"])
-        for name, room_id, expected in (("office", "R113a", 1.0), ("clinic", "R1D30", 0.5)):
+        for name, room_id, expected in (("office", "R113a", 1.0), ("clinic", "R1D30", 0.5),
+                                        ("office", "R201", 2.5), ("office", "R237b", 2.5)):
             if name not in both:
                 print(f"room sweep repro {name}/{room_id}: building missing; skipped")
                 continue

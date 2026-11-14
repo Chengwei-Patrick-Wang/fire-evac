@@ -18,7 +18,8 @@ Behavior:
 - People keep 2.5 m from the burning item where room geometry permits;
   smaller discs or sealed empty rooms preserve connected escape routes. Fallback
   discs may be smaller than the flame footprint; nearby people remain subject
-  to untenable trapping.
+  to untenable trapping. A walkable strip narrower than a body that runs between
+  the cut and a wall is cut out too: the router would send people through it.
 - A burning stairwell is not an escape route; its doors close to route choice.
 - Every 1 s: fire.step(t), smoke slows agents; traps record "untenable"
   or "no route" when every escape option has closed.
@@ -41,6 +42,7 @@ import jupedsim as jps
 import numpy as np
 import shapely
 from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 
 from fire.stub import NoFire
 from sim.brain import SMOKE_BETA, UNFAMILIAR_GAMMA, main_entrance, visible_smoke, route_points, RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
@@ -102,6 +104,28 @@ def body_pieces(poly):
     return sum(p.area > 0.5 for p in pieces)
 
 
+def _polygons(geometry):
+    return ([geometry] if geometry.geom_type == "Polygon"
+            else [p for p in getattr(geometry, "geoms", []) if p.geom_type == "Polygon"])
+
+
+def close_through_hairlines(cut, removed, body=0.2):
+    """Cut out walkable strips narrower than a body that touch the removed region and open into body-wide space at two ends.
+
+    A cut can leave a 1 mm to 1 cm strip between its disc and a wall. JuPedSim routes people through it as the
+    shortest way past the disc, but a body cannot enter it, so they wedge (C23: office R201, R237b). A dead-end
+    cusp, which opens into body-wide space at one end only, stays.
+    """
+    opened = cut.buffer(-body).buffer(body)
+    closed = []
+    for strip in _polygons(cut.difference(opened)):
+        if strip.distance(removed) < 0.02:
+            ends = unary_union([g.buffer(0.05) for g in _polygons(strip.buffer(0.02).intersection(opened))])
+            if len(_polygons(ends)) >= 2:
+                closed.append(strip)
+    return cut.difference(unary_union(closed).buffer(1e-6)) if closed else cut
+
+
 def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
     return keepout_cut(walk, floor, room, x, y, radius)[0]
 
@@ -127,7 +151,7 @@ def keepout_cut(walk, floor, room, x, y, radius, small=KEEPOUT_SMALL_M, seal=Tru
     zones = [Polygon(z["polygon"]) for z in floor["exits"] + floor["stairs"]]
     attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
     def connected_cut(removed):
-        cut = walk.difference(removed)
+        cut = close_through_hairlines(walk.difference(removed), removed)
         pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
         pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
                         key=lambda p: p.area, reverse=True)
