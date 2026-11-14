@@ -1,18 +1,21 @@
-"""Backend smoke test. From the repo root: python -m backend.smoke_test
+"""Backend smoke test. From the repo root: python -m backend.smoke_test [--live-llm]
 
 Needs contracts/building.example.json and plan.example.json plus sim.run, fire.metrics and
 fire.batch. Goes through the API with TestClient: buildings, from-plan (private and public), the
-batch (a real two-ignition batch, maxTime 60, polled until saved), report and trace routes, and a
-real run (example scenario, maxTime 60) polled until saved.
+batch (a real two-ignition batch, maxTime 60, polled until saved), the report card and the LLM
+client (offline: LLM_PROVIDER=off or a stubbed model), the trace route, and a real run (example
+scenario, maxTime 60) polled until saved.
 check_batch, check_report and check_trace are one function per route file, so A4, A7 and A8
-each rewrite only their own.
+each rewrite only their own (A7's other checks sit beside check_report, run by check_llm).
+--live-llm runs only the LLM checks, plus one set of real model calls (GEMINI_API_KEY from .env).
 """
 import io
 import json
+import os
 import sys
 import threading
 import time
-from contextlib import redirect_stderr
+from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -252,8 +255,441 @@ def check_batch(client):
     )
 
 
+@contextmanager
+def env(**values):
+    """Set environment variables for the block (None unsets one), then put them back."""
+    old = {k: os.environ.get(k) for k in values}
+
+    def put(items):
+        for k, v in items.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    put(values)
+    try:
+        yield
+    finally:
+        put(old)
+
+
+def _examples() -> tuple[dict, dict, dict]:
+    def load(name):
+        return json.loads((ROOT / "contracts" / name).read_text(encoding="utf-8"))
+
+    return load("batch.example.json"), load("run.example.json"), load("building.example.json")
+
+
 def check_report(client):
-    assert client.post("/api/report").status_code == 501
+    """A7, LLM_PROVIDER=off: the card is the template, with every top id and its why, the limits line
+    ("Illustrative") and the writer line ("Template summary"); POST /api/report returns it and does
+    not cache it; complete() returns None without raising; bad requests are refused."""
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    batch, _, building = _examples()
+    saved = ROOT / "data" / "runs" / "batch-smoke-report-example.json"  # test-owned ids only: a real
+    cache = ROOT / "data" / "runs" / "report-smoke-report-example.md"  # cached card is never touched
+    cache.unlink(missing_ok=True)
+    log = io.StringIO()
+    with env(LLM_PROVIDER="off"), redirect_stderr(log):
+        assert llm.complete("ping", schema={"type": "object"}) is None
+        assert llm.complete("ping", image=b"\x89PNG\r\n") is None
+        md = features.report(batch, building)
+        for item in batch["top"][:3]:
+            assert item["id"] in md and item["why"] in md, (item, md)
+        assert "Illustrative" in md and "Template summary" in md, md
+        assert features.LIMITS in md and md.rstrip().endswith("*Template summary (AI unavailable)*"), md[-300:]
+        assert "panic" not in md.lower()
+
+        # the endpoint: a saved batch gives exactly this card, uncached; the example id is served
+        # too (from the demo index, whose copy may lag behind contracts/, or a cached AI card)
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_text(json.dumps(dict(batch, id="smoke-report-example")), encoding="utf-8")
+        try:
+            r = client.post("/api/report", json={"batchId": "smoke-report-example"})
+            assert r.status_code == 200, r.text
+            assert r.json() == {"markdown": md}, r.text[:300]
+            assert not cache.exists(), "a template card was cached"
+        finally:
+            saved.unlink(missing_ok=True)
+            cache.unlink(missing_ok=True)
+        r = client.post("/api/report", json={"batchId": batch["id"]})
+        assert r.status_code == 200 and "Illustrative fire model" in r.json()["markdown"], r.text[:300]
+
+        for bad in (None, {}, {"runId": "a", "batchId": "b"}, {"batchId": "../x"}, {"batchId": 7}, {"run": "x"}):
+            r = client.post("/api/report", json=bad) if bad is not None else client.post("/api/report")
+            assert r.status_code == 422, (bad, r.status_code, r.text[:200])
+        from backend.app import batch as batch_api
+
+        if batch_api._fire_batch() is not None:  # S5's placeholder answers every batch id
+            assert client.post("/api/report", json={"batchId": "no-such-batch"}).status_code == 404
+        assert client.post("/api/report", json={"runId": "no-such-run"}).status_code == 404
+
+        # never raises, whatever it is given
+        for junk, building_junk in (({}, {}), (None, None), ({"version": "batch/v0", "runs": "x", "top": [None, 3]}, {"floors": "x"}),
+                                    ({"version": "run/v0", "metrics": {"doors": [{"id": "D1", "waitPersonSeconds": "x"}]}}, [])):
+            text = features.report(junk, building_junk)
+            assert isinstance(text, str) and "Template summary" in text, text
+    assert "LLM_PROVIDER=off" in log.getvalue(), log.getvalue()
+
+
+def check_report_run(client):
+    """A run's card: the 3 doors with the most person-seconds of waiting, each with its code-built why;
+    the fire's room from fire.x, y; smoke exposure (D10's fields) before evacuation time; found by
+    run id (demo index) and, as the frontend keys live runs, by scenario id in data/runs. A batch
+    with smoke fields and what-ifs (D10, D11) leads each what-if line with exposure."""
+    from backend.llm import features
+
+    batch, run, building = _examples()
+    m = run["metrics"]
+    doors = sorted((d for d in m["doors"] if d["waitPersonSeconds"] > 0), key=lambda d: -d["waitPersonSeconds"])[:3]
+    with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+        md = features.report(run, building)
+        for d in doors:
+            why = f"Door {d['id']}: peak queue {d['peakQueue']:,.0f}; {d['waitPersonSeconds']:,.0f} person-seconds of waiting"
+            assert why in md, (why, md)
+        if m.get("t90") is not None:
+            assert f"90% out at {m['t90']:,.0f} s" in md, md
+        assert "Kitchen (R101)" in md, md  # the example fire is in the kitchen
+        if "exposure" not in m:
+            assert "Smoke:" not in md
+        r = client.post("/api/report", json={"runId": run["id"]})  # the example: demo index (or a cached card)
+        assert r.status_code == 200 and "Illustrative fire model" in r.json()["markdown"], r.text[:300]
+
+        # D10 exposure (made-up values): it leads, evacuation second
+        exposed = dict(run, metrics=dict(m, exposure={
+            "doseUnit": 2700, "smokeD": 10.0, "personSecondsInSmoke": 2020.0, "agentsInSmoke": 57, "meanDose": 0.14,
+            "maxDose": 1.9, "dosed": 4, "dosedIdx": [1, 2, 3, 4],
+            "stairs": [{"floor": "F1", "group": "SA", "smokeAt": 62.0}, {"floor": "F2", "group": "SB", "smokeAt": None}]}))
+        md2 = features.report(exposed, building)
+        assert md2.index("Smoke:") < md2.index("Evacuation:"), md2
+        assert "2,020 person-seconds in smoke" in md2 and "Stair A on F1 smoky from 62 s" in md2, md2
+        assert f"57 of {m['agents']:,.0f} people in smoke at some point" in md2, md2
+
+        # D10 + D11 on a batch: smoke before t90, in the numbers and in each what-if line
+        b2 = json.loads(json.dumps(batch))
+        for i, rr in enumerate(b2["runs"]):
+            rr["smokeSeconds"], rr["dosed"] = 1000.0 + i, i % 3
+        n = len(b2["runs"])
+        b2["whatIf"] = [
+            {"id": "proppedStairs", "label": "Stair doors propped open", "doors": {}, "sprinklers": False, "n": n,
+             "dT90": 0.2, "dT90Min": -1.0, "dT90Max": 3.0, "slower": 3, "faster": 1, "dTrapped": 0.0,
+             "dDosed": 0.5, "dSmokeSeconds": 366.0, "why": "t90 first, as D writes it"},
+            {"id": "sprinklers", "label": "Sprinklers on", "doors": {}, "sprinklers": True, "n": n,
+             "dT90": -0.5, "slower": 0, "faster": 2, "dTrapped": 0.0},
+        ]
+        md3 = features.report(b2, building)
+        pct = f"{100 * 366.0 / (sum(1000.0 + i for i in range(n)) / n):+.0f}%"  # +35% for 66 runs
+        assert md3.index("Smoke:") < md3.index("90% out:"), md3
+        assert f"**Stair doors propped open: smoke exposure {pct} (+366 person-seconds in smoke per fire), while 90% out" in md3, md3
+        propped = next(ln for ln in md3.splitlines() if ln.startswith("- **Stair doors propped open"))
+        assert propped.index(f"smoke exposure {pct}") < propped.index("90% out 0.2 s later"), propped
+        sprinklers = next(ln for ln in md3.splitlines() if "Sprinklers on" in ln)
+        assert "90% out 0.5 s sooner on average (slower in 0 of" in sprinklers, sprinklers
+
+        # a live run, asked for by its scenario id (what the frontend sends today)
+        fake = {"version": "run/v0", "id": "smoke-report-run", "buildingId": "example-office",
+                "scenarioId": "smoke-report-scenario", "seed": 1, "frameInterval": 0.5, "floors": ["F1", "F2"],
+                "agents": [], "frames": [], "smoke": [], "fire": run["fire"], "events": [],
+                "metrics": {k: m[k] for k in ("agents", "evacuated", "trapped", "t50", "t90", "t100", "exitCounts", "doors")}}
+        path = ROOT / "data" / "runs" / "smoke-report-run.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(fake, separators=(",", ":")), encoding="utf-8")
+        try:
+            expected = features.report(fake, building)
+            assert f"Door {doors[0]['id']}: peak queue" in expected, expected
+            for ref in ("smoke-report-scenario", "smoke-report-run"):
+                r = client.post("/api/report", json={"runId": ref})
+                assert r.status_code == 200 and r.json() == {"markdown": expected}, (ref, r.text[:300])
+        finally:
+            path.unlink(missing_ok=True)
+
+
+def check_report_ai(client):
+    """The AI path with a stubbed model (no network): its headline and fixes are used and the card
+    ends "Written by Gemini"; a headline with a number not in the facts, a fix with an invented
+    statistic and a fix for an unknown id fall back to the template; long fixes are cut to 25
+    words; the endpoint caches AI cards until ?refresh=1; a private building never reaches the
+    model."""
+    from backend.app.store import PRIVATE_DIR
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    batch, _, building = _examples()
+    top = batch["top"][:3]
+    assert len(top) >= 2, "the example batch needs at least two top entries"
+    first, second = top[0], top[1]
+    n = len(batch["runs"])
+    template_headline = features._facts(batch, building)["headline"]
+    answers: list = []
+    prompts: list = []
+
+    def fake_complete(prompt, **kwargs):
+        prompts.append((prompt, kwargs))
+        return answers.pop(0) if answers else None
+
+    def fix_lines(md: str) -> list[str]:
+        return [ln.split("**Fix:**", 1)[1].strip() for ln in md.splitlines() if "**Fix:**" in ln]
+
+    good = {"headline": f"{first['id']} is the worst spot across {n} simulated fires",
+            "fixes": [{"id": first["id"], "fix": "Add a second stair route from the corridor so arrivals split between two doors."},
+                      {"id": "NOT-A-SPOT", "fix": "Nothing."},
+                      {"id": second["id"], "fix": "A wider door cuts the queue by 93.7%."}]}
+    runs_dir = ROOT / "data" / "runs"
+    saved = runs_dir / "batch-smoke-report-cache.json"  # the example batch under its own id
+    cache = runs_dir / "report-smoke-report-cache.md"
+    private_building = PRIVATE_DIR / "smoke-report-private.json"
+    private_batch = runs_dir / "batch-smoke-report-private.json"
+    real = llm.complete
+    llm.complete = fake_complete
+    cache.unlink(missing_ok=True)
+    try:
+        with env(LLM_PROVIDER="gemini"), redirect_stderr(io.StringIO()):
+            answers.append(json.loads(json.dumps(good)))
+            md, ai = features.report_card(batch, building)
+            assert ai and md.rstrip().endswith("*Written by Gemini*"), md[-300:]
+            assert f"**{good['headline']}**" in md, md
+            fixes = fix_lines(md)  # the model's fix for spot 1; templates for the invented statistic and the missing one
+            expected = ["Add a second stair route from the corridor so arrivals split between two doors."]
+            expected += [features.TEMPLATE_FIX.get(str(item.get("kind")), features.TEMPLATE_FIX["door"]) for item in top[1:]]
+            assert fixes == expected, (fixes, expected)
+            assert "93.7" not in md and "NOT-A-SPOT" not in md and all(item["why"] in md for item in top), md
+            prompt, kwargs = prompts[-1]
+            assert kwargs["schema"] == features.REPORT_SCHEMA and kwargs["timeout"] >= 30, kwargs
+            assert first["why"] in prompt and building["name"] in prompt and "heatmaps" not in prompt, prompt[:500]
+
+            answers.append({"headline": "Stair B queues 9,871 people", "fixes": [{"id": first["id"], "fix": "Widen the stair door to 1.2 m."}]})
+            md, ai = features.report_card(batch, building)
+            assert ai and "9,871" not in md and f"**{template_headline}**" in md, md
+            assert fix_lines(md)[0] == "Widen the stair door to 1.2 m.", md
+
+            answers.append({"headline": "", "fixes": [{"id": first["id"], "fix": " ".join(["wide"] * 40)}]})
+            md, ai = features.report_card(batch, building)
+            fix = next(ln for ln in md.splitlines() if "wide wide" in ln).split("**Fix:**")[1].split()
+            assert ai and len(fix) == features.FIX_WORDS and fix[-1] == "wide...", fix
+
+            answers.append(["not", "an", "object"])
+            md, ai = features.report_card(batch, building)
+            assert not ai and md.rstrip().endswith("*Template summary (AI unavailable)*"), md[-200:]
+
+            asked = len(prompts)
+            md, ai = features.report_card(batch, building, allow_llm=False)
+            assert not ai and len(prompts) == asked and "private building" in md, md[-200:]
+
+            # the endpoint caches an AI card until ?refresh=1; a failed refresh keeps the cached one
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            saved.write_text(json.dumps(dict(batch, id="smoke-report-cache")), encoding="utf-8")
+            answers.append(json.loads(json.dumps(good)))
+            r = client.post("/api/report", json={"batchId": "smoke-report-cache"})
+            assert r.status_code == 200 and "Written by Gemini" in r.json()["markdown"], r.text[-300:]
+            assert cache.is_file() and cache.read_text(encoding="utf-8") == r.json()["markdown"]
+            asked = len(prompts)
+            again = client.post("/api/report", json={"batchId": "smoke-report-cache"})
+            assert again.json() == r.json() and len(prompts) == asked, "the cached card was not served"
+            fresh = client.post("/api/report?refresh=1", json={"batchId": "smoke-report-cache"})  # the model says nothing now
+            assert len(prompts) == asked + 1 and "Template summary" in fresh.json()["markdown"], fresh.text[-300:]
+            assert cache.read_text(encoding="utf-8") == r.json()["markdown"]
+
+            # a building in data/private never reaches the model, through the endpoint either
+            PRIVATE_DIR.mkdir(parents=True, exist_ok=True)
+            private_building.write_text(json.dumps(dict(building, id="smoke-report-private")), encoding="utf-8")
+            private_batch.write_text(json.dumps(dict(batch, id="smoke-report-private", buildingId="smoke-report-private")), encoding="utf-8")
+            asked = len(prompts)
+            r = client.post("/api/report", json={"batchId": "smoke-report-private"})
+            assert r.status_code == 200 and len(prompts) == asked, r.text[:300]
+            assert "private building, not sent to AI" in r.json()["markdown"], r.text[-300:]
+    finally:
+        llm.complete = real
+        for p in (saved, cache, private_building, private_batch, runs_dir / "report-smoke-report-private.md"):
+            p.unlink(missing_ok=True)
+
+
+def check_decide():
+    """decide / decide_batch for the sim (C7, C8), on sim/brain.py's obs shape: offline every entry is
+    None; a stubbed model's decisions are checked against each obs (a known target, an action that
+    fits `current`), extra or unknown entries are dropped, a failing model gives Nones and never an
+    exception, and sim.brain.LLMBrain accepts the decisions without falling back."""
+    import backend.llm as llm_pkg
+    from backend.llm import client as llm
+    from backend.llm import features
+    from sim.brain import LLMBrain, RuleBrain
+
+    obs = json.loads(json.dumps(features.SAMPLE_OBS))
+    with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+        assert features.decide(obs[0]) is None and llm_pkg.decide(obs[0]) is None
+        assert features.decide_batch(obs) == [None, None, None] and features.decide_batch([]) == []
+
+    calls: list = []
+    answer: dict = {}
+
+    def fake_complete(prompt, **kwargs):
+        calls.append((prompt, kwargs))
+        if isinstance(answer.get("raise"), BaseException):
+            raise answer["raise"]
+        return answer.get("value")
+
+    real = llm.complete
+    llm.complete = fake_complete
+    try:
+        with env(LLM_PROVIDER="gemini"), redirect_stderr(io.StringIO()):
+            answer["value"] = {"decisions": [
+                {"i": 0, "action": "reroute", "target": "E2", "reason": "E1 has a queue"},  # no current: go
+                {"i": 1, "action": "go", "target": "SB", "reason": "Stair A is smoky and queued"},  # switch: reroute
+                {"i": 1, "action": "wait", "target": "SA", "reason": "a second answer for i=1"},
+                {"i": 2, "action": "go", "target": "E1", "reason": "E1 is not an option here"},
+                {"i": 9, "action": "go", "target": "E1", "reason": "no such observation"},
+            ]}
+            out = features.decide_batch(obs)
+            assert out == [{"target": "E2", "action": "go", "reason": "E1 has a queue"},
+                           {"target": "SB", "action": "reroute", "reason": "Stair A is smoky and queued"},
+                           None], out
+            prompt, kwargs = calls[-1]
+            assert len(calls) == 1 and kwargs["schema"] == features.DECISION_SCHEMA and kwargs["thinking"] == "minimal"
+            assert kwargs["timeout"] >= 30 and all(f'"id":"{o["id"]}"' in prompt for x in obs for o in x["options"]), prompt
+
+            answer["value"] = {"decisions": [{"i": 0, "action": "wait", "target": "SB", "reason": "keep going"}]}
+            assert features.decide(obs[1]) == {"target": "SA", "action": "wait", "reason": "keep going"}
+            assert llm_pkg.decide(obs[1]) == {"target": "SA", "action": "wait", "reason": "keep going"}
+
+            answer["value"] = {"decisions": [{"i": 0, "action": "reroute", "target": "SB", "reason": "Stair B is clear"}]}
+            decision = LLMBrain(RuleBrain(1), features.decide, timeout=5.0).decide(obs[1])
+            assert decision == {"target": "SB", "action": "reroute", "reason": "Stair B is clear"}, decision
+
+            for value in (None, {"decisions": "junk"}, {"no": "decisions"}, "text"):
+                answer["value"] = value
+                assert features.decide_batch(obs) == [None, None, None], value
+            answer["raise"] = RuntimeError("smoke: the model call blew up")
+            assert features.decide_batch(obs) == [None, None, None] and features.decide(obs[0]) is None
+            answer.pop("raise")
+            asked = len(calls)
+            assert features.decide_batch([None, {}, {"options": []}, {"options": [{"name": "no id"}]}]) == [None] * 4
+            assert len(calls) == asked, "malformed observations reached the model"
+    finally:
+        llm.complete = real
+
+
+def check_llm_client():
+    """The client's retry and fallback rules on a stubbed Gemini call (no network): 503 is retried and
+    then the fallback model answers; a timeout, a 404 or invalid JSON go straight to the fallback; a
+    busy model is skipped for the cooldown; 401 stops at once; total failure is None and one stderr
+    line, which never shows the key; missing keys and an unknown provider give None."""
+    from backend.llm import client as llm
+
+    class FakeAPIError(Exception):
+        def __init__(self, code: int, message: str = "fake", details: dict | None = None):
+            super().__init__(f"{code} {message}")
+            self.code, self.details = code, details
+
+    quota = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": [  # as measured Sat 3 AM
+        {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+         "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier", "quotaValue": "20"}]},
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "84216s"}]}}
+
+    script: list = []
+    models: list = []
+
+    def fake_once(model, prompt, image, image_mime, schema, timeout, thinking):
+        models.append(model)
+        step = script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return step
+
+    def ask(steps, cooled=False, **kwargs):
+        script[:] = steps
+        models.clear()
+        if not cooled:
+            llm._cooldown.clear()
+        log = io.StringIO()
+        with redirect_stderr(log):
+            out = llm.complete("ping", timeout=30, **kwargs)
+        assert not script, f"unused steps: {script}"
+        return out, list(models), log.getvalue()
+
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    ok = '{"ok": true}'
+    p, f = ["primary-model"], ["fallback-model"]
+    real_once, real_backoff = llm._gemini_once, llm.BACKOFF
+    llm._gemini_once, llm.BACKOFF = fake_once, 0.0
+    try:
+        with env(LLM_PROVIDER="gemini", GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY") or "smoke-not-a-key",
+                 GEMINI_MODEL="primary-model", GEMINI_FALLBACK_MODEL="fallback-model"):
+            assert ask([FakeAPIError(503), FakeAPIError(429), ok], schema=schema)[:2] == ({"ok": True}, p * 3)
+            out, seen, log = ask([FakeAPIError(503)] * 3 + [ok], schema=schema)
+            assert (out, seen) == ({"ok": True}, p * 3 + f) and "answered by fallback-model" in log, (out, seen, log)
+            assert ask([ok], cooled=True, schema=schema)[:2] == ({"ok": True}, f), "the busy model was not skipped"
+            assert ask([TimeoutError("read timed out"), ok], schema=schema)[:2] == ({"ok": True}, p + f)
+            assert ask([FakeAPIError(404), ok], schema=schema)[:2] == ({"ok": True}, p + f)
+            assert ask(["not json", ok], schema=schema)[:2] == ({"ok": True}, p + f)
+            assert ask(['["a list"]'], schema={"type": "array"})[:2] == (["a list"], p)
+            assert ask(["plain text"])[:2] == ("plain text", p)
+            out, seen, log = ask([FakeAPIError(401)], schema=schema)
+            assert (out, seen) == (None, p) and log.count("\n") == 1, (out, seen, log)
+            out, seen, log = ask([FakeAPIError(404)] + [FakeAPIError(503)] * 3, schema=schema)
+            assert (out, seen) == (None, p + f * 3) and log.count("\n") == 1, (out, seen, log)
+            # a used-up daily quota: no retry, and the model rests for an hour instead of 2 minutes
+            out, seen, log = ask([FakeAPIError(429, "RESOURCE_EXHAUSTED", quota), ok], schema=schema)
+            assert (out, seen) == ({"ok": True}, p + f) and "skipped for 3600 s" in log, (out, seen, log)
+            assert llm._cooldown["primary-model"] - time.monotonic() > 3500, llm._cooldown
+        with env(LLM_PROVIDER="gemini", GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY") or "smoke-not-a-key",
+                 GEMINI_MODEL="primary-model", GEMINI_FALLBACK_MODEL="fallback-model, second-model,primary-model"):
+            out, seen, log = ask([TimeoutError("slow"), FakeAPIError(404), ok], schema=schema)
+            assert (out, seen) == ({"ok": True}, p + f + ["second-model"]), (out, seen, log)
+        with env(LLM_PROVIDER="gemini", GEMINI_API_KEY="smoke-secret-key-0123456789", GEMINI_MODEL="m1", GEMINI_FALLBACK_MODEL="m1"):
+            out, seen, log = ask([FakeAPIError(400, "bad request for smoke-secret-key-0123456789")], schema=schema)
+            assert out is None and seen == ["m1"] and "smoke-secret-key" not in log and "***" in log, log
+        models.clear()
+        with redirect_stderr(io.StringIO()) as log:
+            with env(LLM_PROVIDER="gemini", GEMINI_API_KEY=None):
+                assert llm.complete("ping") is None
+            with env(LLM_PROVIDER="claude", APP_ANTHROPIC_API_KEY=None):
+                assert llm.complete("ping") is None
+            with env(LLM_PROVIDER="nonsense"):
+                assert llm.complete("ping") is None
+        assert "GEMINI_API_KEY is not set" in log.getvalue() and "APP_ANTHROPIC_API_KEY" in log.getvalue()
+        assert not models, "a model was called without a key"
+    finally:
+        llm._gemini_once, llm.BACKOFF = real_once, real_backoff
+        llm._cooldown.clear()
+
+
+def check_llm_live():
+    """Optional, behind --live-llm: the real model (GEMINI_API_KEY from .env): a JSON ping, the example
+    batch's card written by the model, and decisions for the three sample agents."""
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    batch, _, building = _examples()
+    name = llm.provider() if llm.provider() != "off" else "gemini"
+    with env(LLM_PROVIDER=name):
+        t0 = time.time()
+        ping = llm.complete('Reply with {"ok": true}.', schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+                            thinking="minimal")
+        assert ping == {"ok": True}, f"ping answered {ping!r}"
+        t1 = time.time()
+        md, ai = features.report_card(batch, building)
+        assert ai and md.rstrip().endswith(f"*{features.WRITTEN_BY.get(name, 'Written by AI')}*"), md[-300:]
+        t2 = time.time()
+        decisions = features.decide_batch(features.SAMPLE_OBS)
+        assert any(decisions), decisions
+        t3 = time.time()
+    print(md)
+    print(f"OK  live LLM ({name}, last model {llm.last_model}): ping {t1 - t0:.1f} s, report {t2 - t1:.1f} s, "
+          f"decide_batch {t3 - t2:.1f} s ({sum(d is not None for d in decisions)}/3 decided)")
+
+
+def check_llm(client):
+    """A7's checks in one call (all offline: LLM_PROVIDER=off or a stubbed model)."""
+    t0 = time.time()
+    check_report(client)
+    check_report_run(client)
+    check_report_ai(client)
+    check_decide()
+    check_llm_client()
+    print(f"OK  llm: report card (template, AI path stubbed, cache, private building), run card, "
+          f"decide_batch, client retries and fallback, {time.time() - t0:.1f} s")
 
 
 def check_trace(client):
@@ -308,19 +744,24 @@ def check_run(client) -> str:
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     # Imported here, not at module level: pool workers re-import this module under spawn
     # (as __mp_main__) and should not pay for fastapi each time.
     from fastapi.testclient import TestClient
 
     from backend.app.main import app
 
+    live = "--live-llm" in (sys.argv[1:] if argv is None else argv)
     with TestClient(app) as client:
         assert client.get("/api/health").status_code == 200
+        if live:  # only the LLM checks, then the real model
+            check_llm(client)
+            check_llm_live()
+            return 0
         check_buildings(client)
         check_from_plan(client)
         check_batch(client)
-        check_report(client)
+        check_llm(client)
         check_trace(client)
         summary = check_run(client)
     print(summary)
