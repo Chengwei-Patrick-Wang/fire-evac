@@ -643,6 +643,66 @@ def check_aggregate():
     json.dumps(result, allow_nan=False)
 
 
+def check_timing():
+    from contextlib import redirect_stdout
+    from io import StringIO
+    from unittest.mock import patch
+    from fire.batch import main, plan_rooms, run_many
+    # Load before patching batch.run_many: whatif keeps a module-level reference.
+    import fire.whatif
+
+    assert plan_rooms(1800, 60, (1, 2, 3), 12, variants=3) == 15
+    assert plan_rooms(0.01, 60, (1, 2, 3), 12, variants=3) == 1
+    for kwargs in ({"pilot_s": 0}, {"budget_s": float("inf")}, {"seeds": ()}, {"workers": 0}):
+        values = dict(budget_s=1800, pilot_s=60, seeds=(1,), workers=2)
+        values.update(kwargs)
+        try:
+            plan_rooms(**values)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid planning inputs must fail")
+    building = fixture_building()
+    base = {"id": "timing", "seed": 1, "fire": {}, "maxTime": 120}
+    def fake(task):
+        sc = task["scenario"]
+        if sc["seed"] == 2:
+            return {"ok": False, "scenarioId": sc["id"], "wallS": 2.0, "error": "fake failure"}
+        return {"ok": True, "scenarioId": sc["id"], "seed": sc["seed"],
+                "ignition": task["ignition"], "wallS": 6.0, "t90": 60, "t100": 80,
+                "trapped": 0, "doors": [], "heatmaps": []}
+    output = StringIO()
+    with patch("fire.batch._run_one", side_effect=fake), redirect_stdout(output):
+        batch = run_many(building, base, seeds=(1, 2), workers=1)
+    timing = batch["timing"]
+    assert timing["runs"] == 4 and timing["failed"] == 2 and timing["workers"] == 1
+    assert timing["wallS"] >= 0 and timing["meanRunS"] == 4.0
+    assert all("wallS" not in run for run in batch["runs"])
+    assert "eta " in output.getvalue() and "eta 0.0 min" in output.getvalue().splitlines()[-1]
+    empty = run_many(building, base, [], workers=1, progress=False)
+    assert empty["timing"]["runs"] == 0 and empty["timing"]["meanRunS"] == 0.0
+    json.dumps(batch, allow_nan=False)
+
+    # Exercise the CLI budget wiring without running a simulation or writing artifacts.
+    root = Path(__file__).resolve().parents[1]
+    argv = ["fire.batch", str(root / "contracts/building.example.json"),
+            str(root / "contracts/scenario.example.json"), "--budget-min", "3",
+            "--seeds", "1,2", "--workers", "4", "--whatif", "--whatif-rooms", "99"]
+    pilot = {"ok": True, "wallS": 60.0, "exitCounts": {}}
+    output = StringIO()
+    with (patch("sys.argv", argv), patch("fire.batch._run_one", return_value=pilot),
+          patch("fire.batch.run_many", return_value={"runs": [], "failed": [], "top": []}) as sweep,
+          patch("fire.whatif.add_whatif", side_effect=lambda b, s, batch, **kw: batch) as whatif,
+          patch("pathlib.Path.write_text"), patch("pathlib.Path.mkdir"), redirect_stdout(output)):
+        main()
+    # floor(180 * 4 / (60 * 2 * 2 * 4)) == 0, clamped to one room.
+    assert len(sweep.call_args.args[2]) == 1
+    assert sweep.call_args.args[3:] == ((1, 2), 4)
+    assert whatif.call_args.kwargs == {"rooms": 1, "workers": 4}
+    assert "3 what-ifs -> 1 rooms" in output.getvalue()
+    print("timing: worker durations, ETA, failure totals and pilot budget checked", flush=True)
+
+
 def check_batch_pool_slow():
     from copy import deepcopy
     from fire.batch import run_many

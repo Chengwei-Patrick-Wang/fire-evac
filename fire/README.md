@@ -554,3 +554,53 @@ Exit Main entrance: 3 people queued at peak; 28 person-seconds of waiting on ave
 
 The sampled lobby fire still has the C10 routing artifact noted by the lead;
 its room ranking is not suitable for a demo headline pending that fix.
+
+## Batch timing and room budget (D13)
+
+`python -m fire.batch BUILDING SCENARIO --budget-min 30 --workers 12 --seeds 1,2,3 --whatif`
+measures one inline pilot in the first eligible room with the first seed, then
+samples rooms deterministically using the base seed. The pilot uses the same
+rule-based simulator and metrics as the sweep. An unsuccessful pilot stops with
+its error rather than producing a misleading estimate.
+
+| Field or parameter | Meaning |
+| --- | --- |
+| Worker record `wallS` | Seconds spent running the simulation and computing its metrics, including caught failures; excluded from batch `runs[]` |
+| Progress `eta N.N min` | Elapsed batch time per completed record times remaining records; updates as workers finish |
+| `timing.runs`, `timing.failed` | Total attempted records (successes plus failures), and failed records |
+| `timing.workers` | Configured worker count, using the existing CPU-based default when omitted |
+| `timing.wallS` | Wall seconds collecting baseline records, including pool startup and shutdown; excludes task construction and aggregation |
+| `timing.meanRunS` | Mean worker duration among records carrying `wallS`, including caught failures; zero if none; deadline/terminated-worker records have no duration |
+| `contention = 2.0` | Planning allowance for slower concurrent runs, not a measured guarantee |
+| `plan_rooms(budget_s, pilot_s, seeds, workers, variants=0, contention=2.0)` | `max(1, floor(budget_s * workers / (pilot_s * contention * len(seeds) * (1 + variants))))` |
+
+`--budget-min M` prints the pilot duration, worker/seed/what-if counts, selected
+room count and estimated sweep minutes. The selected count is capped at the
+building's eligible rooms and at an explicit `--rooms` limit. With `--whatif`,
+the estimate counts the available default variants (respecting existing
+sprinklers and the number of exits), and the selected count also becomes
+`--whatif-rooms`. The blocked exit is still chosen from baseline exit counts.
+The inline pilot is measured separately and rerun in the baseline sweep.
+
+This is a planning estimate, not a hard deadline. The printed estimate excludes
+pilot overhead, aggregation, pool startup, and optional `--exits` reruns. A single
+room can exceed a tiny budget, and room geometry, smoke and worker contention
+can make later runs slower than the pilot. Existing per-batch timeouts still
+apply. `timing` describes the baseline sweep; additional exit and what-if
+sweeps do not overwrite it. Timing is optional metadata; numerical `runs[]`
+records remain identical between spawned and inline execution.
+
+A handoff: use `--budget-min` for the real building's precompute, with an explicit
+worker count appropriate to the machine. For example:
+
+```sh
+python -m fire.batch contracts/building.example.json contracts/scenario.example.json --budget-min 3 --seeds 1 --workers 4 --out debug/batch-budget.json
+```
+
+D13 verification: the command above printed
+`pilot 2.5 s; budget 3 min, 4 workers, 1 seeds, 0 what-ifs -> 18 rooms (est. 0.4 min)`
+and wrote 18 successful runs with zero failures in 16.2 seconds, under the
+six-minute verification limit. The smoke test and slow checks also cover worker
+failures, empty batches, ETA output, budget clamping, CLI what-if wiring and
+spawned/inline result equality. The lobby routing artifact remains unsuitable
+for demo headlines, as noted by the lead.
