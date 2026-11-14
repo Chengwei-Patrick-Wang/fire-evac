@@ -328,6 +328,7 @@ Verification note: office output has 213 successful runs and 3 excluded R203b fa
 - [x] **Step 6: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): headline numbers pack"` (no attribution lines). Handoff in the README for A (the precompute copies `data/runs/headlines-<id>.json` into `frontend/public/demo/` and lists it as `batches[].headlines`; the report card may use `headline` as its template headline and quotes the `why` lines verbatim; `whatIf[].baseSmokeSeconds` already feeds `_base_smoke`) and E (the Report tab can show the pack with no API or Gemini call; use `smokePct` instead of recomputing the percent).
 
 ### Task D19 (P0 · Sat 10 AM): Refresh after C14 and C13b: which headline changed, and why
+BLOCKED: taken over by the lead's machine at 09:47; skip
 
 **Files:** Create `fire/refresh.py`; modify `fire/batch.py` (`apply_overrides`), `fire/checks.py`, `fire/README.md`; produce, for the example and the office, `data/runs/batch-<id>.json`, `batch-<id>-c14off.json`, `headlines-<id>.json` and `headlines-<id>-c14off.json` (gitignored).
 
