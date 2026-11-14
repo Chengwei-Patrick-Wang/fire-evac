@@ -43,6 +43,24 @@ class FloorGraph:
     door_nodes: dict
     stair_nodes: dict
     snap: np.ndarray
+    walk: shapely.Geometry | None = None  # walkable plus door passages, prepared: the region every edge is inside
+
+    def beside(self, room: Polygon, x: float, y: float) -> tuple[np.ndarray, np.ndarray]:
+        """D24: for a room with no node inside, the nodes within one cell of it that a straight walk from its anchor
+        reaches without leaving `walk`, and that anchor: (x, y) when the room covers it, else its representative
+        point. No `walk`, an empty room or no such node gives no candidates."""
+        none = np.array([], dtype=np.int64)
+        if self.walk is None or room.is_empty:
+            return none, np.array([x, y], dtype=float)
+        point = shapely.Point(x, y)
+        if not room.covers(point):
+            point = room.representative_point()
+        anchor = np.array([point.x, point.y], dtype=float)
+        near = np.flatnonzero(shapely.distance(room, shapely.points(self.xy)) <= self.spec["cell"])
+        if not len(near):
+            return none, anchor
+        walks = shapely.linestrings(np.stack((self.xy[near], np.broadcast_to(anchor, (len(near), 2))), axis=1))
+        return near[shapely.covers(self.walk, walks)], anchor
 
 
 class BuildingGraph:
@@ -102,7 +120,7 @@ class BuildingGraph:
                 pairs = tree.query_nearest(shapely.points(centers.reshape(-1, 2)[missing]),
                                           max_distance=max(1.0, spacing), all_matches=False)
                 snap.flat[missing[pairs[0]]] = pairs[1]
-            self.floors.append(FloorGraph(spec, mask, xy, n, door_nodes, stair_nodes, snap))
+            self.floors.append(FloorGraph(spec, mask, xy, n, door_nodes, stair_nodes, snap, polygon))
             total += n
         # Link consecutive levels without starting or ending inside door passages.
         levels = sorted(range(len(self.floors)), key=lambda i: building["floors"][i]["level"])
@@ -143,11 +161,15 @@ class BuildingGraph:
         index = self.floor_index[floor_id]
         floor = self.floors[index]
         candidates = np.arange(floor.n)
+        target = [x, y]
         if room_polygon is not None:
-            candidates = candidates[shapely.contains_xy(Polygon(room_polygon), floor.xy[:, 0], floor.xy[:, 1])]
+            room = Polygon(room_polygon)
+            candidates = candidates[shapely.contains_xy(room, floor.xy[:, 0], floor.xy[:, 1])]
+            if not len(candidates):  # D24: a room thinner than a cell starts at the nearest node it can reach
+                candidates, target = floor.beside(room, x, y)
         if not len(candidates):
-            raise ValueError(f"No grid nodes inside the requested room on {floor_id}")
-        nearest = np.argmin(np.sum((floor.xy[candidates] - [x, y]) ** 2, axis=1))
+            raise ValueError(f"No grid nodes inside or beside the requested room on {floor_id}")
+        nearest = np.argmin(np.sum((floor.xy[candidates] - target) ** 2, axis=1))
         return self.offset[index] + int(candidates[nearest])
 
     def path_distance(self, source: int, door_penalty: dict[str, float]) -> np.ndarray:

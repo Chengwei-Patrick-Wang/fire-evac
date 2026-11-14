@@ -50,8 +50,11 @@ that polygon, preventing jumps through thin walls and diagonal wall corners.
 
 `BuildingGraph.node_at` returns a global node index and can restrict snapping to
 a room polygon, even when the supplied ignition point lies outside the building.
-Unknown floors or rooms containing no grid centers raise `ValueError`.
-Each floor exposes local node coordinates, door memberships and a row-major
+A room with no grid center inside it (thinner than a cell) starts at the nearest
+center beside it that a straight walk from the room's anchor reaches (Tiny rooms,
+D24). Unknown floors, and rooms with no center inside or beside them, raise
+`ValueError`. Each floor exposes local node coordinates, door memberships, the
+prepared walkable polygon its edges stay inside (`walk`) and a row-major
 `snap` grid (`-1` where no node is close enough).
 
 `path_distance` uses Dijkstra with non-negative door penalties, charging once
@@ -870,16 +873,12 @@ Both verification suites printed `fire checks OK`. Both CLI batches wrote
 their output files and printed the stability lines above. Output JSON and logs
 are gitignored; the commands above regenerate them.
 
-Office limitation: all three R203b seeds failed with
-`ValueError: No grid nodes inside the requested room on F2`.
-The room is an OPEN OFFICE fragment, 1.16 m² with bounds
-`(0.331, 23.818, 5.897, 24.026)`: only 0.208 m wide, below the 0.5 m
-smoke-grid spacing. The 71 other sampled rooms succeeded in all three seeds.
-Ranges and stability exclude those failures; R203b has no risk estimate.
-This is not the blocked-stair simulator failure recorded under D15.
-Handoff for B/A: inspect the narrow IFC room fragment before using this
-batch as a complete office survey. No geometry or grid-resolution changes
-are included in the ranges task.
+One office room is missing from these numbers: all three R203b seeds failed with
+`ValueError: No grid nodes inside the requested room on F2`, because the room is
+an OPEN OFFICE fragment only 0.21 m wide, thinner than the 0.5 m smoke-grid
+spacing. The 71 other sampled rooms succeeded in all three seeds, and ranges and
+stability exclude those failures. This is not the blocked-stair simulator failure
+recorded under D15. D24 fixes it: see Tiny rooms (D24).
 
 ## Headline numbers (D18)
 
@@ -1483,6 +1482,69 @@ plain-door expectation in `office_checks` and the `D101` line of `check_labels` 
 - **E:** text only changes. E34 shows the labels the files carry: `weakSpots[].label` is the label, and a batch `top[].why`
   starts with it up to the first `: ` (no label holds one). `fixesSkipped[].reason` names its door by label too, with
   `id` still `widen-<door id>` for the key.
+
+All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
+compliance results.
+
+## Tiny rooms (D24)
+
+D16's office batch lost one room: all three R203b seeds failed with `ValueError: No grid nodes inside the requested room
+on F2` (they are the 3 failed runs of the demo batch). R203b is an OPEN OFFICE fragment of 1.16 m², 5.57 x 0.21 m
+(bounds `(0.331, 23.818, 5.897, 24.026)`), open to CORRIDOR R201 below it and OPEN OFFICE R203a above it with no wall
+between. The 0.5 m grid's nodes sit at y = 23.75 (in R201) and y = 24.25 (in R203a), straddling the room, so none is
+inside it. Of the 385 rooms of the three buildings (24 in the example, 109 in the office, 252 in the clinic) it is the
+only one with no node inside. The simulator was never the problem: C's keep-out gives R203b a 1.5 m disc. This section
+replaces D16's note on the failures.
+
+### The rule
+
+`FloorGraph.walk` keeps each floor's prepared polygon: the walkable area joined with the door passages buffered by half a
+cell, the region every edge of the graph is covered by. `BuildingGraph.node_at(floor_id, x, y, room_polygon)` is as it was
+for a room with a node inside, so no other fire moves. Only when no node lies inside the room polygon:
+
+- The anchor is (x, y) when the room polygon covers it, else the polygon's `representative_point()`.
+- The candidates are the nodes within one cell (`spec["cell"]`) of the room polygon whose straight segment to the anchor
+  is covered by `walk`, so a node behind a wall never wins. The nearest to the anchor wins; a tie goes to the lower node
+  index.
+- With no candidate it raises `ValueError("No grid nodes inside or beside the requested room on <floor>")`.
+
+R203b's anchor is its representative point (3.114, 23.922), the point `fire.batch` aims the fire at, and its node is
+(3.25, 23.75) in R201, 0.22 m away over walkable floor. `FireModel.source_xy` is that node, so the fire starts at the
+corridor edge of the sliver and spreads like any other. A room inside a wall still raises: the fixture's 0.16 x 2 m room
+inside its 0.2 m wall has nodes within a cell of it on both sides, but every straight walk from its point to them crosses
+the wall. `aset_by_room` samples the nodes inside each room, so R203b still has no smoke ASET (null, and a null margin).
+
+### Measured
+
+`run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from
+`apply_overrides(office.scenario, 250, "kitchen")` (the demo's scenario: 250 occupants, a kitchen fire, `maxTime` 400),
+gives 3 ok runs and none failed, in 82 s on the lead's Windows laptop (78 s a run, with another sweep running):
+
+| Seed | t90 (s) | t100 (s) | trapped | person-seconds in smoke |
+| --- | --- | --- | --- | --- |
+| 1 | 182.91 | 211.92 | 0 | 591.0 |
+| 2 | 190.55 | 220.76 | 0 | 535.5 |
+| 3 | 180.68 | 210.47 | 0 | 458.5 |
+
+The room's risk is `riskT90` 184.7 s (range 180.7 / 182.9 / 190.6) with 0 trapped and 0 dosed. That is slower than every
+room of the demo batch: its 97 rooms with a t90 have a median of 136.3 s and a slowest of 142.3 s (F1 R118b). The fire
+starts at a node of the corridor R201, so it is a fire at the corridor's edge, not in a closed room.
+
+### Verification
+
+`python -m fire.smoke_test` and `python -m fire.checks --slow` both print `fire checks OK`. `check_tiny_room` (fast, no
+simulation) pins the two fixture rooms (the 0.09 x 2 m room along A's east side gets a node in A within 0.5 m; the 0.16 x
+2 m room inside the wall still raises, naming F1), the node (3.25, 23.75) for R203b, a kitchen `FireModel` in R203b built
+with `source_xy` there, and, for every room of the office file with no node inside, a node within a cell that a straight
+walk over `walk` reaches. `check_grid` is as it was. `check_tiny_room_slow` runs office R203b through `_run_one` (seed 1,
+60 occupants, `maxTime` 240: `ok`, t90 138.3 s, 0 trapped) and checks that all 252 clinic rooms get a node.
+
+### Handoffs
+
+- **A:** R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs. Expect the
+  room ranking to move: R203b's t90 is above the demo batch's slowest room (142 s), and room scores are scaled against
+  the slowest room, so the worst-room entry in `top` can change.
+- **E:** nothing to change. A batch that holds R203b has a `rooms[]` entry for it like any other.
 
 All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
 compliance results.
