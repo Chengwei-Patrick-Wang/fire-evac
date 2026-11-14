@@ -1,5 +1,12 @@
 # Overnight status
 
+## Sat 15:20: D22 merged; C23 to C26 queued
+
+- **Merged:** ws-d **D22**. A measured fix that costs something now reads as a trade-off and names the fires behind the cost. For example: "Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner…, but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)." Five demo fixes become trade-offs; they show on the site after the precompute rerun.
+- **Running on the lead's machine:** D23 (readable interior door names), E34 (trade-off badges, readable labels in lists) and **C23**, a fire in every room of the office and the clinic after C21 (hard stop 19:30).
+- **Queued for C:** C24 (narrow doors: 0.86 m doors wedge when 200 people push at once, though the real layouts evacuate fully), C25 (faster runs with identical results), C26 (determinism guard).
+- **Next for A:** rerun the demo precompute once the fixes that change numbers have landed.
+
 ## Sat 14:55: the demo is live at https://fire-evac-sim.netlify.app
 
 - **Static site:** https://fire-evac-sim.netlify.app is public. Netlify builds it from `main` on every push, so each merge redeploys within a couple of minutes. All three buildings load. The About overlay's QR code points at this URL. Publishing gets locked at feature freeze so nothing changes during judging.
