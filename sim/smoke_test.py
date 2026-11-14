@@ -945,6 +945,9 @@ def check_keepout_slot():
              "stairs": [], "exits": []}
     assert keepout_cut(poly, floor, "r", 5, 2.67, 2.5)[1] == 1.5
     assert keepout_cut(poly, floor, "r", 5, 3.0, 2.5)[1] == 2.5
+    # C23: a 0.35 m gap beside the disc is narrower than a body (0.4 m): skip it; 0.45 m is wide enough.
+    assert keepout_cut(poly, floor, "r", 5, 2.85, 2.5)[1] == 1.5
+    assert keepout_cut(poly, floor, "r", 5, 2.95, 2.5)[1] == 2.5
     building = load_building()
     floor = building["floors"][0]
     walk = floor_walkable(floor)
@@ -1339,6 +1342,103 @@ def check_sweep(building, fast, slow=False):
     print("sweep generation, outcomes and real fire OK")
 
 
+def check_room_sweep(building, fast, slow=False):
+    from unittest.mock import patch
+    from sim.sweep import (FALLBACK, case_keepout, cases_left, check_case, keepout_problems, load_buildings,
+                           radius_label, room_cases, room_report)
+
+    buildings = load_buildings(["example"])
+    cases = room_cases(buildings, agents=12)
+    assert cases == room_cases(buildings, agents=12)
+    assert len(cases) == 24 and len({c["id"] for c in cases}) == 24
+    assert cases[0]["id"] == "example-C1" and cases[0]["radius"] == "1.0"
+    order = ("none", "0.5", "0.75", "sealed", "1.0", "1.5", "2.5")
+    assert [order.index(c["radius"]) for c in cases] == sorted(order.index(c["radius"]) for c in cases)
+    for case in cases:
+        scenario = case["scenario"]
+        assert (scenario["id"], scenario["seed"], scenario["maxTime"], scenario["brain"]) == (case["id"], 1, 300, "rules")
+        assert scenario["occupants"]["total"] == 12 and scenario["doors"] == {} and scenario["alarmTime"] == 30
+        assert scenario["fire"]["type"] == "kitchen" and scenario["fire"]["start"] == 0
+    assert radius_label(0.0) == "none" and radius_label(math.inf) == "sealed" and radius_label(0.75) == "0.75"
+    # Click fires: every non-stair room, a point inside room ∩ walkable shrunk by 0.3 m, after the ordinary cases.
+    clicked = room_cases(buildings, agents=12, clicks=True)
+    assert clicked[:24] == cases and clicked == room_cases(buildings, agents=12, clicks=True)
+    taps = clicked[24:]
+    rooms = {r["id"]: (f, r) for f in building["floors"] for r in f["rooms"]}
+    assert len(taps) == 20 and len({c["id"] for c in clicked}) == 44
+    for case in taps:
+        fire = case["scenario"]["fire"]
+        floor, room = rooms[fire["room"]]
+        assert case["id"] == f"example-{room['id']}-click" and room["type"] != "stair" and floor["id"] == fire["floor"]
+        region = Polygon(room["polygon"]).intersection(floor_walkable(floor)).buffer(-0.3)
+        assert region.contains(Point(fire["x"], fire["y"]))
+        assert fire["x"] == round(fire["x"], 2) and fire["y"] == round(fire["y"], 2)
+    assert room_cases(buildings, agents=12, clicks=True, seed=2) != clicked
+    # keepout_problems: rows of any status inside the removed disc are flagged, 0.1 m outside it they are not.
+    by_id = {case["id"]: case for case in cases}
+    lobby = by_id["example-L1"]["scenario"]
+    floor_id, removed, radius = case_keepout(building, lobby)
+    index = [f["id"] for f in building["floors"]].index(floor_id)
+    x, y = lobby["fire"]["x"], lobby["fire"]["y"]
+    walk = floor_walkable(building["floors"][index])
+    outside = next((round(x + 2.6 * math.cos(a), 2), round(y + 2.6 * math.sin(a), 2))
+                    for a in np.linspace(0, 2 * math.pi, 16, endpoint=False)
+                    if walk.contains(Point(x + 2.6 * math.cos(a), y + 2.6 * math.sin(a))))
+    def frames(*rows):
+        return {"frames": [{"t": 5.0, "a": [list(r) for r in rows]}]}
+    assert radius == 2.5 and removed.contains(Point(x, y))
+    for status in (0, 1, 2, 3):
+        assert len(keepout_problems(building, lobby, frames((0, x, y, index, status)))) == 1
+    assert keepout_problems(building, lobby, frames((0, *outside, index, 1))) == []
+    assert keepout_problems(building, lobby, frames((0, x, y, 1 - index, 1))) == []
+    # check_case(keepout=True) turns such a row into a failure and reports the cut's radius; the default ignores it.
+    seen = dict(agents=[dict(idx=0)], events=[dict(type="exit", idx=0, t=10.0)], frames=frames((0, x, y, index, 1))["frames"],
+                metrics=dict(agents=1, evacuated=1, trapped=0, remaining=0, inStairs=0, t100=10.0))
+    with patch("sim.sweep.run", return_value=seen):
+        row = check_case(building, lobby, keepout=True)
+        assert row["outcome"] == "failed" and row["radius"] == 2.5 and row["stuck"] == 0, row
+        assert row["problems"][0].startswith("keep-out: agent 0"), row
+        plain = check_case(building, lobby)
+        assert plain["outcome"] == "ok" and "radius" not in plain and "stuck" not in plain
+    # Two real runs: the lobby's 2.5 m disc and corridor C1's 1.0 m fallback.
+    for case_id, expected in (("example-L1", 2.5), ("example-C1", 1.0)):
+        row = check_case(building, by_id[case_id]["scenario"], keepout=True)
+        assert row["outcome"] == "ok" and row["radius"] == expected and row["agents"] == 12, row
+        assert row["evacuated"] + row["trapped"] == 12 and isinstance(row["stuck"], int), row
+    # Resume: a report holding one finished id leaves every other case to run, in order.
+    done = {"rows": [{"id": cases[3]["id"], "outcome": "ok"}]}
+    left = cases_left(cases, done)
+    assert [c["id"] for c in left] == [c["id"] for i, c in enumerate(cases) if i != 3] and cases_left(cases, None) == cases
+    failed = {"rows": [{"id": cases[3]["id"], "outcome": "failed"}]}
+    assert cases_left(cases, failed) == left and cases_left(cases, failed, rerun_failed=True) == cases
+    settings = dict(seed=1, agents=12, maxTime=300, preset="kitchen")
+    report = room_report(cases, done["rows"], settings, 1.0)
+    assert report["unrun"] == [c["id"] for c in left] and report["cases"] == 1
+    assert report["fallback"] == {"example": {key: [] for key in FALLBACK}}
+    # A resumed run over other buildings keeps what the earlier report said about them.
+    older = {"fallback": {"clinic": {"0.5": ["R9"]}}, "unrun": ["clinic-R9", cases[3]["id"]]}
+    report = room_report(cases, done["rows"], settings, 1.0, older)
+    assert report["fallback"]["clinic"] == {"0.5": ["R9"]} and "example" in report["fallback"]
+    assert report["unrun"] == ["clinic-R9"] + [c["id"] for c in left]
+    if slow:
+        # Repros of the cause C23 fixed: a keep-out gap of 0.3-0.4 m beside the disc wedged people (office R113a:
+        # 1.5 m disc, 4 stuck events); the disc now steps down (R113a 1.5 -> 1.0 m, clinic R1D30 0.75 -> 0.5 m).
+        both = load_buildings(["office", "clinic"])
+        for name, room_id, expected in (("office", "R113a", 1.0), ("clinic", "R1D30", 0.5)):
+            if name not in both:
+                print(f"room sweep repro {name}/{room_id}: building missing; skipped")
+                continue
+            full, base = both[name]
+            floor = next(f for f in full["floors"] if any(r["id"] == room_id for r in f["rooms"]))
+            one = {**full, "floors": [{**floor, "rooms": [r for r in floor["rooms"] if r["id"] == room_id]}]}
+            (case,) = room_cases({name: (one, base)})
+            row = check_case(full, case["scenario"], keepout=True)
+            assert row["outcome"] == "ok" and row["radius"] == expected, row
+            print(f"  {case['id']}: radius {row['radius']}, {row['evacuated']}/{row['agents']} out, "
+                  f"{row['trapped']} trapped, {row['stuck']} stuck")
+    print("room sweep: cases, clicks, keep-out checks and resume OK")
+
+
 def check_runsize(building, fast, core, slow=False):
     from sim.runsize import size_report, rounding_problems, thin_frames, expand_frames
     from sim.run import BATCH_RECORDING
@@ -1454,6 +1554,7 @@ def main(argv=None) -> int:
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
     timed("fast sweep", check_sweep, building, fast)
+    timed("fast room sweep", check_room_sweep, building, fast)
     timed("fast seeds", check_seeds, building, fast)
     core = timed("fast core", check_core, building, fast)
     timed("run size", check_runsize, building, fast, core)
@@ -1476,6 +1577,7 @@ def main(argv=None) -> int:
     if args.slow:
         timed("keep-out rooms", check_keepout_rooms)
         timed("full sweep", check_sweep, building, fast, slow=True)
+        timed("full room sweep", check_room_sweep, building, fast, slow=True)
         timed("full seeds", check_seeds, building, scenario, slow=True)
         timed("full calibration", check_calibration, slow=True)
         timed("full smoke walk", check_smoke_walk, slow=True)

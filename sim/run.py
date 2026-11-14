@@ -61,6 +61,7 @@ STOPPED = 0.0          # desired_speed before the start delay is over (1.4.2 acc
 MIN_SMOKE_SPEED = 0.2
 FIRE_KEEPOUT_M = 2.5
 KEEPOUT_SMALL_M = (0.75, 0.5)
+KEEPOUT_MIN_GAP = 0.4 - 1e-6  # a body (0.2 m radius) cannot enter a gap narrower than 0.4 m beside the cut
 
 
 def _warn(msg: str) -> None:
@@ -149,15 +150,17 @@ def keepout_cut(walk, floor, room, x, y, radius, small=KEEPOUT_SMALL_M, seal=Tru
             retained, _ = connected_cut(removed)
             if retained is None or retained.intersection(room_poly).area < room_area / 4:
                 continue
-            if fallback is None:
-                fallback = (retained, candidate)
-            # JuPedSim can route into a positive gap narrower than a body.
+            # JuPedSim can route into a positive gap narrower than a body, and people wedge in it
+            # (C23: office R113a, a 0.338 m gap). Skip such a candidate for a later one; with no
+            # better candidate, keep the cut whose narrow gap is widest.
             gap = removed.distance(walk.boundary)
-            if 0.01 < gap < 0.3:
+            if 0.01 < gap < KEEPOUT_MIN_GAP:
+                if fallback is None or gap > fallback[2]:
+                    fallback = (retained, candidate, gap)
                 continue
             return retained, candidate
         if fallback is not None:
-            return fallback
+            return fallback[:2]
     if not seal:
         reason = "the scenario places people there"
     elif origin.get("type") not in NO_OCCUPANTS:

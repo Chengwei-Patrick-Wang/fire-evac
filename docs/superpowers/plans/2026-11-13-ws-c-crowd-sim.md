@@ -691,7 +691,6 @@ Handoff for E and A: schema unchanged; E30's `sync-demo.mjs` copies this file in
 > The team moved to other work at 14:30; the lead's machine runs these in order.
 
 ### Task C23 (P0 · Sat 5 PM): Every room on fire: the office and the clinic after C21
-BLOCKED: taken over by the lead's machine at 15:13; skip
 
 **Files:** Modify `sim/sweep.py` (new `room_cases`, `keepout_problems`, a `keepout` option on `check_case`, CLI `--all-rooms`), `sim/smoke_test.py` (new `check_room_sweep`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`, plus any `sim/` file a Step 3 fix needs. Writes gitignored `data/runs/rooms/`.
 
@@ -735,19 +734,19 @@ BLOCKED: taken over by the lead's machine at 15:13; skip
     - `report.json` gains `fallback: {building: {"0.75": [...], "0.5": [...], "sealed": [...], "none": [...]}}`, with room ids from the representative-point cases, and `unrun`: the case ids the budget cut off.
     - The C17 path (no `--all-rooms`) is unchanged.
 
-- [ ] **Step 1: Cases and checks.** Write `DESIGN_OCCUPANTS`, `room_cases`, `keepout_problems`, the `keepout` option and the CLI. Keep `sweep_cases` and C17's default `check_case` exactly as they are.
-- [ ] **Step 2: Run.** Start `python -m sim.sweep --all-rooms --workers 4` in the background with `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, logging to `debug/c23-rooms.log`.
+- [x] **Step 1: Cases and checks.** Write `DESIGN_OCCUPANTS`, `room_cases`, `keepout_problems`, the `keepout` option and the CLI. Keep `sweep_cases` and C17's default `check_case` exactly as they are.
+- [x] **Step 2: Run.** Start `python -m sim.sweep --all-rooms --workers 4` in the background with `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, logging to `debug/c23-rooms.log`.
   - Its 90 min budget covers the office and the clinic's riskiest rooms. Continue with `--resume` whenever the machine is free. The clinic's 1.0–2.5 m rooms come last and are optional before the freeze.
   - If time allows, add `--clicks --buildings office --resume`: 102 judge-style click points, about 36 min.
   - Never shrink a crowd or raise `maxTime` to change an outcome.
-- [ ] **Step 3: Fix.** Group the failures by root cause: the same exception and line, or the same problem at the same place. Fix up to three causes, biggest first, in `sim/`.
+- [x] **Step 3: Fix.** Group the failures by root cause: the same exception and line, or the same problem at the same place. Fix up to three causes, biggest first, in `sim/`.
   - C17's rules apply: never wrap `run()` in try/except, raise `maxTime`, shrink a case, or loosen an assertion or C13b's arrival clearance.
   - Demo numbers must not churn. Before the first edit outside `sim/sweep.py`, save these runs to ignored `debug/c23-before/`:
     - the office baselines of R143, R203c and R237b, and the clinic's R1AC1, built like the pairs in `frontend/public/demo/index.json`: design occupancy, kitchen, seed 1, the stair door `closed`;
     - `check_core`'s run.
   - After each fix, all five must be byte-identical. If a fix changes one, revert it and describe it under this heading with its repro, for the lead.
   - Rerun the failed cases once after the fixes.
-- [ ] **Step 4: Smoke test** `check_room_sweep(building, fast)`.
+- [x] **Step 4: Smoke test** `check_room_sweep(building, fast)`.
   - **Fast:**
     - `room_cases` on the example is deterministic: 24 representative cases, corridor C1 (1.0 m) first, with unique ids.
     - With `clicks`, it adds 20 click cases (the four stair rooms get none). Every click point lies inside its room ∩ walkable, shrunk by 0.3 m.
@@ -755,13 +754,58 @@ BLOCKED: taken over by the lead's machine at 15:13; skip
     - Two real 12-agent example cases with `keepout=True` are `ok`: L1 (radius 2.5) and corridor C1 (radius 1.0). Each takes about 1.5 s on the lead's laptop.
     - Resume: with a hand-made report that holds one finished id, the cases left to run skip exactly that id.
   - **Slow:** `check_case(..., keepout=True)` is `ok` on the repro of each cause this task fixed.
-- [ ] **Step 5: Verify:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put these under this heading:
+- [x] **Step 5: Verify:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put these under this heading:
   - the sweep line before and after the fixes, the cases run and unrun, and the `fallback` lists;
   - every case with a `stuck` event;
   - one row per root cause: cause, cases, fixed or open, and a repro (building, room, point, agents).
-- [ ] **Step 6: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "test(sim): every room on fire in the office and the clinic; first fixes"` (no attribution lines).
+- [x] **Step 6: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "test(sim): every room on fire in the office and the clinic; first fixes"` (no attribution lines).
   - Handoff for A: run the precompute rerun after this merges. Keep the guided demo away from any room still listed as open or unrun.
   - Handoff for D: the `fallback` lists name the rooms whose fires keep people only 0.5–0.75 m away, or not at all.
+
+**C23 results (seed 1, kitchen preset, design occupancy 250 office / 280 clinic, `maxTime` 300, four workers, `LLM_PROVIDER=off`; run by the lead's takeover agent on the lead's laptop while other agents ran on it):**
+- Sweep line before the fix, over the first 165 cases (all 109 office rooms and the clinic's riskiest 56; `debug/c23-before-report.json`): `sweep: 165 cases, 155 ok, 0 rejected, 10 failed`.
+- After the fix, and the failed cases rerun once: `sweep: 311 cases, 295 ok, 0 rejected, 16 failed, 50 unrun` (`data/runs/rooms/report.json`, 126 min of sweep time over all chunks, four workers, on a laptop shared with other agents).
+- Run and unrun (the sweep was stopped at 17:37 on the lead's request): office 109 of 109 rooms; clinic 202 of 252 rooms; office click fires 0 of 102. Unrun: 50 representative-point rooms, all in the clinic's 1.0, 1.5 and 2.5 m classes (the sweep runs the riskiest keep-outs first) (R1C05, R1C09, R1C18b, R1C19, R1CC1, R1CC3, R1CS3, R1D06, R1D16, R1D22, R1D38, R1E06, R1E16, R1EC4, R2A01, R2A05, R2A09, R2A12, R2A14, R2AC3, R2AC5, R2B11, R2B21, R2BC1, R2BC2, R2C04, R2C09, R2C15, R2D04A, R2D06, R2D09, R2D11, R2D21, R1A01, R1A02, R1AC2, R1B04, R1B17, R1D25, R1D40, R1DC1, R1E15, R2A11, R2AC1, R2AC2, R2D05a, R2D05b, R2D05c, R2D20, R2DC2), 0 click fires. Resume with `python -m sim.sweep --all-rooms --workers 4 --resume` (then `--clicks --buildings office --resume`; the report stays in this worktree's ignored `data/runs/rooms/`, and a resume must use the same seed, agents and `--max-time`); `--rerun-failed` runs the failed cases again.
+- Keep-out check: no frame row of any status lay inside the removed region in any case (0 cases with a problem). 40 ok cases have trapped people next to the fire (a result, not a failure).
+- Failed cases (16): office-R203b (exception ValueError: No grid nodes inside the requested room on F2); office-R201 (1 agent(s) with 2+ stuck events); office-R237b (2 agent(s) with 2+ stuck events); clinic-R1BC1 (remaining=2, inStairs=0, 2 agent(s) with 2+ stuck events); clinic-R1BC2 (remaining=3, inStairs=0, 3 agent(s) with 2+ stuck events); clinic-R1DC2 (remaining=2, inStairs=0, 2 agent(s) with 2+ stuck events); clinic-R1DC3 (remaining=2, inStairs=0, 2 agent(s) with 2+ stuck events); clinic-R1DC4 (remaining=1, inStairs=0, 1 agent(s) with 2+ stuck events); clinic-R2BC3 (1 agent(s) with 2+ stuck events); clinic-R1C18a (2 agent(s) with 2+ stuck events); clinic-R1DC6 (remaining=4, inStairs=0, 5 agent(s) with 2+ stuck events); clinic-R1DC7 (remaining=1, inStairs=0, 1 agent(s) with 2+ stuck events); clinic-R1EC3 (remaining=5, inStairs=0, 5 agent(s) with 2+ stuck events); clinic-R1A16 (1 agent(s) with 2+ stuck events); clinic-R1B03 (1 agent(s) with 2+ stuck events); clinic-R1C04 (1 agent(s) with 2+ stuck events).
+- Cases with a `stuck` event (49 cases, 187 events; `id` count): office-R123 1, office-R156 1, office-R202 4, office-R203c 2, office-R211 1, office-R201 13, office-R237b 11, clinic-R1EC2 1, clinic-R1BC1 6, clinic-R1BC2 12, clinic-R1DC2 8, clinic-R1DC3 8, clinic-R1DC4 6, clinic-R1DC5 1, clinic-R2BC3 3, clinic-R2C16 1, clinic-R2CC2 1, clinic-R2D12 2, clinic-R2B18 1, clinic-R2C11 1, clinic-R2D16 1, clinic-R1AC4 1, clinic-R1B13 2, clinic-R1C07 1, clinic-R1C17 1, clinic-R1C18a 8, clinic-R1D32 1, clinic-R1D34 1, clinic-R1DC6 26, clinic-R1DC7 4, clinic-R1DC8 2, clinic-R1E05 1, clinic-R1E28 2, clinic-R1EC3 19, clinic-R2A02 1, clinic-R2A03 1, clinic-R2A04 2, clinic-R2A06 1, clinic-R2C14 1, clinic-R2D03 2, clinic-R2DC1 5, clinic-R1A12 2, clinic-R1A16 5, clinic-R1AS1 3, clinic-R1B01 2, clinic-R1B03 2, clinic-R1B10 1, clinic-R1BC3 3, clinic-R1C04 2.
+- `fallback` office: 0.75: 14 (R111, R112, R126, R130, R133, R138, R206, R207, R217, R225, R227, R232, RS201, RS202); 0.5: 7 (R115b, R117, R119, R121, R142, R209, R218); sealed: 2 (R145, R215); none: 1 (R141).
+- `fallback` clinic: 0.75: 44 (R1A07, R1A08, R1AC5, R1B05, R1B06, R1B08, R1BS2, R1C13, R1C14, R1C16, R1D02, R1D03, R1D26, R1D27, R1D31, R1D37, R1E08, R1E09, R1E10, R1E29, R2AS1, R2B14, R2B15, R2B16, R2B17, R2B18, R2B19, R2B24, R2B4, R2B7, R2B8, R2B9, R2BS2, R2C01, R2C05, R2C11, R2CC4, R2CS3, R2D02, R2D04, R2D07, R2D16, R2D17, R2D19); 0.5: 46 (R1A11, R1A13, R1AC3, R1B09, R1B12, R1B14, R1B16, R1B21, R1B23, R1BC1, R1BC2, R1BC4, R1C08, R1D01, R1D12, R1D14, R1D15, R1D17, R1D30, R1D39, R1DC2, R1DC3, R1DC4, R1DC5, R1E03, R1E12, R1E15-A, R1E23, R1EC1, R2AC4, R2B12, R2B13, R2B2, R2B20, R2B6, R2BC3, R2BC4, R2C12, R2C16, R2C23, R2CC1, R2CC2, R2CC3, R2D01, R2D12, R2D13); sealed: 5 (R1C03, R1E30, R2B25, R2C07, R2C08); none: 7 (R1B07, R1CC2, R1E02, R1EC2, R2A12-A, R2BC5, R2CC5).
+
+**The fix (cause 1; `sim/run.py`, `keepout_cut`).** New constant `KEEPOUT_MIN_GAP = 0.4 - 1e-6`. The rule that skips a disc leaving a gap beside it narrower than a body, `0.01 < gap < 0.3`, is now `0.01 < gap < KEEPOUT_MIN_GAP`; with no candidate left, the last resort is the valid cut with the widest narrow gap (it was the first valid one). People are 0.4 m wide (radius 0.2), so a 0.3–0.4 m gap is a trap; the `1e-6` keeps the example building's exact 0.4 m gaps (lobby L1 stays 2.5 m, corridor C1 1.0 m). Exactly four rooms change: office R113a 1.5 -> 1.0 m (gap 0.338 -> 0.838 m; it failed with 4 stuck events, now 250 out and 0 stuck) and clinic R1D30 0.75 -> 0.5 m, R1E11 and R2D18 1.5 -> 1.0 m (ok, 0 stuck). No room goes uncut: `check_keepout_rooms` still counts 1 office and 7 clinic rooms without a cut. The five guard runs are byte-identical before and after (sha256 prefixes: office R143 `9b303b19`, R203c `c50e6fb6`, R237b `a5e4375a`, clinic R1AC1 `53fa64c0`, `check_core` `bf00e76a`; the before-runs are in ignored `debug/c23-before/`). `check_keepout_slot` gains two assertions (a 0.35 m gap steps the disc down to 1.5 m; 0.45 m keeps 2.5 m), and the slow `check_room_sweep` runs office R113a and clinic R1D30 with `keepout=True`.
+
+| # | Root cause | Cases | Fixed or open; repro (office 250 / clinic 280 agents, kitchen, seed 1, the fire at the room's `representative_point()`) |
+| --- | --- | --- | --- |
+| 1 | A keep-out gap of 0.3–0.4 m beside the disc, narrower than a 0.4 m body: the router sends people into it and they wedge | office R113a | **Fixed** (above). Office F1/R113a (32.297, 5.894). |
+| 2 | A hairline beside the cut: a gap of 0.01 m or less counts as flush, but a 1 mm–1 cm strip of walkable between the disc and a wall stays, JuPedSim routes people through it as the shortest way past the disc, and bodies cannot enter | 9 failed cases: office R201 (13 stuck events, 26 trapped), R237b (the demo's baseline: 11 stuck, 12 trapped); clinic R1C18a, R1DC6 (26 stuck, 4 never exit), R1DC7, R1EC3 (19 stuck, 5 never exit), R1A16, R1B03, R1C04. Stuck events without a failure in rooms whose cut the prototype below also changes: office R123, R202 (4 stuck, 5 trapped), R203c; clinic R1AC4, R1AS1, R1B01, R1BC3, R1C07, R1DC8, R1E28, R2A02, R2C11, R2D03, R2D12, R2DC1 | **Open, for the lead**: the fix below changes two demo runs. Repros: office F2/R201 (4.623, 20.978), F2/R202 (25.358, 10.538), F2/R237b (6.5195, 12.1545); clinic F1/R1C18a (4.05, 55.90). In R201 the 2.5 m disc fills the pocket's width and cuts stair RS201's only door off; a 1 cm strip along the pocket's west wall (x 3.082–3.092) stays, the router's route to RS201 runs 8.5 m through it while the body-wide route is 96.9 m. In R237b the strip is 1 mm, along R205's south wall. |
+| 3 | A narrow last resort in clinic corridors: when the only valid cut has a gap below a body, `keepout_cut` keeps it (C21's fallback) and people wedge there for good | clinic R1BC1, R1BC2, R1DC2, R1DC3, R1DC4, R2BC3 (failed: 1–3 people never exit, or two stuck events twice); stuck events also in R1DC5 and R2CC2 | **Open, for the lead.** Repros: clinic F1/R1BC1 (49.198, 35.584), R1BC2 (43.578, 30.223), R1DC2 (26.788, 46.769), R1DC3 (21.463, 49.359), R1DC4 (12.447, 50.219), F2/R2BC3 (42.428, 23.206). |
+| 4 | D: `FireModel` raises `No grid nodes inside the requested room` (`fire/grid.py`, `node_at`): the room is 5.6 x 0.21 m (1.16 m2), thinner than the 0.5 m grid cell | office R203b, the only such room in both buildings (a click anywhere in it fails the same way) | **Open, for D** (outside `sim/`): fall back to the nearest node when none lies inside the room. Office F2/R203b (3.114, 23.922). |
+| 5 | Not the keep-out: a person wedges at a door or wall far from any cut (1.7–32 m away, 0.16–0.35 m from the wall), the same spot in every fire | diagnosed: clinic agent 201 at (37.9, 46.97) on F2 (R1EC2, R2C16, R1B13), clinic F2 (20.1, 30.9) (R2D12, R1B13), office R211 (23.75, 24.78); not diagnosed, no prototype changes their cut: clinic R1D32, R1D34, R1E05, R2A03, R2A04, R2A06, R2C14, R1A12, R1B10, R2D16 (ok cases with 1–3 stuck events). R2B18 (a 0.426 m gap, 1 stuck event 0.26 m from the cut) shows a gap just above 0.4 m can still wedge one person | Open; C24's narrow-door wedge, not C23's. |
+
+Every failed case except R203b has its cut changed by exactly one of the two prototypes below (cause 2: 9 cases, cause 3: 6 cases).
+
+**Fixes tried and not applied** (a guard run would change, or an existing check would have to be loosened):
+- **Cause 2, close the through-hairlines.** A strip of walkable narrower than a body that touches the removed region and opens into body-wide space in two places is cut out; dead-end cusps stay. In `connected_cut`, `cut = close_through_hairlines(walk.difference(removed), removed)` instead of `cut = walk.difference(removed)`, with:
+  ```python
+  from shapely.ops import unary_union
+
+  def polygons(g):
+      return [g] if g.geom_type == "Polygon" else [p for p in getattr(g, "geoms", []) if p.geom_type == "Polygon"]
+
+  def close_through_hairlines(cut, removed, body=0.2):
+      opened = cut.buffer(-body).buffer(body)
+      closed = []
+      for strip in polygons(cut.difference(opened)):
+          if strip.distance(removed) < 0.02:
+              ends = unary_union([g.buffer(0.05) for g in polygons(strip.buffer(0.02).intersection(opened))])
+              if len(polygons(ends)) >= 2:
+                  closed.append(strip)
+      return cut.difference(unary_union(closed).buffer(1e-6)) if closed else cut
+  ```
+  Measured on top of the fix above: office R201 250 out, 0 trapped, 0 stuck (was 224 / 26 / 13); R237b in the sweep scenario 250 / 0 / 0 (was 238 / 12 / 11); R202 250 / 0 / 0 (was 245 / 5 / 4). **Two guard runs change:** the demo's R237b baseline (stair door closed) goes from 238 out, 12 trapped and 11 stuck events to 250 out, 0 trapped, 0 stuck (t100 234.9 s), and R203c from 219 out, 31 trapped and 2 stuck to 234 out, 16 trapped, 0 stuck; R143, R1AC1 and `check_core` stay byte-identical. The cut changes in 16 of 109 office and 84 of 252 clinic rooms, so it needs a full rerun and a new look at the demo story, which quotes R237b's and R203c's trapped counts: part of those counts is this wedge.
+- **Cause 3, never keep a 0.3–0.4 m gap as the last resort:** in `keepout_cut`, `if fallback is None or gap > fallback[2]:` becomes `if fallback is None and gap < 0.3:` (the first valid cut with a gap below 0.3 m, C21's old fallback). Clinic R1BC1, R1BC2, R1DC2, R2BC3 and R1DC3 then pass (no one remaining, no agent stuck twice; the corridors are left uncut) and R1DC4 still fails (a 0.75 m disc with a 0.099 m sliver); the five guard runs stay byte-identical; 27 rooms change their cut (4 office, 23 clinic). But the clinic's rooms without a cut go from 7 to 15 and `check_keepout_rooms` asserts at most 7 (`AssertionError: ('clinic', 106, 15)`), which I did not loosen. If the lead accepts 15, raise that maximum and rerun those 27 rooms.
+- **Handoff for A:** only four rooms' keep-outs changed (office R113a, clinic R1D30, R1E11, R2D18), so the guided demo's four rooms (office R143, R203c, R237b, clinic R1AC1) rerun byte for byte as before; run the precompute rerun after this merges. Keep the guided demo away from every room still open or unrun: the failed cases above (R203b, R201, R237b, R1BC1, R1BC2, R1DC2, R1DC3, R1DC4, R2BC3, R1C18a, R1DC6, R1DC7, R1EC3, R1A16, R1B03, R1C04) and the 50 unrun rooms (R1C05, R1C09, R1C18b, R1C19, R1CC1, R1CC3, R1CS3, R1D06, R1D16, R1D22, R1D38, R1E06, R1E16, R1EC4, R2A01, R2A05, R2A09, R2A12, R2A14, R2AC3, R2AC5, R2B11, R2B21, R2BC1, R2BC2, R2C04, R2C09, R2C15, R2D04A, R2D06, R2D09, R2D11, R2D21, R1A01, R1A02, R1AC2, R1B04, R1B17, R1D25, R1D40, R1DC1, R1E15, R2A11, R2AC1, R2AC2, R2D05a, R2D05b, R2D05c, R2D20, R2DC2). R237b is one of the demo's three office pairs: its baseline run holds 11 stuck events and 12 trapped people that cause 2 produces (R203c's holds 2 and 31).
+- **Handoff for D:** the `fallback` lists above name the rooms whose fires keep people only 0.5–0.75 m away, or, for `sealed` and `none`, not at all (a sealed room is cut out whole). `FireModel` cannot ignite office F2/R203b (cause 4).
 
 ### Task C24 (P1 · Sat 6:30 PM): Narrow doors: the model wedges at 0.86 m, the demo buildings' standard door
 BLOCKED: taken over by the lead's machine at 15:13; skip
