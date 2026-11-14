@@ -1221,6 +1221,67 @@ def check_sweep(building, fast, slow=False):
     print("sweep generation, outcomes and real fire OK")
 
 
+def check_runsize(building, fast, core, slow=False):
+    from sim.runsize import size_report, rounding_problems, thin_frames, expand_frames
+    from sim.run import BATCH_RECORDING
+    from fire.model import FireModel
+
+    assert rounding_problems(core) == []
+    malformed = {"frameInterval": 0.5, "frames": [{"t": 0, "a": [[0, -0.0, 12.345, 0, 0]]}],
+                 "events": [{"t": 0, "enter": 87.309}]}
+    assert len(rounding_problems(malformed)) == 3
+    malformed["frames"][0]["t"] = 0.1
+    assert len(rounding_problems(malformed)) == 4
+    original = deepcopy(core)
+    thin = thin_frames(core)
+    saved_thin = deepcopy(thin)
+    assert expand_frames(thin) == core
+    assert core == original and thin == saved_thin
+    assert thin["frameHold"] is True
+    assert size_report(thin)["rows"] < size_report(core)["rows"]
+    assert thin_frames(thin) == thin and expand_frames(core) == core
+    # Terminal events clear held rows, including an agent trapped before moving.
+    terminal = {"frames": [{"t": 0, "a": [[0, 1, 2, 0, 0], [1, 2, 3, 0, 0]]},
+                           {"t": 1, "a": [[1, 2, 3, 0, 0]]}, {"t": 2, "a": []}],
+                "events": [{"type": "trapped", "idx": 0, "t": 1},
+                           {"type": "exit", "idx": 1, "t": 2}]}
+    assert expand_frames(thin_frames(terminal)) == terminal
+    scenario = deepcopy(fast) if slow else fast_scenario(fast, total=12)
+    results = []
+    for recording in ({"frameInterval": 0.5, "smokeInterval": 2}, BATCH_RECORDING):
+        sampled = {**scenario, **recording}
+        fire = FireModel(building, sampled) if slow else NoFire(building, sampled)
+        results.append(run(building, sampled, fire))
+    full, batch = results
+    assert full["metrics"] == batch["metrics"]
+    assert full["events"] == batch["events"]
+    by_time = {frame["t"]: frame for frame in full["frames"]}
+    assert all(frame == by_time[frame["t"]] for frame in batch["frames"] if frame["a"])
+    if slow:
+        full_smoke = {s["floor"]: {f["t"]: f for f in s["frames"]} for s in full["smoke"]}
+        assert batch["smoke"]
+        for smoke in batch["smoke"]:
+            assert all(f["t"] % 4 == 0 and f == full_smoke[smoke["floor"]][f["t"]]
+                       for f in smoke["frames"])
+    # Explicit caller intervals win over the batch defaults, without mutation.
+    from unittest.mock import patch
+    from sim.seeds import run_seeds
+    from sim.sweep import check_case
+    for override in ({}, {"frameInterval": 0.5, "smokeInterval": 2}):
+        supplied = {**scenario, **override}
+        before = deepcopy(supplied)
+        with patch("sim.seeds.run", return_value=core) as mocked:
+            run_seeds(building, supplied, [1])
+            actual = mocked.call_args.args[1]
+            assert all(actual[k] == supplied.get(k, v) for k, v in BATCH_RECORDING.items())
+        with patch("sim.sweep.run", return_value=core) as mocked:
+            check_case(building, supplied)
+            actual = mocked.call_args.args[1]
+            assert all(actual[k] == supplied.get(k, v) for k, v in BATCH_RECORDING.items())
+        assert supplied == before
+    print("run size: rounding, hold roundtrip and recording parity OK")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1245,6 +1306,7 @@ def main(argv=None) -> int:
     timed("fast sweep", check_sweep, building, fast)
     timed("fast seeds", check_seeds, building, fast)
     core = timed("fast core", check_core, building, fast)
+    timed("run size", check_runsize, building, fast, core)
     timed("exit choice", check_exit_choice, building, fast)
     timed("fast cues", check_cues, building, fast)
     timed("office keep-out", check_office_keepout)
@@ -1268,6 +1330,7 @@ def main(argv=None) -> int:
         timed("office scale", check_scale)
         timed("clinic scale", check_clinic_scale)
         core = timed("full core", check_core, building, scenario)
+        timed("full run size", check_runsize, building, scenario, core, slow=True)
         timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)
         timed("full fire", check_fire, building, scenario, core)

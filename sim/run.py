@@ -51,6 +51,7 @@ FIRE_EVERY = 100     # steps (1 s)
 SMOKE_EVERY = 200    # steps (2 s)
 FRAME_INTERVAL = 0.5
 SMOKE_INTERVAL = 2
+BATCH_RECORDING = {"frameInterval": 1.0, "smokeInterval": 4}
 NO_OCCUPANTS = {"corridor", "stair", "restroom", "storage"}
 WALL_CLEARANCE = 0.3   # spawn inside (room ∩ walkable).buffer(-0.3)
 MIN_SPACING = 0.5      # spawn points at least this far apart
@@ -346,7 +347,7 @@ def _frame(sims: list[_FloorSim], trapped: set, status: list[int], transit: dict
         waiting = status[i] == 2
         x, y = entry["wait_pos"] if waiting else entry["pos"]
         floor = entry["floor"] if waiting else entry["to"]
-        rows.append([i, round(x, 2), round(y, 2), indices[floor], 2 if waiting else 3])
+        rows.append([i, round(x, 2) + 0.0, round(y, 2) + 0.0, indices[floor], 2 if waiting else 3])
     rows.sort(key=lambda r: r[0])
     return rows
 
@@ -917,6 +918,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
 
     metrics["profiles"], metrics["assist"] = profile_metrics(agents, events)
 
+    # Round only the exported events, after all dynamics and metrics used the
+    # original times (especially the stair FIFO and assistance deadlines).
     fire_cfg = scenario.get("fire") or {}
     return {
         "version": "run/v0",
@@ -931,7 +934,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "frames": frames,
         "smoke": list(smoke.values()),
         "fire": {"floor": fire_cfg.get("floor"), "x": fire_cfg.get("x"), "y": fire_cfg.get("y"), "hrr": hrr},
-        "events": events,
+        "events": [{key: round(value, 2) + 0.0 if key in {"t", "enter", "arrive", "until", "x", "y"}
+                    else value for key, value in event.items()} for event in events],
         "metrics": metrics,
     }
 

@@ -13,7 +13,7 @@ import numpy as np
 from shapely.geometry import Polygon
 
 from fire.presets import PRESETS
-from sim.run import run
+from sim.run import BATCH_RECORDING, run
 
 REJECTIONS = ("cannot fit", "no room to place", "no stair route", "no exits or stairs")
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +81,7 @@ def check_case(building, scenario):
     row = dict(id=scenario.get("id"), building=building["id"], outcome="ok", problems=[], error=None,
                **{key: None for key in ("agents", "evacuated", "trapped", "remaining", "inStairs", "t100")})
     try:
-        result = run(building, scenario)
+        result = run(building, {**BATCH_RECORDING, **scenario})
     except Exception as exc:
         row["outcome"] = "rejected" if isinstance(exc, ValueError) and any(s in str(exc) for s in REJECTIONS) else "failed"
         row["error"] = "\n".join(traceback.format_exc().strip().splitlines()[-3:])
