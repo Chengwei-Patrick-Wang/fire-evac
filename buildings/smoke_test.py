@@ -1,4 +1,4 @@
-"""Smoke test for the normalizer: python -m buildings.smoke_test
+﻿"""Smoke test for the normalizer: python -m buildings.smoke_test
 
 Normalizes contracts/plan.example.json, writes debug/building.example.json,
 and checks the review-focus geometry (rooms separated by walls, exits, stairs).
@@ -116,49 +116,120 @@ def check_ifc():
     group_stairs(sample)
     assert sample[0]["rooms"][0]["group"] == sample[1]["rooms"][0]["group"]
     assert sample[1]["rooms"][0]["group"] != sample[1]["rooms"][1]["group"]
-    if not IFC_PATH.exists():
-        print("SKIP ifc: file missing")
-        return
-    from buildings.ifc import extract
-    plan = extract(IFC_PATH)
-    floors = plan["floors"]
-    assert floors and all(f["rooms"] for f in floors)
-    assert all(a["elevation"] < b["elevation"] for a, b in zip(floors, floors[1:]))
-    polygons = [Polygon(r["polygon"]) for f in floors for r in f["rooms"]]
-    assert all(p.is_valid and not p.interiors and 1 <= p.area <= 2000 for p in polygons)
-    minx, miny, maxx, maxy = unary_union(polygons).bounds
-    assert minx == 0 and miny == 0
-    assert 10 <= maxx <= 500 and 10 <= maxy <= 500
-    doors = [d for f in floors for d in f["doors"]]
-    assert len(doors) >= 5 and all(0.6 <= d["width"] <= 3 for d in doors)
-    groups = {}
-    for floor in floors:
-        stairs = [r["group"] for r in floor["rooms"] if r["type"] == "stair"]
-        assert len(stairs) == len(set(stairs))
-        for group in stairs:
-            groups.setdefault(group, set()).add(floor["id"])
-    assert sum(len(levels) >= 2 for levels in groups.values()) >= 2
-    assert plan["credits"]
-    print(f"IFC: {len(floors)} floors, {len(polygons)} rooms, {maxx:.1f} x {maxy:.1f} m")
+
+def check_public_buildings():
+    from buildings.validate import problems
+    found, ids = [], set()
+    for path in sorted((ROOT / 'data/buildings').glob('*.json')):
+        building = json.loads(path.read_text(encoding='utf-8'))
+        if building.get('version') != 'building/v0':
+            continue
+        if building['id'] != path.stem:
+            found.append(f'{path.name} id does not match file stem')
+        if building['id'] in ids:
+            found.append(f"{path.name} duplicate id {building['id']}")
+        ids.add(building['id'])
+        scenario_path = path.with_name(path.stem + '.scenario.json')
+        scenario = json.loads(scenario_path.read_text(encoding='utf-8')) if scenario_path.exists() else None
+        issues = problems(building, scenario)
+        found.extend(f'{path.name} {issue}' for issue in issues)
+        if not issues:
+            exits = sum(len(f['exits']) for f in building['floors'])
+            print(f"public {path.name}: {len(building['floors'])} floors, {exits} exits, clean")
+    assert not found, 'public buildings:\n  ' + '\n  '.join(found)
 
 
-def check_building():
+def check_problems():
+    import copy
+    from buildings.validate import problems
+    plan = hard_plan()
+    plan['name'] = 'Synthetic test'
+    plan['credits'] = 'Synthetic test plan; license: CC0'
+    issues = problems(plan_to_building(plan))
+    assert any('R9' in s and 'cut off' in s for s in issues)
+    assert any('R9' in s and 'no door' in s for s in issues)
+    assert all(any(f'group {group}' in s for s in issues) for group in ('SA', 'SB'))
+    overrides = {'doors': {'add': [{'floor': 'F1', 'id': 'DFIX1', 'a': [10.9, 6.3],
+                                   'b': [11.9, 6.3], 'width': 1.0}]},
+                 'stairGroups': {'SA': ['SL', 'SU']}, 'exits': {'remove': ['DU']}}
+    fixed = plan_to_building(plan, overrides=overrides)
+    assert not problems(fixed), problems(fixed)
+    for width, flagged in ((4.0, False), (7.0, True)):
+        bad = copy.deepcopy(fixed)
+        bad['floors'][0]['doors'][0]['width'] = width
+        assert any('width outside 0.6-6.0 m' in issue for issue in problems(bad)) == flagged
+    bad = copy.deepcopy(fixed)
+    bad['credits'] = ''
+    assert any('credits' in s for s in problems(bad))
+    bad = copy.deepcopy(fixed)
+    zone = bad['floors'][0]['exits'][0]
+    poly = Polygon(zone['polygon'])
+    x, y = poly.exterior.coords[0]
+    # Remove a small triangle from a corner, yielding a concave polygon.
+    coords = list(poly.exterior.coords)[:-1]
+    a, b = coords[1], coords[-1]
+    def toward(p):
+        length = ((p[0]-x)**2 + (p[1]-y)**2)**0.5
+        return [x + (p[0]-x)*0.1/length, y + (p[1]-y)*0.1/length]
+    zone['polygon'] = [toward(b), [x + (toward(a)[0]-x) + (toward(b)[0]-x), y + (toward(a)[1]-y) + (toward(b)[1]-y)], toward(a)] + coords[1:]
+    assert any('DX' in s and 'not convex' in s for s in problems(bad))
+    bad = copy.deepcopy(fixed)
+    zone = bad['floors'][0]['exits'][0]
+    zone['polygon'] = [[x + 50, y + 50] for x, y in zone['polygon']]
+    assert any('DX' in s and 'outside walkable' in s for s in problems(bad))
+    scenario = {'buildingId': fixed['id'], 'fire': {'floor': 'F1', 'room': 'R999', 'x': 0, 'y': 0}, 'occupants': {'total': 1}}
+    assert any('R999' in s for s in problems(fixed, scenario))
+
+
+def check_clinic():
+    from buildings.fixups import apply_overrides
+    from buildings.ifc import _room_type
+    from buildings.normalize import largest_inner_rect
     from buildings.validate import validate
-    building = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
-    assert validate(building)["ok"]
-    assert "license" in building["credits"].lower()
-    assert any(f["exits"] for f in building["floors"] if f["level"] == 0)
-    groups = {}
-    for floor in building["floors"]:
-        rooms = {r["id"]: Polygon(r["polygon"]) for r in floor["rooms"]}
-        for stair in floor["stairs"]:
-            groups.setdefault(stair["group"], set()).add(floor["id"])
-        for door in floor["doors"]:
-            assert 0.6 <= door["width"] <= 3.0
-            if "outside" not in door["connects"]:
-                for rid in door["connects"]:
-                    assert Polygon(door["rect"]).intersection(rooms[rid]).area >= 0.01, (door["id"], rid)
-    assert groups and all(len(floors) >= 2 for floors in groups.values())
+    b = json.loads((ROOT / "data/buildings/clinic.json").read_text(encoding="utf-8"))
+    assert len(b["floors"]) == 2 and not validate(b)["nonConvex"]
+    assert all({s["group"] for s in f["stairs"]} == {"S1", "S2", "S3"} for f in b["floors"])
+    assert all(r["name"].upper() not in {"ROOF", "OPEN TO BELOW", "ELEVATOR"} for f in b["floors"] for r in f["rooms"])
+    assert all(":" not in e["name"] for f in b["floors"] for e in f["exits"])
+    assert "CC BY 4.0" in b["credits"] and "buildingSMART" in b["credits"]
+    for name, kind in [("JAN. CL.", "storage"), ("TELE/COMM RM", "storage"), ("MENS RR", "restroom"), ("SEC. WAIT", "lounge"), ("VEST.", "lobby"), ("CONF. ROOM", "office"), ("INTERACTION STATION", "other")]:
+        assert _room_type(name) == kind
+    assert len(apply_overrides(hard_plan(), {"floors": {"remove": ["F2"]}})["floors"]) == 1
+    for fid in ("F1", "F9"):
+        try:
+            apply_overrides(hard_plan(), {"floors": {"remove": [fid]}})
+        except ValueError as exc:
+            assert fid in str(exc)
+        else:
+            raise AssertionError(fid)
+    office = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    stair = next(s for f in office["floors"] for s in f["rooms"] if s["id"] == "RS101")
+    poly = Polygon(stair["polygon"])
+    rect = largest_inner_rect(poly)
+    assert len(rect.exterior.coords) == 5 and poly.buffer(0.005).covers(rect)
+    assert 0.95 <= rect.area / poly.area <= 0.97
+
+
+
+def check_office():
+    from buildings.ifc import _door_name
+    office = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    scenario = json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8"))
+    exits = {e["id"]: e["name"] for f in office["floors"] for e in f["exits"]}
+    assert exits == {"DMO2yd9": "Elec Rm (east)", "D$77x5b": "Open Office (west)",
+                     "DrRS91$": "Entry (south)", "DMO2yaj": "Mech Rm (east)",
+                     "D$77wwb": "Stair S1 (west)", "DMO2yZ0": "Stair S2 (east)"}
+    assert all(":" not in item.get("name", "") and "M_" not in item.get("name", "")
+               for f in office["floors"] for key in ("doors", "exits") for item in f[key])
+    f1 = office["floors"][0]
+    assert {"R101", "R106", "R110", "R125", "R143", "RS101"} <= {r["id"] for r in f1["rooms"]}
+    doors = {d["id"]: d for d in f1["doors"]}
+    assert {"D$77wwb", "D$77xsW", "D$77xVs", "DrRS91$", "DMO2yZ0"} <= doors.keys()
+    assert doors["DrRS91$"]["name"] == "Double door" and doors["DrRS91$"]["ifcName"].startswith("M_Double-Flush")
+    assert _door_name("M_Single-Flush:0915 x 2134mm Rated") == "Single door, rated"
+    assert scenario["id"] == "office-fire" and scenario["occupants"]["total"] == 250
+    assert scenario["fire"]["type"] == "kitchen" and scenario["fire"]["room"] == "R143"
+    assert scenario["seed"] == 1 and scenario["maxTime"] == 400
 
 
 def check_traced():
@@ -255,11 +326,19 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_budget()
+    check_summary()
+    check_tidy()
     check_traced()
     check_one_door()
     check_hard()
     check_overrides()
-    check_building()
+    check_public_buildings()
+    check_problems()
+    check_clinic()
+    check_office()
+    check_door_widths()
+    check_plan_images()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
@@ -275,5 +354,140 @@ def main() -> int:
     return 0
 
 
+
+
+
+def check_plan_images():
+    import contextlib
+    import io
+    import math
+    from PIL import Image
+    from buildings.plan_images import OUT as images_dir, build
+    from buildings.validate import problems, validate
+
+    generated = build()
+    for name, value in generated.items():
+        path = images_dir / name
+        assert path.exists() and json.loads(path.read_text(encoding="utf-8")) == value, "run python -m buildings.plan_images"
+    index = generated['index.json']
+    for rec in index['images']:
+        with Image.open(images_dir / rec['file']) as image:
+            assert image.size == (rec['width'], rec['height'])
+        assert math.dist(rec['scaleBar']['p1'], rec['scaleBar']['p2']) == 10 * rec['pxPerM']
+    rec = next(r for r in index['images'] if r['file'] == 'example-F1.png')
+    with Image.open(images_dir / rec['file']) as image:
+        def pixel(x, y):
+            return image.getpixel((round(rec['origin'][0] + x * rec['pxPerM']),
+                                   round(rec['origin'][1] - y * rec['pxPerM'])))
+        assert pixel(8, 3) == (255, 255, 255)
+        assert pixel(12, 3) == (0, 0, 0)
+    example = json.loads((ROOT / 'contracts/building.example.json').read_text(encoding='utf-8'))
+    trace = generated['example.trace.json']
+    for floor, source in zip(trace['floors'], example['floors']):
+        scale = floor['scale']['meters'] / math.dist(floor['scale']['p1'], floor['scale']['p2'])
+        def original(point):
+            return [(point[0] - floor['ref'][0]) * scale, (floor['ref'][1] - point[1]) * scale]
+        for room, expected in zip(floor['rooms'], source['rooms']):
+            assert room['id'] == expected['id']
+            assert len(room['polygon']) == len(expected['polygon'])
+            assert all(math.dist(original(p), q) <= 0.001 for p, q in zip(room['polygon'], expected['polygon']))
+        for door, expected in zip(floor['doors'], source['doors']):
+            assert door['id'] == expected['id']
+            assert all(math.dist(original(door[k]), expected[k]) <= 0.001 for k in ('a', 'b'))
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        building = plan_to_building(generated['example.plan.json'])
+    assert 'WARNING (normalize)' not in stderr.getvalue(), stderr.getvalue()
+    assert validate(building)['ok']
+    assert {e['name'] for f in building['floors'] for e in f['exits']} == {'Main entrance', 'East stair exit'}
+    assert all({s['group'] for s in f['stairs']} == {'SA', 'SB'} for f in building['floors'])
+    assert not problems(building), problems(building)
+
+
+def check_budget():
+    from buildings.normalize import door_openings
+    from buildings.summary import vertex_count
+    from buildings.validate import validate
+    base = plan_to_building(hard_plan())
+    budget = plan_to_building(hard_plan(), max_vertices=1)
+    assert validate(base) == validate(budget)
+    for a, b in zip(base["floors"], budget["floors"]):
+        before, after = door_openings(a), door_openings(b)
+        assert all(abs(value - after[key]) <= 0.02 for key, value in before.items())
+    plan = {"id": "notch", "source": "ifc", "floors": [{"id": "F1", "rooms": [
+        {"id": "R", "polygon": [[0,0],[6,0],[6,4],[3.3,4],[3.3,3.7],[3,3.7],[3,4],[0,4]]}],
+        "doors": [{"id": "D", "a": [1,0], "b": [2,0], "width": 1}]}]}
+    original = plan_to_building(plan)["floors"][0]
+    reduced = plan_to_building(plan, max_vertices=1)["floors"][0]
+    assert vertex_count(original) - vertex_count(reduced) == 4
+
+
+def check_summary():
+    from buildings.summary import build_index, summarize
+    folder = ROOT / "data/buildings"
+    office_path = folder / "office.json"
+    office = summarize(json.loads(office_path.read_text(encoding="utf-8")), str(office_path))
+    expected = {"floors": 2, "rooms": 109, "doors": 104, "exits": 6,
+                "stairGroups": ["S1", "S2"], "walkableArea": 3478.0,
+                "vertices": 1173, "size": [54.2, 38.4],
+                "shortCredit": "NIBS Common BIM File, US Army ERDC/CERL, free download"}
+    for key, value in expected.items():
+        assert office[key] == value, (key, office[key], value)
+    index = json.loads((folder / "index.json").read_text(encoding="utf-8"))
+    assert index == build_index(folder), "index.json is stale: run python -m buildings.summary"
+    assert "id" not in index and "floors" not in index
+    assert "umass" not in json.dumps(index).lower()
+    expected_files = {p.name for p in folder.glob("*.json")
+                      if json.loads(p.read_text(encoding="utf-8")).get("version") == "building/v0"
+                      and not json.loads(p.read_text(encoding="utf-8")).get("private", False)}
+    assert {b["file"] for b in index["buildings"]} == expected_files
+
+
+def check_door_widths():
+    from statistics import median
+    from buildings.door_widths import clear_width, cut_width, leaves
+    assert [leaves(s) for s in ('DOUBLE_DOOR_SINGLE_SWING', 'SINGLE_SWING_LEFT',
+                                 'DOUBLE_SWING_RIGHT', 'NOTDEFINED')] == [2, 1, 1, 0]
+    assert abs(clear_width(0.915, 'SINGLE_SWING_RIGHT', 0.051) - 0.864) < 1e-9
+    assert abs(clear_width(1.83, 'DOUBLE_DOOR_SINGLE_SWING', None) - 1.73) < 1e-9
+    for name in ('office', 'clinic'):
+        building = json.loads((ROOT / f'data/buildings/{name}.json').read_text(encoding='utf-8'))
+        doors = {d['id']: d for f in building['floors'] for d in f['doors']}
+        if name == 'office':
+            assert (doors['DrRS91$']['width'], doors['DrRS91$']['overallWidth'], doors['DrRS91$']['leaves']) == (1.73, 1.83, 2)
+            assert doors['D$77wwb']['width'] == 0.86
+        assert all(d['width'] <= d['overallWidth'] for d in doors.values() if 'overallWidth' in d)
+        diffs = [cut_width(f, d) - d['width'] for f in building['floors'] for d in f['doors']
+                 if 'outside' not in d['connects']]
+        assert 0 <= median(diffs) <= 0.05
+
+
+def check_tidy():
+    import copy
+    from buildings.tidy import tidy_floor
+    floor = json.loads((ROOT / "buildings/fixtures/ai_floor.json").read_text(encoding="utf-8-sig"))
+    original = copy.deepcopy(floor)
+    cleaned, notes = tidy_floor(floor)
+    expected = {
+        "AI1": [[0,0],[6,0],[6,4],[0,4]],
+        "AI2": [[6,0],[14,0],[14,2],[8,2],[8,6],[6,6]],
+        "AI3": [[0,7],[4,7],[4,10],[0,10]],
+        "AI5": [[8,2],[12,2],[12,5],[8,5]],
+        "AI8": [[20,0],[23,3],[20,6],[17,3]],
+    }
+    assert {r["id"]: r["polygon"] for r in cleaned["rooms"]} == expected
+    assert any("AI4: merged into AI1" in n for n in notes)
+    assert any("AI5: trimmed" in n for n in notes)
+    assert all(any(f"{rid}: dropped" in n for n in notes) for rid in ("AI6", "AI7", "AI9"))
+    polygons = [Polygon(r["polygon"]) for r in cleaned["rooms"]]
+    assert all(abs(c * 4 - round(c * 4)) < 1e-8 for r in cleaned["rooms"] for point in r["polygon"] for c in point)
+    assert all(a.intersection(b).area <= 0.01 for i, a in enumerate(polygons) for b in polygons[i+1:])
+    assert tidy_floor(cleaned) == (cleaned, [])
+    assert floor == original
+    plan_to_building({"version": "plan/v0", "id": "ai", "source": "trace", "floors": [cleaned]})
+
+
 if __name__ == "__main__":
     sys.exit(main())
+
+

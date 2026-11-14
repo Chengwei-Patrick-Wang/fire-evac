@@ -1,7 +1,9 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useA11y } from '../ui/a11y'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { useApp } from '../store/app'
 import type { BuildingFloor, DoorState, Vec2 } from '../data/types'
 import { floorY, ringSegments, toWorld } from './geometry'
@@ -65,6 +67,53 @@ function Flat({ poly, y, color, opacity }: { poly: Vec2[]; y: number; color: str
   )
 }
 
+let warned = false
+
+/** Flat polygons merged into one mesh with per-vertex colours (one draw call per layer). */
+function FlatBatch({ items, y, opacity }: { items: { poly: Vec2[]; color: string }[]; y: number; opacity: number }) {
+  const { geo, fallback } = useMemo(() => {
+    const parts = items.map(({ poly, color }) => {
+      const g = new THREE.ShapeGeometry(shapeOf(poly))
+      g.rotateX(-Math.PI / 2)
+      g.translate(0, y, 0)
+      const c = new THREE.Color(color)
+      const n = g.getAttribute('position').count
+      const arr = new Float32Array(n * 3)
+      for (let i = 0; i < n; i++) {
+        arr[i * 3] = c.r
+        arr[i * 3 + 1] = c.g
+        arr[i * 3 + 2] = c.b
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3))
+      return g
+    })
+    if (parts.length === 0) return { geo: null, fallback: false }
+    const merged = mergeGeometries(parts)
+    parts.forEach((g) => g.dispose())
+    if (!merged) {
+      if (!warned) console.warn('mergeGeometries failed; drawing floor shapes one by one')
+      warned = true
+      return { geo: null, fallback: true }
+    }
+    return { geo: merged, fallback: false }
+  }, [items, y])
+  useLayoutEffect(() => () => geo?.dispose(), [geo])
+  if (fallback)
+    return (
+      <>
+        {items.map((it, i) => (
+          <Flat key={i} poly={it.poly} y={y} color={it.color} opacity={opacity} />
+        ))}
+      </>
+    )
+  if (!geo) return null
+  return (
+    <mesh geometry={geo}>
+      <meshBasicMaterial vertexColors transparent opacity={opacity} side={THREE.DoubleSide} depthWrite={false} />
+    </mesh>
+  )
+}
+
 function centroid(poly: Vec2[]): Vec2 {
   const n = poly.length || 1
   return [poly.reduce((s, p) => s + p[0], 0) / n, poly.reduce((s, p) => s + p[1], 0) / n]
@@ -74,7 +123,7 @@ const labelStyle = { pointerEvents: 'none' as const }
 
 const RISE_S = 1.4
 const STAGGER_S = 0.25
-const reduced = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+const reduced = () => useA11y.getState().reduceMotion
 
 function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<string, DoorState>; order: number }) {
   const reveal = useApp((s) => s.reveal)
@@ -95,14 +144,23 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
   const explode = useApp((s) => s.explode)
   const labels = useApp((s) => s.layers.labels)
   const roomsOn = useApp((s) => s.layers.rooms)
-  const rooms = floor.rooms.filter((r) => r.type !== 'stair')
+  const rooms = useMemo(() => floor.rooms.filter((r) => r.type !== 'stair'), [floor])
+  const roomItems = useMemo(() => rooms.map((r) => ({ poly: r.polygon, color: ROOM_COLORS[r.type] ?? '#475569' })), [rooms])
+  const doorItems = useMemo(
+    () =>
+      floor.doors
+        .filter((d) => (d.rect ?? []).length >= 3)
+        .map((d) => ({ poly: d.rect as Vec2[], color: DOOR_COLORS[doors[d.id] ?? d.state] })),
+    [floor, doors],
+  )
+  const stairItems = useMemo(() => floor.stairs.map((s) => ({ poly: s.polygon, color: '#f97316' })), [floor])
+  const exitItems = useMemo(() => floor.exits.map((e) => ({ poly: e.polygon, color: '#22c55e' })), [floor])
   return (
     <group position-y={floorY(floor, explode)}>
       <group name="walls" ref={walls} scale-y={0.001}>
         <Walls floor={floor} />
       </group>
-      {roomsOn &&
-        rooms.map((r) => <Flat key={r.id} poly={r.polygon} y={0.02} color={ROOM_COLORS[r.type] ?? '#475569'} opacity={0.15} />)}
+      {roomsOn && <FlatBatch items={roomItems} y={0.02} opacity={0.15} />}
       {labels &&
         rooms.map((r) => {
           const [x, y] = centroid(r.polygon)
@@ -112,33 +170,24 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
             </Html>
           )
         })}
-      {floor.doors.map((d) => {
-        const poly = d.rect ?? []
-        if (poly.length < 3) return null
-        return <Flat key={d.id} poly={poly} y={0.03} color={DOOR_COLORS[doors[d.id] ?? d.state]} opacity={1} />
-      })}
-      {floor.stairs.map((s) => {
-        const [x, y] = centroid(s.polygon)
-        return (
-          <group key={s.id}>
-            <Flat poly={s.polygon} y={0.04} color="#f97316" opacity={0.35} />
-            {labels && (
-              <Html position={toWorld(x, y, 0.3)} center style={labelStyle}>
-                <div style={{ fontSize: 11, color: '#fdba74', textShadow: '0 0 3px #000' }}>{s.group}</div>
-              </Html>
-            )}
-          </group>
-        )
-      })}
+      <FlatBatch items={doorItems} y={0.03} opacity={1} />
+      <FlatBatch items={stairItems} y={0.04} opacity={0.35} />
+      <FlatBatch items={exitItems} y={0.04} opacity={0.8} />
+      {labels &&
+        floor.stairs.map((s) => {
+          const [x, y] = centroid(s.polygon)
+          return (
+            <Html key={s.id} position={toWorld(x, y, 0.3)} center style={labelStyle}>
+              <div style={{ fontSize: 11, color: '#fdba74', textShadow: '0 0 3px #000' }}>{s.group}</div>
+            </Html>
+          )
+        })}
       {floor.exits.map((e) => {
         const [x, y] = centroid(e.polygon)
         return (
-          <group key={e.id}>
-            <Flat poly={e.polygon} y={0.04} color="#22c55e" opacity={0.8} />
-            <Html position={toWorld(x, y, 0.3)} center style={labelStyle}>
-              <div style={{ fontSize: 11, color: '#86efac', whiteSpace: 'nowrap', textShadow: '0 0 3px #000' }}>{e.name}</div>
-            </Html>
-          </group>
+          <Html key={e.id} position={toWorld(x, y, 0.3)} center style={labelStyle}>
+            <div style={{ fontSize: 11, color: '#86efac', whiteSpace: 'nowrap', textShadow: '0 0 3px #000' }}>{e.name}</div>
+          </Html>
         )
       })}
     </group>

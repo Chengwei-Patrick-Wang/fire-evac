@@ -9,6 +9,7 @@ the following format are optional:
 
 ```json
 {
+  "floors": {"remove": ["F3"]},
   "doors": {"add": [{"floor": "F1", "id": "DFIX1", "a": [1, 2], "b": [2, 2], "width": 1.0, "fireDoor": false, "state": "open"}], "remove": ["D2"]},
   "rooms": {"remove": ["R2"]},
   "exits": {"add": ["D1"], "remove": ["D3"]},
@@ -21,6 +22,17 @@ additions force a door to be exterior; exit removals keep the door but suppress
 its exit. Stair groups assign the listed rooms to the same stairwell. Unknown
 referenced IDs raise an error. The command prints a connectivity report after
 writing the building; upper-level exits are informational warnings.
+Floor removals happen first and may only remove top storeys.
+
+## Clinic
+
+`clinic` is the NIBS Medical-Dental Clinic, via buildingSMART International's
+sample files, CC BY 4.0; it was converted to 2D plans. Modeling assumptions:
+remove roof floor F3, roof spaces R2R01 and R2R02, voids R2AC1-A and R2AC1-B,
+elevator RE1, outside-access service rooms R1E17, R1E20, R1E21, R1E22, R1E24,
+R1E25 and mechanical yard R1F01, and doorless toilet R1D04. Exit DnBZWSx
+opens onto the removed roof and is suppressed. Its two floors have nine exits
+and stair groups S1, S2 and S3.
 
 Run `python -m buildings.inspect_ifc data/raw` to reproduce the per-storey counts. Downloads are local and not committed. A model is pickable when at least two storeys have spaces and it has at least two stairs (or two flights if it has no stairs). Empty roof, foundation and footing storeys do not disqualify it. Of pickable models with at least 50 spaces, the smallest file is selected.
 
@@ -69,3 +81,134 @@ add assumed connections from the mechanical room to the corridor and from the
 electrical room to storage. These are modeling assumptions, not verified doors.
 Regenerate with `python -m buildings.ifc data/raw/team-downloads/Office_A_20110811.ifc data/raw/office.plan.json --id office --name "NIBS Office" --credits "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"`, then `python -m buildings.normalize data/raw/office.plan.json data/buildings/office.json`.
 Create a scenario with `python -m buildings.make_scenario data/buildings/office.json data/buildings/office.scenario.json` (optional `--total`).
+
+## Tidying AI-proposed rooms
+
+Call `tidy_floor(floor, grid=0.25, min_area=1.0, min_width=0.6)` after
+sanitizing a proposed floor. It returns a cleaned copy and notes describing
+squaring, merges, trims and dropped rooms; doors and other metadata are kept.
+Run `python -m buildings.tidy IN OUT` to process a floor or every floor in a
+plan and print the notes. This cleanup is geometric and does not verify doors.
+
+## Building index
+
+`data/buildings/index.json` has version `buildings-index/v0` and a `buildings`
+array with each public building's identity, source, full and short credits, file
+and scenario names, floor and feature counts, stair groups, walkable area,
+vertex count, extents and per-floor counts. It contains no top-level building
+ID or floors. Rerun `python -m buildings.summary` after changing any building in
+`data/buildings/`; use `python -m buildings.summary --check` to detect a stale
+index without writing it. A folder and `--out PATH` may also be supplied.
+
+## Public building validation
+
+Run `python -m buildings.validate FILE...` to list geometry, connectivity,
+door, credit and scenario problems. A neighboring `<stem>.scenario.json` is
+checked automatically. The command exits 1 if any problem is found; upper-floor
+exits are allowed. Python callers can use `problems(building, scenario=None)`.
+The buildings smoke test checks every public `building/v0` file in
+`data/buildings/` and reports all issues together.
+
+## Vertex budget (B12)
+
+Pass `--max-vertices N` to the normalizer to try reducing walkable vertices per floor. The budget is off by default; committed buildings are not budgeted. The normalizer preserves door openings and checks topology, exit and stair zones, and area; it warns when the target cannot be met.
+
+On the office with a 600-vertex per-floor target, the baseline had 1,173 vertices and ran in 12.3 and 12.7 seconds. The budgeted build had 1,077 vertices (F1: 715 to 619; F2: 458 unchanged) and ran in 10.5 and 10.7 seconds. Both evacuated 119 of 120, with t90 117.57 seconds; F1 could not reach the requested budget. Times are illustrative and machine-dependent.
+
+For the office demo scenario, run `python -m buildings.make_scenario data/buildings/office.json data/buildings/office.scenario.json --total 250 --fire-type kitchen`. IFC doors preserve their original IFC Name in `ifcName` and use a readable `name`.
+
+## Door clear width (B16)
+
+IFC OverallWidth measures the leaf width. For a door open at 90 degrees, clear width subtracts one leaf thickness for SINGLE_SWING and DOUBLE_SWING operations, or two for DOUBLE_DOOR operations. Thickness comes from PSet_Revit_Type_Dimensions.Thickness, defaulting to 0.05 m; unknown operations subtract nothing. The measurement follows ADA and ICC A117.1 404.2.3 (open leaf face to stop). The cut is the shortest midpoint-containing walkable section at three offsets across the wall. Exterior cuts can include exit stubs.
+
+The 0.864 m flow gate evacuated 200/200 at 0.932 persons/s (last exit 214.32 s). The earlier office run evacuated 249/250 at t90 132.3 s; the rebuilt office evacuated 249/250 at t90 133.28 s. The rebuilt clinic evacuated 120/120 at t90 123.81 s.
+
+Baseline report (metres):
+
+```text
+data\buildings\office.json:
+overall width cut count
+0.81 0.81 1.86 3
+0.81 0.81 2.80 1
+0.81 0.81 2.81 1
+0.91 0.91 0.92 22
+0.91 0.91 0.93 46
+0.91 0.91 0.94 15
+0.91 0.91 0.95 1
+0.91 0.91 1.97 1
+0.91 0.91 2.01 1
+0.91 0.91 2.02 1
+0.91 0.91 2.03 1
+0.92 0.92 0.92 1
+0.92 0.92 0.93 2
+1.00 1.00 1.01 1
+1.00 1.00 1.02 1
+1.83 1.83 1.84 1
+1.83 1.83 1.85 4
+1.83 1.83 1.86 1
+interior cut - width: median 0.020 m, maximum 0.029 m
+data\buildings\clinic.json:
+overall width cut count
+0.90 0.90 1.95 4
+0.91 0.91 0.92 92
+0.91 0.91 0.93 97
+0.91 0.91 0.94 19
+0.91 0.91 1.92 9
+0.91 0.91 1.93 2
+0.92 0.92 0.92 2
+0.92 0.92 1.92 1
+1.00 1.00 1.01 1
+1.22 1.22 1.23 2
+1.73 1.73 1.74 1
+1.80 1.80 1.81 2
+1.83 1.83 1.84 2
+1.83 1.83 1.85 1
+1.83 1.83 1.86 1
+interior cut - width: median 0.016 m, maximum 1.024 m
+```
+
+Rebuilt report (metres):
+
+```text
+data\buildings\office.json:
+overall width cut count
+0.81 0.79 1.84 1
+0.81 0.79 1.85 2
+0.81 0.79 2.78 1
+0.81 0.79 2.79 1
+0.92 0.86 0.86 1
+0.92 0.86 0.87 24
+0.92 0.86 0.88 50
+0.92 0.86 0.89 11
+0.92 0.86 0.90 1
+0.92 0.89 1.96 1
+0.92 0.89 2.00 2
+0.92 0.89 2.02 1
+1.00 1.00 1.01 1
+1.00 1.00 1.02 1
+1.83 1.73 1.74 3
+1.83 1.73 1.75 2
+1.83 1.73 1.76 1
+interior cut - width: median 0.019 m, maximum 0.029 m
+data\buildings\clinic.json:
+overall width cut count
+0.90 0.85 1.93 4
+0.92 0.86 0.87 102
+0.92 0.86 0.88 100
+0.92 0.86 0.89 8
+0.92 0.86 1.86 1
+0.92 0.86 1.87 9
+0.92 0.86 1.88 2
+1.00 0.95 0.96 1
+1.22 1.17 1.18 2
+1.73 1.63 1.64 1
+1.80 1.70 1.71 2
+1.83 1.73 1.73 1
+1.83 1.73 1.74 2
+1.83 1.73 1.75 1
+interior cut - width: median 0.016 m, maximum 1.023 m
+```
+
+## Plan images and trace
+
+Run `python -m buildings.plan_images` to regenerate the scale-preserving example and office PNGs and example trace and plan in `data/buildings/plans/`. Run `python -m buildings.plan_images --check` to check the JSON metadata without drawing. The example images are 40 px/m and the office images 30 px/m; each includes a 10 m scale bar. The example trace preserves the source's 4 m interior opening; the public-building validator accepts door widths from 0.6 to 6.0 m.

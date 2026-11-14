@@ -1,9 +1,12 @@
-"""LLM features (spec 7.5): the report card, and decisions for LLM-driven agents (sim C7, C8).
+"""LLM features (spec 7.5): the report card, decisions for LLM-driven agents (sim C7, C8), and the
+tracer's first pass (A8).
 
     report(batch_or_run, building) -> str                       markdown; never raises
     report_card(batch_or_run, building, allow_llm=True) -> (markdown, ai_written)
     decide(obs) -> dict | None                                  one agent (sim.brain.LLMBrain, C7)
     decide_batch(observations) -> list[dict | None]             many agents, one model call (C8)
+    propose_plan(image, hints) -> dict | None                   rooms from a floor-plan image
+    sanitize_floor(raw, hints) -> dict                          the model's rooms, checked
 
 Report card. Every number is built here, in code, from the batch/v0 or run/v0 (and the building, for
 names). The model sees only the weak spots, the headline numbers and door and room names, and
@@ -17,6 +20,15 @@ present, evacuation time second: propping the stair doors moved t90 by +0.2 s on
 exposure by +22% (measured Sat 3 AM). Long waits are framed as gaps in the building, never as
 traits of people (spec 12), and the card ends with the limits line and the writer line.
 
+Names. A spot is named in words, never by its door id: an IFC code like D$77wwb means nothing to a
+judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR (R121) and
+OPEN OFFICE (R143)" (an unnamed interior door is named by the two rooms it joins), "Fires starting
+in OPEN OFFICE (R203c)"; a room id after its name is fine, the 3D view labels rooms that way. D's
+`why` lines and what-if labels print door ids for unnamed doors ("Door D$77xwP (CORRIDOR to SCIF
+OPEN OFFICE)"): _Names.readable swaps those for the same label, so the JSON keeps its ids and the
+card never shows one. A headline or fix from the model that carries a door id is dropped like a
+bad number. One heading is built in _render, so the template and the model's card share it.
+
 Decisions. `obs` is sim/brain.py's: {idx, t, floor, x, y, profile, visibility, speed, current,
 trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?}]}. A decision is
 {target: one of the obs's option ids, action: "go" | "reroute" | "wait", reason: str}, or None,
@@ -26,8 +38,24 @@ when there is no current target, "wait" when the target is the current one, else
 call uses thinking "minimal" (1-5 s on gemini-3.5-flash against 5-13 s at its default) and the
 client's timeout, retry and fallback rules; anything that fails is None.
 
+First pass. propose_plan(image, hints) sends a PNG, JPEG or WebP floor plan with hints
+{metersPerPixel, width, height, name?, level?} for the image as sent, and asks for rooms only
+(vision models miss doors, research 03): {rooms: [{name, type, polygon: [[x, y], ...]}]} on a
+0-1000 grid (x right, y down) with type one of the 13 spec types. sanitize_floor turns that into a
+plan/v0 floor {id, level, elevation, height: 3.5, rooms: [{id: "AI1", name, type, polygon}],
+doors: []} in floor meters, y up, from the image's bottom-left corner: (px * s, (height - py) * s).
+It snaps every vertex to 0.25 m and drops polygons with fewer than 3 points, a point that is not
+two numbers, a vertex outside the image, no single clear shape after shapely.make_valid (a
+bow-tie), or under 1 m2; an unknown type becomes other; at most 60 rooms. Timeout 60 s per model
+(vision calls took 5-20 s, once 57 s). The call walks the client's chain with Gemini 2.x moved to
+the end (GEMINI_MODEL stays first): on the test floor (contracts/plan.example.json F1 drawn at
+30 px/m) gemini-3.6-flash gave all 12 rooms at IoU 1.00 in 7 s, gemini-2.5-flash the right 12
+rooms but squeezed toward the image center, mean IoU 0.39, in 40 s (measured Sat 4 AM).
+propose_plan is None when the model gives nothing usable.
+
     python -m backend.llm.features report [result.json [building.json]]   (default: example batch)
     python -m backend.llm.features decide                                   (three sample agents)
+    python -m backend.llm.features propose plan.png METERS_PER_PIXEL [level]
 """
 from __future__ import annotations
 
@@ -36,6 +64,7 @@ import math
 import re
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 from . import client
@@ -89,6 +118,13 @@ _NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
 _LENGTH_UNIT = re.compile(r"\s?(?:m|cm|mm|ft|in|meters?|metres?|feet|foot|inch(?:es)?)\b", re.I)
 
 
+def _exit_name(name) -> str | None:
+    """An exit's name when it reads as one. An IFC door family string ("M_Single-Flush:0915 x 2134mm:...:184259")
+    does not: it is dropped, as fire.batch.door_label drops it, and the card says "exit from STAIR (RS101)"."""
+    text = str(name or "").strip()
+    return text if text and ":" not in text and len(text) <= 30 else None
+
+
 def _num(x) -> float | None:
     """x as a finite float, else None (a bool is not a number)."""
     if isinstance(x, bool) or not isinstance(x, (int, float)):
@@ -129,6 +165,7 @@ class _Names:
         self.exits: dict[tuple[str, str], dict] = {}  # keyed by the exit's door id
         self.stairs: dict[tuple[str, str], dict] = {}  # keyed by the stair group
         self.stair_rooms: set[tuple[str, str]] = set()
+        self.door_floor: dict[str, str] = {}  # a door id -> the first floor that has it
         for f in b.get("floors") or []:
             if not isinstance(f, dict):
                 continue
@@ -139,14 +176,52 @@ class _Names:
             for d in f.get("doors") or []:
                 if isinstance(d, dict) and d.get("id") is not None:
                     self.doors[fid, str(d["id"])] = d
+                    self.door_floor.setdefault(str(d["id"]), fid)
             for e in f.get("exits") or []:
                 if isinstance(e, dict) and e.get("door") is not None:
                     self.exits[fid, str(e["door"])] = e
+                    self.door_floor.setdefault(str(e["door"]), fid)
             for s in f.get("stairs") or []:
                 if isinstance(s, dict):
                     self.stairs[fid, str(s.get("group"))] = s
                     if s.get("room") is not None:
                         self.stair_rooms.add((fid, str(s["room"])))
+        self._rank = {key: i for i, key in enumerate(self.rooms)}  # floor order, as fire.batch.door_label lists rooms
+        # Door ids are IFC codes in a real building (D$77wwb): looked up, never shown. A room id is fine to show.
+        room_ids = {rid for _, rid in self.rooms}
+        self.raw_ids = {did for did in self.door_floor if did not in room_ids and did != "outside"}
+        self._raw = self._raw_pattern(self.raw_ids)
+
+    @staticmethod
+    def _raw_pattern(ids: set[str]):
+        """Finds D's door labels with an id in them: 'Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)' (group d),
+        'Exit D$77wwb' (group e), an id after a noun that names the door already, as in 'Stair B door DSB2 on F2'
+        (group n: the id goes, the noun stays), and any other bare id (group b); whole tokens only (an id may hold $)."""
+        if not ids:
+            return None
+        any_id = "|".join(re.escape(i) for i in sorted(ids, key=len, reverse=True))
+        parens = r"\((?:[^()]|\([^()]*\))*\)"  # one level of nested parentheses: a room name may have one
+        return re.compile(
+            rf"(?<![\w$])(?:Door (?P<d>{any_id})(?: {parens})?|Exit (?P<e>{any_id})|(?P<b>{any_id}))(?![\w$])"
+            rf"|(?<=door|exit|Door|Exit) (?P<n>{any_id})(?![\w$])")
+
+    def mentions_id(self, text: str) -> bool:
+        """True when text carries a door id (a model's headline or fix that does is dropped)."""
+        return bool(self._raw and self._raw.search(text))
+
+    def readable(self, text: str, floor: str | None = None) -> str:
+        """text with each door id in it swapped for that door's label (floor: the spot's own, when known)."""
+        if not self._raw or not text:
+            return text
+
+        def swap(m) -> str:
+            if m.group("n"):
+                return ""
+            did = m.group("d") or m.group("e") or m.group("b")
+            fid = floor if floor is not None and (floor, did) in self.doors else self.door_floor.get(did, "")
+            return self.label(self.door_kind(fid, did), fid, did)[0]
+
+        return self._raw.sub(swap, text)
 
     def room_label(self, floor: str, rid: str) -> str:
         name = (self.rooms.get((floor, rid)) or {}).get("name")
@@ -158,6 +233,13 @@ class _Names:
     def _is_stair_room(self, floor: str, rid: str) -> bool:
         return (self.rooms.get((floor, rid)) or {}).get("type") == "stair" or (floor, rid) in self.stair_rooms
 
+    def _stair_group(self, floor: str, rid: str) -> str:
+        """The stair group of a stair room ('S1'), as fire.batch.door_label names it: the room's group, else its id."""
+        group = (self.rooms.get((floor, rid)) or {}).get("group")
+        if group:
+            return str(group)
+        return next((str(g) for (f, g), s in self.stairs.items() if f == floor and str(s.get("room")) == rid), rid)
+
     def door_kind(self, floor: str, did: str) -> str:
         connects = self._connects(floor, did)
         if "outside" in connects or (floor, did) in self.exits:
@@ -166,38 +248,41 @@ class _Names:
             return "stair"
         return "door"
 
-    def place(self, kind: str, floor: str, sid: str) -> str:
-        """Where a weak spot is, in words: 'stair door between Corridor 2 (C2) and Stair B (SB2)'."""
+    def label(self, kind: str, floor: str, sid: str) -> tuple[str, str]:
+        """A weak spot in words: (the bold name, where it is), both without a door id.
+        ('Exit Stair S1 (west)', 'from STAIR (RS101) to outside'), ('Door between Lobby (L1) and Corridor 1 (C1)', '').
+        The names match fire.batch.door_label's wherever that has no id, so a `why` line and its heading agree."""
         if kind == "room":
-            return f"fires starting in {self.room_label(floor, sid)}"
+            return f"Fires starting in {self.room_label(floor, sid)}", ""
         if kind == "corridor":
-            return self.room_label(floor, sid)
+            return self.room_label(floor, sid), ""
         connects = self._connects(floor, sid)
-        inside = [c for c in connects if c != "outside"]
+        inside = sorted((c for c in connects if c != "outside"), key=lambda c: self._rank.get((floor, c), len(self._rank)))
+        rooms = [self.room_label(floor, c) for c in inside]
         if "outside" in connects or kind == "exit":
-            name = (self.exits.get((floor, sid)) or {}).get("name")
-            text = f"{name}, exit" if name else "exit"
-            return text + (f" from {self.room_label(floor, inside[0])}" if inside else "") + " to outside"
-        noun = "stair door" if kind == "stair" else "door"
-        if len(inside) >= 2:
-            return f"{noun} between {self.room_label(floor, inside[0])} and {self.room_label(floor, inside[1])}"
-        return noun
+            name = _exit_name((self.exits.get((floor, sid)) or {}).get("name"))
+            stair = next((c for c in inside if self._is_stair_room(floor, c)), None)
+            detail = f"from {rooms[0]} to outside" if rooms else ""
+            if name:
+                return f"Exit {name}", detail
+            if stair:
+                return f"Stair {self._stair_group(floor, stair)} exit", detail
+            return (f"Exit from {rooms[0]}" if rooms else "Exit to outside"), ""
+        if kind == "stair":
+            stair = next((c for c in inside if self._is_stair_room(floor, c)), None)
+            label = f"Stair {self._stair_group(floor, stair)} door" if stair else "Stair door"
+            return label, f"between {rooms[0]} and {rooms[1]}" if len(rooms) >= 2 else ""
+        if len(rooms) >= 2:
+            return f"Door between {rooms[0]} and {rooms[1]}", ""
+        return (f"Door of {rooms[0]}" if rooms else "Door"), ""
 
     def title(self, kind: str, floor: str, sid: str) -> str:
-        """A weak spot's short name, for the template headline: 'the Stair B door DSB2 on F2'."""
+        """A weak spot's short name, for the template headline: 'the door between Lobby (L1) and Corridor 1 (C1) on F1'."""
         on = f" on {floor}" if floor else ""
-        if kind == "room":
-            return f"fires starting in {self.room_label(floor, sid)}{on}"
-        if kind == "corridor":
-            return f"{self.room_label(floor, sid)}{on}"
-        if kind == "exit":
-            name = (self.exits.get((floor, sid)) or {}).get("name")
-            return f"exit {sid}" + (f" ({name})" if name else "") + on
-        if kind == "stair":
-            stair = next((self.rooms[floor, c].get("name") for c in self._connects(floor, sid)
-                          if self._is_stair_room(floor, c) and (floor, c) in self.rooms), None)
-            return f"the {stair} door {sid}{on}" if stair else f"stair door {sid}{on}"
-        return f"door {sid}{on}"
+        label = self.label(kind, floor, sid)[0]
+        if kind in ("room", "corridor"):  # a room name keeps its capitals: 'Corridor 2 (C2) on F2'
+            return (label[:1].lower() + label[1:] if kind == "room" else label) + on
+        return f"the {label[:1].lower()}{label[1:]}{on}"
 
     def stair_name(self, floor: str, group) -> str:
         stair = self.stairs.get((floor, str(group))) or {}
@@ -218,8 +303,11 @@ class _Names:
 
 
 def _spot(names: _Names, kind: str, floor: str, sid: str, why: str) -> dict:
-    return {"id": sid, "kind": kind, "floor": floor, "why": why,
-            "place": names.place(kind, floor, sid), "title": names.title(kind, floor, sid)}
+    """One weak spot. `id` is the key the model's fixes come back under and stays out of every text the
+    reader sees; `label` and `detail` are the heading, `why` is D's line with any door id swapped for the label."""
+    label, detail = names.label(kind, floor, sid)
+    return {"id": sid, "kind": kind, "floor": floor, "why": names.readable(why, floor),
+            "label": label, "detail": detail, "title": names.title(kind, floor, sid)}
 
 
 def _median(values: list[float]) -> float:
@@ -245,14 +333,21 @@ def _base_smoke(entry: dict, runs: list[dict]) -> float | None:
     return mean if mean > 0 else None
 
 
-def _whatifs(batch: dict, runs: list[dict]) -> list[dict]:
+def _whatifs(batch: dict, runs: list[dict], names: _Names) -> list[dict]:
     """D11's whatIf entries as {label, smoke, t90, parts}: smoke exposure first, evacuation second."""
     out = []
     for w in batch.get("whatIf") or []:
         if not isinstance(w, dict):
             continue
+        label = names.readable(str(w.get("label") or w.get("id") or "What-if"))  # "Exit D$xyz blocked" -> by its label
+        sprinklers = str(w.get("id")) == "sprinklers" or "sprinkler" in label.lower()
         smoke, dosed = _num(w.get("dSmokeSeconds")), _num(w.get("dDosed"))
         dt90, dtrapped = _num(w.get("dT90")), _num(w.get("dTrapped"))
+        if sprinklers:
+            # The sim drops trapped people from the frames, so their time in smoke stops counting: with sprinklers
+            # fewer people are trapped, more stay in the frames, and smoke time (and dose) can go UP. A sprinkler
+            # what-if is shown by people trapped and 90% out only (D15's finding, STATUS Sat 09:15).
+            smoke = dosed = None
         smoke_text = t90_text = None
         if smoke is not None:
             base = _base_smoke(w, runs)
@@ -266,12 +361,16 @@ def _whatifs(batch: dict, runs: list[dict]) -> list[dict]:
         parts = [smoke_text] if smoke_text else []
         if dosed is not None:
             parts.append(f"{dosed:+.1f} people per fire at an illustrative smoke dose of 1")
+        if sprinklers and dtrapped is not None:
+            parts.append("no change in people trapped" if abs(dtrapped) < 0.05
+                         else f"{abs(dtrapped):.1f} {'fewer' if dtrapped < 0 else 'more'} people trapped per fire")
         parts += [t90_text] if t90_text else []
-        if dtrapped is not None:
+        if dtrapped is not None and not sprinklers:
             parts.append(f"trapped {dtrapped:+.1f} per fire")
+        if sprinklers and parts:
+            parts.append("smoke time is not compared: people who become trapped drop out of the frames")
         if parts:
-            out.append({"label": str(w.get("label") or w.get("id") or "What-if"), "smoke": smoke_text,
-                        "t90": t90_text, "parts": parts})
+            out.append({"label": label, "smoke": smoke_text, "t90": t90_text, "parts": parts})
     return out
 
 
@@ -324,7 +423,7 @@ def _batch_facts(batch: dict, names: _Names) -> dict:
             kind = str(item.get("kind") or names.door_kind(floor, sid))
             spots.append(_spot(names, kind, floor, sid, str(item.get("why") or "").strip()))
 
-    whatifs = _whatifs(batch, runs)
+    whatifs = _whatifs(batch, runs, names)
     story = next((w for w in whatifs if w["smoke"]), None)  # the what-if story leads with exposure
     if story:
         headline = f"{story['label']}: {story['smoke']}" + (f", while {story['t90']}" if story["t90"] else "") + "."
@@ -404,12 +503,13 @@ def _run_facts(run: dict, names: _Names) -> dict:
     spots = []
     for d in doors[:SPOTS]:
         sid, dfloor = str(d["id"]), str(d.get("floor") or "")
-        why = (f"Door {sid}: peak queue {(_num(d.get('peakQueue')) or 0):,.0f}; "
+        kind = names.door_kind(dfloor, sid)
+        why = (f"{names.label(kind, dfloor, sid)[0]}: peak queue {(_num(d.get('peakQueue')) or 0):,.0f}; "
                f"{_num(d['waitPersonSeconds']):,.0f} person-seconds of waiting")
         smoke_wait = _num(d.get("smokeWait"))  # D12, optional
         if smoke_wait is not None and smoke_wait >= 1:
             why += f", {smoke_wait:,.0f} of them in smoke"
-        spots.append(_spot(names, names.door_kind(dfloor, sid), dfloor, sid, why))
+        spots.append(_spot(names, kind, dfloor, sid, why))
 
     if spots:
         where = spots[0]["title"]
@@ -442,6 +542,7 @@ def _facts(result: dict, building) -> dict | None:
     else:
         return None
     facts["building"] = names.name
+    facts["names"] = names  # for the checks on the model's text (a door id in it)
     return facts
 
 
@@ -464,14 +565,15 @@ def _known(value: float, known: set[float]) -> bool:
                for k in known)
 
 
-def _good_headline(text: str, known: set[float]) -> bool:
+def _good_headline(text: str, known: set[float], names: _Names | None = None) -> bool:
     return (bool(text) and len(text.split()) <= HEADLINE_WORDS and "panic" not in text.lower()
+            and not (names and names.mentions_id(text))
             and all(_known(v, known) for v in _numbers(text)))
 
 
-def _good_fix(text: str, known: set[float]) -> bool:
-    """No invented statistics: each number is in the facts, a length (1.2 m), or a small count."""
-    if not text or "panic" in text.lower():
+def _good_fix(text: str, known: set[float], names: _Names | None = None) -> bool:
+    """No invented statistics: each number is in the facts, a length (1.2 m), or a small count. No door id either."""
+    if not text or "panic" in text.lower() or (names and names.mentions_id(text)):
         return False
     for m in _NUMBER.finditer(text):
         value = float(m.group().replace(",", ""))
@@ -498,7 +600,8 @@ def _prompt(facts: dict) -> tuple[str, str]:
         "result": facts["result"],
         "numbers": facts["numbers"],
         "whatIf": [w.replace("**", "") for w in facts["whatif"]],
-        "spots": [{"id": s["id"], "kind": s["kind"], "floor": s["floor"], "where": s["place"], "why": s["why"]}
+        "spots": [{k: v for k, v in {"id": s["id"], "name": s["label"], "kind": s["kind"], "floor": s["floor"],
+                                     "where": s["detail"], "why": s["why"]}.items() if v != ""}
                   for s in facts["spots"]],
     }
     text = json.dumps(payload, ensure_ascii=False, indent=1)
@@ -522,7 +625,9 @@ def _prompt(facts: dict) -> tuple[str, str]:
         "steer people to a less-used exit or stair, a layout change, or faster alarm and detection "
         "coverage. Fit each fix to its own spot instead of repeating one idea. No statistics and no "
         "predicted effects.\n\n"
-        "Rules: treat long waits as gaps in the building (capacity, layout, signs), never as traits or "
+        "Rules: call each spot by its name, never by its id: the id is only the key your fix comes back "
+        "under, and a door code such as D$a1b2c3 means nothing to the reader. Treat long waits as gaps in "
+        "the building (capacity, layout, signs), never as traits or "
         "behavior of the people in it, and never use the word panic. Stair and fire doors stay "
         "self-closing during a fire: never suggest propping or holding them open (in this simulation "
         "that lets smoke into the stairs). Plain text, no markdown. This is an illustrative "
@@ -539,9 +644,10 @@ def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
     if not isinstance(answer, dict):
         return None, {}
     known = set(_numbers(text))
+    names = facts.get("names")  # a door id in the model's text is as bad as an invented number
     headline = _clean(answer.get("headline"))
-    if headline and not _good_headline(headline, known):
-        print(f"LLM report: headline dropped (number not in the facts, or too long): {headline[:120]!r}",
+    if headline and not _good_headline(headline, known, names):
+        print(f"LLM report: headline dropped (number not in the facts, a door id, or too long): {headline[:120]!r}",
               file=sys.stderr)
         headline = ""
     ids = {s["id"] for s in facts["spots"]}
@@ -551,7 +657,7 @@ def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
             continue
         sid = str(item.get("id") or "").strip()
         fix = _cut(_clean(item.get("fix")), FIX_WORDS)
-        if sid in ids and sid not in fixes and _good_fix(fix, known):
+        if sid in ids and sid not in fixes and _good_fix(fix, known, names):
             fixes[sid] = fix
     return headline or None, fixes
 
@@ -564,9 +670,9 @@ def _render(facts: dict, headline: str, fixes: dict[str, str], writer: str) -> s
     if facts["spots"]:
         lines += ["#### Top weak spots", ""]
         for k, s in enumerate(facts["spots"], 1):
-            where = s["place"] + (f", {s['floor']}" if s["floor"] else "")
+            where = ", ".join(part for part in (s["detail"], s["floor"]) if part)  # the floor, after what is said of the spot
             fix = fixes.get(s["id"]) or TEMPLATE_FIX.get(s["kind"], TEMPLATE_FIX["door"])
-            lines += [f"{k}. **{s['id']}** · {where}"]
+            lines += [f"{k}. **{s['label']}**" + (f" · {where}" if where else "")]  # never the door id (an IFC code)
             if s["why"]:
                 lines += [f"   - {s['why']}"]
             lines += [f"   - **Fix:** {fix}"]
@@ -759,6 +865,234 @@ def decide(obs: dict) -> dict | None:
         return None
 
 
+# ------------------------------------------------------------ tracer first pass
+
+ROOM_TYPES = ("office", "classroom", "kitchen", "dining", "lounge", "bedroom", "lab", "storage",
+              "restroom", "corridor", "lobby", "stair", "other")  # spec 6
+PROPOSE_TIMEOUT = 60.0  # s per model call (the brief said 45; one vision call took 57 s)
+PROPOSE_THINKING = "low"
+GRID = 1000.0  # the model's coordinates: 0-1000 on each axis of the image, x right, y down
+SLACK = 10.0  # grid units (1%) a vertex may stray past the image edge before its room is dropped
+SNAP = 0.25  # m, the tracer's grid (spec 6)
+MIN_ROOM_AREA = 1.0  # m2, as the tracer's validatePlan
+MAX_ROOMS = 60
+FLOOR_HEIGHT = 3.5  # m, as the tracer's export
+NAME_CHARS = 40
+PROPOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rooms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string", "enum": list(ROOM_TYPES)},
+                    "polygon": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+                },
+                "required": ["name", "type", "polygon"],
+            },
+        }
+    },
+    "required": ["rooms"],
+}
+
+
+def image_mime(data) -> str | None:
+    """image/png, image/jpeg or image/webp from the file's first bytes; None for anything else."""
+    head = bytes(data[:12]) if isinstance(data, (bytes, bytearray)) else b""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def check_hints(hints) -> tuple[float, int, int, str, int]:
+    """(meters per pixel, width, height, name, level) of the image as sent; ValueError when unusable."""
+    if not isinstance(hints, dict):
+        raise ValueError("hints must be a JSON object {metersPerPixel, width, height, name?, level?}")
+    s = _num(hints.get("metersPerPixel"))
+    if s is None or s <= 0:
+        raise ValueError("metersPerPixel must be a positive number")
+    size = []
+    for key in ("width", "height"):
+        v = _num(hints.get(key))
+        if v is None or v != int(v) or not 1 <= v <= 100_000:
+            raise ValueError(f"{key} must be the image's {key} in pixels, a whole number")
+        size.append(int(v))
+    level = _num(hints.get("level"))
+    level = int(level) if level is not None and level == int(level) else 0
+    name = hints.get("name")
+    name = " ".join(name.split())[:80] if isinstance(name, str) else ""
+    return s, size[0], size[1], name, level
+
+
+def _vision_chain() -> list[str]:
+    """The client's Gemini chain with Gemini 2.x models after the others (GEMINI_MODEL stays first)."""
+    models = client.chain()
+    rest = models[1:]
+    return models[:1] + [m for m in rest if not m.startswith("gemini-2")] + [m for m in rest if m.startswith("gemini-2")]
+
+
+def _propose_prompt(width: int, height: int, name: str) -> str:
+    what = f' ("{name}")' if name else ""
+    return (
+        f"This image is an architectural floor plan{what}, {width} x {height} pixels. Trace its rooms for "
+        "a building evacuation simulation.\n\n"
+        "List every enclosed room or space of the building: offices, classrooms, meeting rooms, corridors "
+        "and hallways, lobbies, stairwells, restrooms, kitchens, storage rooms and so on. Skip furniture, "
+        "fixtures, door swings, dimension lines, text outside rooms, the legend, the title block and "
+        "anything outside the building. Do not list doors or windows.\n\n"
+        "For each room give:\n"
+        '- name: the label printed in the room (for example "Office 105"), or a short description if it '
+        "has none.\n"
+        f"- type: one of {', '.join(ROOM_TYPES)}. Hallways are corridor, entrance halls lobby, stairwells "
+        "stair, toilets restroom; use other when nothing fits.\n"
+        "- polygon: the room's outline as its corner points [x, y] in order around the room, on a 0-1000 "
+        "grid: x runs from 0 at the left edge of the image to 1000 at the right edge, y from 0 at the top "
+        "edge to 1000 at the bottom edge. Follow the middle of the walls, so that neighbouring rooms share "
+        "their common edge exactly, with no gaps and no overlaps. Use 4 corners for a rectangular room, "
+        "more only where the walls really turn (an L-shaped room, a corridor that bends).\n\n"
+        f"List each room once, at most {MAX_ROOMS} rooms (the largest ones if there are more)."
+    )
+
+
+def _snap(v: float) -> float:
+    """To the 0.25 m grid, halves rounded up as the tracer's Math.round does (+ 0.0: never -0.0)."""
+    return round(math.floor(v / SNAP + 0.5) * SNAP, 3) + 0.0
+
+
+def _ring(points) -> list[tuple[float, float]]:
+    """Points without repeated neighbours or a closing repeat of the first one."""
+    out: list[tuple[float, float]] = []
+    for p in points:
+        if not out or out[-1] != p:
+            out.append(p)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    return out
+
+
+def _grid_points(polygon) -> list[tuple[float, float]] | None:
+    """[[x, y], ...] as floats; None when it is not a list or any point is not two finite numbers."""
+    if not isinstance(polygon, list):
+        return None
+    out = []
+    for p in polygon:
+        if isinstance(p, dict):
+            p = [p.get("x"), p.get("y")]
+        if not isinstance(p, (list, tuple)) or len(p) != 2:
+            return None
+        x, y = _num(p[0]), _num(p[1])
+        if x is None or y is None:
+            return None
+        out.append((x, y))
+    return out
+
+
+def _room_polygon(points: list[tuple[float, float]], s: float, w: int, h: int) -> tuple[list | None, str]:
+    """(the room in floor meters, snapped and valid, or None) and why it was dropped."""
+    from shapely.geometry import Polygon
+    from shapely.validation import make_valid
+
+    if len(points) < 3:
+        return None, "fewer than 3 points"
+    if any(not (-SLACK <= v <= GRID + SLACK) for p in points for v in p):
+        return None, "outside the image"
+    ring = _ring([(_snap(min(max(x, 0.0), GRID) / GRID * w * s),
+                   _snap((h - min(max(y, 0.0), GRID) / GRID * h) * s)) for x, y in points])
+    if len(ring) < 3:
+        return None, "under 1 m2"  # snapping collapsed it
+    poly = Polygon(ring)
+    if not poly.is_valid:  # a bow-tie, a spike or a self-touching ring: keep it only if one shape is clear
+        fixed = make_valid(poly)
+        parts = [g for g in getattr(fixed, "geoms", [fixed]) if g.geom_type == "Polygon" and g.area >= MIN_ROOM_AREA]
+        if len(parts) != 1:
+            return None, "self-intersecting"
+        poly = Polygon(_ring([(_snap(x), _snap(y)) for x, y in parts[0].exterior.coords]))
+        if len(poly.exterior.coords) < 4 or not poly.is_valid:
+            return None, "self-intersecting"
+    if poly.area < MIN_ROOM_AREA:
+        return None, "under 1 m2"
+    simple = poly.simplify(0)  # drop corners that snapping left on a straight edge
+    if simple.geom_type == "Polygon" and simple.is_valid and len(simple.exterior.coords) >= 4:
+        poly = simple
+    return [[x, y] for x, y in _ring(list(poly.exterior.coords))], ""
+
+
+def _room_type(value) -> str:
+    t = value.strip().lower() if isinstance(value, str) else ""
+    if t not in ROOM_TYPES and t.endswith("s") and t[:-1] in ROOM_TYPES:
+        t = t[:-1]  # stairs, offices
+    return t if t in ROOM_TYPES else "other"
+
+
+def _sanitize(raw, hints) -> tuple[dict, Counter]:
+    """(the plan/v0 floor, how many rooms were dropped and why). ValueError for unusable hints."""
+    s, w, h, _, level = check_hints(hints)
+    dropped: Counter = Counter()
+    rooms: list[dict] = []
+    items = raw.get("rooms") if isinstance(raw, dict) else None
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            dropped["not a room"] += 1
+            continue
+        points = _grid_points(item.get("polygon"))
+        polygon, why = (None, "a point that is not two numbers") if points is None else _room_polygon(points, s, w, h)
+        if polygon is None:
+            dropped[why] += 1
+            continue
+        if len(rooms) >= MAX_ROOMS:
+            dropped[f"over {MAX_ROOMS} rooms"] += 1
+            continue
+        rtype = _room_type(item.get("type"))
+        name = " ".join(item["name"].split())[:NAME_CHARS] if isinstance(item.get("name"), str) else ""
+        rooms.append({"id": f"AI{len(rooms) + 1}", "name": name or ("Room" if rtype == "other" else rtype.capitalize()),
+                      "type": rtype, "polygon": polygon})
+    floor = {"id": f"F{level + 1}", "level": level, "elevation": round(level * FLOOR_HEIGHT, 3),
+             "height": FLOOR_HEIGHT, "rooms": rooms, "doors": []}
+    return floor, dropped
+
+
+def sanitize_floor(raw, hints: dict) -> dict:
+    """The model's {rooms: [...]} as a plan/v0 floor (module docstring: First pass). Junk rooms are
+    dropped, never fixed up by guessing; raises ValueError only for unusable hints."""
+    return _sanitize(raw, hints)[0]
+
+
+def propose_plan(image: bytes, hints: dict) -> dict | None:
+    """The tracer's first pass: a plan/v0 floor of rooms (doors: []) proposed from a floor-plan image,
+    or None when the model is off, down, slow or unusable, or the input is. Never raises."""
+    try:
+        try:
+            _, width, height, name, _ = check_hints(hints)
+        except ValueError as e:
+            print(f"LLM trace: no proposal ({e})", file=sys.stderr)
+            return None
+        mime = image_mime(image)
+        if mime is None:
+            print("LLM trace: no proposal (the image is not PNG, JPEG or WebP)", file=sys.stderr)
+            return None
+        t0 = time.time()
+        answer = client.complete(_propose_prompt(width, height, name), image=bytes(image), image_mime=mime,
+                                 schema=PROPOSE_SCHEMA, timeout=PROPOSE_TIMEOUT, thinking=PROPOSE_THINKING,
+                                 models=_vision_chain())
+        if not isinstance(answer, dict):
+            return None
+        floor, dropped = _sanitize(answer, hints)
+        why = ", ".join(f"{n} {reason}" for reason, n in dropped.most_common())
+        print(f"LLM trace: {len(floor['rooms'])} rooms kept from {client.last_model}"
+              + (f", {sum(dropped.values())} dropped ({why})" if dropped else "")
+              + f", {time.time() - t0:.1f} s", file=sys.stderr)
+        return floor
+    except Exception as e:
+        print(f"LLM trace: no proposal ({type(e).__name__}: {e})", file=sys.stderr)
+        return None
+
+
 # ------------------------------------------------------------------------ cli
 
 SAMPLE_OBS = [  # shapes as sim/run.py builds them (values illustrative)
@@ -811,7 +1145,20 @@ def _main(argv: list[str]) -> int:
             print(f"agent {obs['idx']} ({obs['trigger']}, current {obs['current']}): {decision}")
         print(f"({client.provider()}, model {client.last_model}, {time.time() - t0:.1f} s)", file=sys.stderr)
         return 0 if any(decisions) else 1
-    print("usage: python -m backend.llm.features report [result.json [building.json]] | decide", file=sys.stderr)
+    if command == "propose" and len(argv) >= 3:  # one live call: send public plans only (spec 12)
+        from PIL import Image  # comes with matplotlib
+
+        data = Path(argv[1]).read_bytes()
+        with Image.open(argv[1]) as im:
+            width, height = im.size
+        hints = {"metersPerPixel": float(argv[2]), "width": width, "height": height,
+                 "level": int(argv[3]) if len(argv) > 3 else 0}
+        floor = propose_plan(data, hints)
+        print(json.dumps(floor, indent=1) if floor is not None else "no proposal")
+        print(f"({client.provider()}, model {client.last_model}, {time.time() - t0:.1f} s)", file=sys.stderr)
+        return 0 if floor else 1
+    print("usage: python -m backend.llm.features report [result.json [building.json]] | decide"
+          " | propose plan.png METERS_PER_PIXEL [level]", file=sys.stderr)
     return 2
 
 

@@ -250,8 +250,6 @@ D13 completed: smoke test and slow checks both printed `fire checks OK`. The bud
 
 ### Task D15 (P0 · Sat 7 AM): Real office demo batch: readable labels, design occupancy, budgeted what-ifs and fixes
 
-BLOCKED: WS-C sim/run.py:602 rejects stair arrivals near the blocked office stair exit D$77wwb (R106, seed 2, 250 occupants, kitchen): agent (0.36, 22.81) within 0.2 m of geometry boundary. Baseline and propped sweep completed; stopped blocked-exit sweep. Fire-side steps and smoke/slow checks pass; reproduction and handoff in fire/README.md. Needs simulator arrival-region clearance fix before Step 4/6 can finish.
-
 **Files:** Modify `fire/batch.py`, `fire/whatif.py`, `fire/fixes.py`, `fire/checks.py`, `fire/README.md`; produce `data/runs/batch-office.json` (gitignored: the lead regenerates it with the command recorded here).
 
 **Interfaces:**
@@ -261,10 +259,12 @@ BLOCKED: WS-C sim/run.py:602 rejects stair arrivals near the blocked office stai
 - [x] **Step 1: Readable labels.** `door_label` uses an exit's `name` only when it has no `:` and at most 30 characters; otherwise `Stair <group> exit` when the inside room is a stair, else `Exit from <room name> (<room id>)`; a plain door becomes `Door <id> (<room name> to <room name>)`. The example keeps `Exit Main entrance` and `Stair SB door`, and `D101` becomes `Door D101 (Kitchen to Corridor 1)`. Use `door_label` in `aggregate`, `_exit_why` (`Blocking <label> adds ...`) and `default_variants` (`<label> blocked`).
 - [x] **Step 2: Overrides.** Add `--occupants` and `--fire-type` to `main()`, applied to `base` before the budget pilot; a bad value is a `parser.error`.
 - [x] **Step 3: Count only runs that can change something.** `default_variants` omits `sprinklers` unless `sprinklers_matter(base)`. `planned_fix_runs` = `top` widen fixes + 1 if `sprinklers_matter(base)` + 1 if a stair door is open or propped + 1 per door the base blocks; with `--fixes`, `--budget-min` adds it to the variant count, sets `--fix-rooms` the way it sets `--whatif-rooms`, and adds `, N fixes` to the plan line (only then, so `check_timing`'s expected line stays).
-- [ ] **Step 4: Run it.** `python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 30 --whatif --fixes --out data/runs/batch-office.json`, in the background with output to `debug/office-batch.log` (about 35 min). 250 = 3,480 m² of walkable floor ÷ 13.9 m² per person (IBC business load factor, 150 sq ft); kitchen is the example's fast 1.5 MW preset, which sprinklers can reduce. Fix whatever breaks at this scale inside `fire/` (failed runs, a crash, a timeout, a `why` with `M_` or non-ASCII text, an empty `top`, a fix with `n == 0`) and rerun, at most twice; problems in other folders go into the README handoff with the error.
+- [x] **Step 4: Run it.** `python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 30 --whatif --fixes --out data/runs/batch-office.json`, in the background with output to `debug/office-batch.log` (about 35 min). 250 = 3,480 m² of walkable floor ÷ 13.9 m² per person (IBC business load factor, 150 sq ft); kitchen is the example's fast 1.5 MW preset, which sprinklers can reduce. Fix whatever breaks at this scale inside `fire/` (failed runs, a crash, a timeout, a `why` with `M_` or non-ASCII text, an empty `top`, a fix with `n == 0`) and rerun, at most twice; problems in other folders go into the README handoff with the error.
 - [x] **Step 5: Checks.** `check_labels()` (fast): on the office `DrRS91$` → `Exit from ENTRY (R101)`, `D$77wwb` → `Stair S1 exit`, `D$77xsW` → `Stair S1 door`, `D$77xVs` → `Door D$77xVs (OPEN OFFICE to CORRIDOR)`, plus the example labels above; `default_variants` has no `sprinklers` for the office scenario and has it with `type` kitchen; `widen_door(office, "D$77wwb")` has width 1.41 and a larger exit zone (1.45 → about 1.70 m²); `main()` with `--occupants 250 --fire-type kitchen --rooms 1 --seeds 1` and a patched `run_many` (as in `check_timing`) passes a `base` with total 250, B's `mix` and type kitchen without `growth`; `planned_fix_runs` is 3 for the office with kitchen and 2 with trash. `check_office_slow()`: office, R110 and R143, seed 1, 250 occupants, kitchen, `maxTime` 300, 2 workers: no failures, a non-empty `top`, every `why` ASCII and free of `M_`.
-- [ ] **Step 6: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`, and Step 4 wrote `data/runs/batch-office.json`. README section "Real office batch (D15)": the command, the machine (OS, cores, workers), the plan line, rooms × seeds, `timing`, every `top`, `whatIf` and `fixes` `why` line, and the reasons for 250 occupants and the kitchen preset.
-- [ ] **Step 7: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): real office demo batch"` (no attribution lines). Handoff for A: regenerate `data/runs/batch-office.json` on the lead's machine with that command (a higher `--budget-min` gives more rooms); `office.scenario.json` still says 120 occupants and a trash fire, so a single-run office demo and this batch differ unless A or B align them.
+- [x] **Step 6: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`, and Step 4 wrote `data/runs/batch-office.json`. README section "Real office batch (D15)": the command, the machine (OS, cores, workers), the plan line, rooms × seeds, `timing`, every `top`, `whatIf` and `fixes` `why` line, and the reasons for 250 occupants and the kitchen preset.
+- [x] **Step 7: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): real office demo batch"` (no attribution lines). Handoff for A: regenerate `data/runs/batch-office.json` on the lead's machine with that command (a higher `--budget-min` gives more rooms); `office.scenario.json` still says 120 occupants and a trash fire, so a single-run office demo and this batch differ unless A or B align them.
+
+D15 completed on the lead's laptop (Windows, i9-10885H, 15 workers, shared with A's precompute): `pilot 51.4 s; budget 30 min, 15 workers, 3 seeds, 3 what-ifs, 3 fixes -> 12 rooms (est. 28.8 min)`; 36 baseline fires plus 6 paired sweeps of 36, 252 runs, 0 failed, every comparison n = 36. Runtime 49 min, since concurrent runs were about 3x the pilot, not 2x. The blocked-exit sweep (`D$77wwb`) ran clean after C13b. Smoke test and slow checks print `fire checks OK`. Results, the sprinkler smoke-accounting caveat (trapped agents stop counting) and the A handoff are in fire/README.md. `office.scenario.json` now matches the batch (250 occupants, kitchen).
 
 ### Task D16 (P1 · Sat 9 AM): Ranges across seeds and a top-3 stability flag
 
@@ -283,7 +283,18 @@ BLOCKED: WS-C sim/run.py:602 rejects stair arrivals near the blocked office stai
 
 Verification note: office output has 213 successful runs and 3 excluded R203b failures (narrow IFC fragment below smoke-grid resolution); ranges and stability cover all 3 seeds over the 71 successful rooms. Details and handoff in fire/README.md.
 
+### Task D14b (P0 · Sat 6 AM): Office label and width checks follow the building file (unblocks B13/B16)
+
+**Files:** Modify `fire/checks.py` (`check_labels` and any check pinning office exit names, door widths or zone areas).
+
+**Interfaces:** Consumes `data/buildings/office.json`. Produces checks that read expected exit labels, door widths and exit-zone areas from the building file at test time, so B13 (readable names, e.g. "Exit Entry (south)", "Exit Stair S1 (west)") and B16 (clear widths, e.g. 1.41 → 1.36 m) don't turn the fire checks red.
+
+- [x] Replace pinned strings and numbers with values computed from the loaded building (e.g. the label of the exit whose door is X; the width of door X; the area of zone X), keeping what each check actually tests (labels are readable, widths are used, zones are positive and inside walkable).
+- [x] **Verify:** `python -m fire.smoke_test` passes on today's office, and still passes on a copy of office.json with exits renamed and a door narrowed by 0.05 m (do this in a temp dir inside the check).
+- [x] **Commit** `test(fire): office label and width checks read the building file`.
+
 ### Task D17 (P2 · Sat 11 AM): Smoke-model sensitivity for the credibility panel
+Completed on this branch in 5cd8438; preserved while merging main.
 
 **Files:** Create `fire/sensitivity.py`; modify `fire/model.py`, `fire/checks.py`, `fire/README.md`; produce `data/runs/sensitivity-office.json` (gitignored).
 
@@ -297,3 +308,255 @@ Verification note: office output has 213 successful runs and 3 excluded R203b fa
 - [x] **Step 4: Checks.** `check_smoke_scale()` (fast, no sim; stair times through `exposure` with no frames, as in `check_exposure`): `{speed: 1, density: 1}` gives the same `arrival` and, at t = 120, the same `_density` as no field; the measured numbers above hold (times within ±3 s, the 50 within 0.1, the blocked-door sets as listed); a factor of 0 or −1 raises `ValueError`. `check_sensitivity()` (fast; patch `fire.sensitivity.run_many`): five calls with the expected `smokeScale` values, ignitions and seeds; exact `topOverlap`, `sameFirst` and `smokePct` on hand-made results; ASCII `why` lines with digits; `json.dumps(..., allow_nan=False)` passes. `check_sensitivity_slow()`: example, R101 and R105, seed 1, 60 agents, `maxTime` 240, 2 workers: four variants, each with `n == 2`.
 - [x] **Step 5: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`; `python -m fire.sensitivity data/buildings/office.json data/runs/batch-office.json --rooms 6 --seeds 1` (about 30 runs; if that batch is missing, rerun D15's README command first) writes `data/runs/sensitivity-office.json`. Paste its `why` lines into a README section "Smoke-model sensitivity (D17)", labelled illustrative.
 - [x] **Step 6: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): smoke-model sensitivity"` (no attribution lines). Handoff for E (credibility panel: `note` and the `why` lines verbatim, one line per variant) and A (copy the file into the precompute next to the office batch).
+
+## Added overnight (Sat 4:30 AM)
+
+> **D18–D21** (added Sat 4:30 AM; D1–D14 are done, D15 stays BLOCKED until C13b lands, D16–D17 are open). D18 and D19 are P0, D20 and D21 P1; do them in this order after D17, one task per session, like the others. Write only in `fire/`; generated output goes to `data/runs/` (gitignored) and logs to `debug/`; `sim/`, `buildings/` and `backend/` are read-only (call them, never edit them). A 250-occupant office run takes 44–46 s on the lead's Windows laptop and about 6 s on the Mac that ran D15 (its pilot); the clinic costs about twice that. Anything that runs the simulator or a pool belongs in a `_slow` check, and a run longer than about 8 minutes goes in the background with output to a `debug/` log whose tail you read until `wrote` appears. Prefix commands with `LLM_PROVIDER=off` (the Gemini key is free tier, 20 requests a day). New fields are optional, `why` and `headline` text is ASCII, and every number in it comes from a simulation. If a task needs work that isn't on `main` yet (C14, C13b, B9), finish its code and fast checks, add `BLOCKED: <what is missing>` under its heading, commit, and stop; the lead clears the line once that work lands. Commit messages exactly as given, with no co-author or AI attribution lines; don't push (the runner pushes).
+
+### Task D18 (P0 · Sat 8 AM): Headline numbers pack for the demo, the report card and the Report tab
+
+**Files:** Create `fire/headlines.py`; modify `fire/whatif.py`, `fire/fixes.py`, `fire/checks.py`, `fire/README.md`; produce `data/runs/headlines-example-office.json` and, once D15 has written `data/runs/batch-office.json`, `data/runs/headlines-office.json` (gitignored).
+
+**Interfaces:**
+- Consumes: a saved batch: `buildingId`, `id`, `base`, `runs[{seed, ignition, smokeSeconds}]`, `failed`, `timing`, `top[{kind, id, floor, score, why}]`, D11's `whatIf[{id, label, n, dT90, slower, faster, dTrapped, dDosed?, dSmokeSeconds?, why}]`, D14's `fixes[{id, kind, label, helps, n, dT90, dTrapped, dSmokeSeconds?, smokePct, derivedFrom?, why}]` and, once D16 is in, `stability{top3, heldIn, n, why}`, `top[].seedsInTop3`, `doors[].scoreRange`, `rooms[].riskT90Range`; D17's `data/runs/sensitivity-<buildingId>.json` (`note`, `why`, `variants[{id, why}]`) when it exists; `door_label`; `add_whatif`, `_key` and `_why` in `fire/whatif.py`; `add_fixes` in `fire/fixes.py`. **Why:** demo scenes 4–6 (spec §8), A's report card and E's Report tab quote the same few numbers, and each digs them out of the full batch. A's `_base_smoke` (`backend/llm/features.py`) already reads an optional `baseSmokeSeconds` on a what-if entry, and E's `batchHeadline` (`frontend/src/model/exposure.ts`) prints a percent only when `n === batch.runs.length`; with `--whatif-rooms` (D13 and D15 set it) both fall back to raw person-seconds, so the "+22% person-seconds in smoke" headline can't be read off a budgeted batch.
+- Produces: what-if entries gain `baseSmokeSeconds` and `smokePct` (only with `dSmokeSeconds`); `build_headlines(building, batch, sensitivity=None, sources=None, generated=None) -> dict`; `main(argv=None)` and CLI `python -m fire.headlines BUILDING BATCH [--sensitivity PATH] [--out PATH]` (default out `data/runs/headlines-<buildingId>.json`; default sensitivity: D17's file when it exists). Contract for A and E (every field but `version`, `buildingId` and `generated` may be absent; readers ignore unknown fields; times are ISO 8601 UTC ending in `Z`): `headlines/v0 = {version, buildingId, buildingName, generated, note, sources: {batch: {file, id, modified}, sensitivity: {file, modified}}, scenario: {id, occupants, mix, fireType, growth, sprinklers, alarmTime, maxTime, doors, exitChoice, seeds, rooms, runs, failed}, headline, weakSpots: [{rank, kind, id, floor, label, score, why, scoreRange, riskT90Range, seedsInTop3}], whatIf: [{id, label, n, dT90, slower, faster, dTrapped, dSmokeSeconds, baseSmokeSeconds, smokePct, dDosed, why}], fixes: [{id, kind, label, helps, n, dT90, dTrapped, dSmokeSeconds, smokePct, derivedFrom, why}], stability: {why, heldIn, n}, sensitivity: {note, why, variants: [{id, why}]}, timing}`.
+
+- [x] **Step 1: Percent at the source.** In `add_whatif`, per variant: `baseSmokeSeconds` = mean `smokeSeconds` of the baseline runs that a successful variant run matches (by `_key`), `smokePct = 100 * dSmokeSeconds / baseSmokeSeconds` (null when that mean is 0), and `_why` writes `+427 person-seconds in smoke (+22%)`; `compare` stays as it is (`check_whatif` asserts its exact output). In `add_fixes`, a derived fix gets `smokePct = 100 * dSmokeSeconds / (b - dSmokeSeconds)` when b, the `baseSmokeSeconds` of the what-if named in `derivedFrom`, exists (the fix's own baseline is the propped or blocked state).
+- [x] **Step 2: Pack.** `build_headlines` only reads the batch (nothing reruns): `weakSpots` = `top` in order, `rank` from 1, `label` from `door_label` (room entries: `<room name> (<id>)`), plus D16's `seedsInTop3` from the entry, `scoreRange` from the matching `doors[]` entry and `riskT90Range` from the matching `rooms[]` entry when present; `whatIf` and `fixes` keep the contract's fields, in batch order; a what-if without `baseSmokeSeconds` (saved before Step 1) gets `smokePct` from the mean `runs[].smokeSeconds` only when `n == len(runs)` (E's rule); `scenario` = `base`'s `id`, `occupants.total` as `occupants`, `occupants.mix` as `mix`, `fire.type` as `fireType`, `fire.growth` as `growth`, `sprinklers`, `alarmTime`, `maxTime`, `doors` and `exitChoice` (C14's field, when set), plus `seeds` (sorted, from `runs`), `rooms` (distinct ignitions) and the `runs` and `failed` counts; `note` = `"Illustrative fire model and rule-based simulated occupants; ideas for a fire protection engineer to check, not a compliance result."`; a missing section is left out, never null; no `runs`, `doors` or heatmaps, so the file stays small.
+- [x] **Step 3: Headline and CLI.** From the `proppedStairs` what-if if its `n > 0`, else the first what-if with `n > 0`: `"Stair doors propped open: +22% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average."` (`sooner` for a negative `dT90`; `+427 person-seconds in smoke per fire` without `smokePct`); otherwise the first weak spot's `why`; no `headline` key when there is neither. The CLI exits 1 with `no batch at <path>: run D15's command (fire/README.md) first` for a missing batch and 2, naming both ids, when `batch["buildingId"] != building["id"]`; `sources` holds the paths as given and the files' mtimes; it writes `json.dumps(pack, indent=1)` and prints the headline, every `why` and `wrote <path> (<n> bytes)`.
+- [x] **Step 4: Checks.** `check_headlines()` (fast, no sim) on the example building and a hand-made batch (`top`: DSB1, E1 and the R101 room entry; one `proppedStairs` entry with `n` 12, `dT90` 0.2, `dSmokeSeconds` 242, `baseSmokeSeconds` 1100, `smokePct` 22.0; one helping fix; three `runs`): the headline is exactly `"Stair doors propped open: +22% person-seconds in smoke across 12 paired fires; 90% out 0 s later on average."`; labels `Stair SB door`, `Exit Main entrance` and `Kitchen (R101)`; without the two new fields (and `n` 12 against 3 runs) the per-fire wording appears; without `whatIf`, the first `why`; absent sections are absent keys; every string is ASCII; `json.dumps(..., allow_nan=False)` passes and the JSON is under 20 KB. Extend `check_whatif` (every full-batch entry: `baseSmokeSeconds == 100`, `smokePct == 40.0`, `(+40%)` in its `why`) and `check_fixes` (a derived fix from a what-if with `baseSmokeSeconds` 200 and `dSmokeSeconds` 40 has `smokePct` -16.7 ± 0.1).
+- [x] **Step 5: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`; `python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2 --whatif --fixes --out data/runs/batch-example-office.json`, then `python -m fire.headlines contracts/building.example.json data/runs/batch-example-office.json`, and the same for the office if `data/runs/batch-office.json` exists. README section "Headline numbers (D18)": the contract line, each headline and file size.
+- [x] **Step 6: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): headline numbers pack"` (no attribution lines). Handoff in the README for A (the precompute copies `data/runs/headlines-<id>.json` into `frontend/public/demo/` and lists it as `batches[].headlines`; the report card may use `headline` as its template headline and quotes the `why` lines verbatim; `whatIf[].baseSmokeSeconds` already feeds `_base_smoke`) and E (the Report tab can show the pack with no API or Gemini call; use `smokePct` instead of recomputing the percent).
+
+### Task D19 (P0 · Sat 10 AM): Refresh after C14 and C13b: which headline changed, and why
+
+**Files:** Create `fire/refresh.py`; modify `fire/batch.py` (`apply_overrides`), `fire/checks.py`, `fire/README.md`; produce, for the example and the office, `data/runs/batch-<id>.json`, `batch-<id>-c14off.json`, `headlines-<id>.json` and `headlines-<id>-c14off.json` (gitignored).
+
+**Interfaces:**
+- Consumes: C14 (`SMOKE_BETA` in `sim/brain.py`; `run()` reads the optional scenario field `exitChoice: {smoke, unfamiliar}`, 0 turning a term off; C14's own check shows both at 0 reproduce the pre-C14 events in a smoke-free run, but with smoke its new `smoke` trigger can still move a reroute, so call that side "C14 terms off", not "before C14"); C13b (no flag: probe with D15's repro in `fire/README.md`, which raised `too close to geometry boundaries` before it: office, kitchen in R106, seed 2, 250 occupants, `D$77wwb` blocked); `_ignitions`, `_tasks`, `_init`, `_run_one`, `run_many`, `door_label` and `main()`'s `--occupants`/`--fire-type` code in `fire/batch.py`; `default_variants`, `add_whatif(..., variants=)`, `add_fixes`; D18's `build_headlines`; `runs[].exitCounts` (keyed by exit id; `floors[].exits[].door` gives the door). **Why:** STATUS Sat 04:20: with C14, people avoid stairs they can see filling with smoke, so D11's numbers shift, and every number quoted so far (+22% person-seconds in smoke with the stair doors propped, t90 +0.2 s, D14's fix lines) predates it. Rerunning the same rooms and seeds with C14's terms off and on, on the same code, isolates C14 whatever order C13b, C14 and D15 land in.
+- Produces: `fire.batch.apply_overrides(base, occupants=None, fire_type=None) -> dict` (`ValueError` on a bad value; `main()` uses it and turns that into `parser.error`, so `check_labels` still passes); in `fire/refresh.py`: `sim_features() -> {"smokeAwareExits": bool}` (`sim.brain` has `SMOKE_BETA`, or `"exitChoice"` appears in `sim/run.py`), `stair_probe(office, base) -> bool` (D15's repro through `_init` and `_run_one` with `maxTime` 240: `ok` gives True, an error naming the geometry boundary False, any other error raises), `terms_off(base) -> dict` (deep copy, `exitChoice` `{"smoke": 0, "unfamiliar": 0}`, `-c14off` appended to the id), `refresh(building, base, ignitions, seeds, workers=None, timeout_s=7200, progress=True) -> {"legacy": batch, "current": batch}`, `exit_shift(legacy, current, building) -> dict`, `diff_headlines(old, new) -> list[{key, label, old, new, changed, why}]`, constants `SMOKE_PCT_POINTS = 5.0`, `DT90_S = 5.0`, `TRAPPED = 0.5`; `main(argv=None)` and CLI `python -m fire.refresh BUILDING SCENARIO [--occupants N] [--fire-type T] [--rooms 12] [--seeds 1,2,3] [--workers N] [--check]`; the current pack gains optional `features: {smokeAwareExits, stairArrivalsFixed}`, `legacyHeadline` and `changes`.
+
+- [x] **Step 1: Detect.** `sim_features`, `stair_probe` and `--check`, which prints `C14 smoke-aware exit choice: yes|no; C13b stair arrivals: yes|no|n/a` (`n/a` unless the building id is `office`) and exits 0; without `--check`, the CLI exits 3 with that line and `nothing to refresh yet` when C14 is missing, or C13b on the office.
+- [x] **Step 2: Two sides.** `refresh` runs both baselines (`terms_off(base)` and `base`, same ignitions and seeds), takes `default_variants` from the current baseline and hands that one list to both `add_whatif` calls (so `blockedExit` blocks the same door), then `add_fixes` on each side (widen fixes follow each side's own `top`); the sides differ only in `exitChoice` and ids. The CLI builds `base` with `apply_overrides` and ignitions with `_ignitions(building, base, rooms)`, renames an existing `batch-<id>.json` and `headlines-<id>.json` to `batch-<id>.prev.json` and `headlines-<id>.prev.json`, and writes both batches and both D18 packs.
+- [x] **Step 3: Diff.** `diff_headlines(legacy_pack, current_pack)` compares the top-3 weak-spot ids in order and, per `whatIf` and `fixes` id, `smokePct` (else `dSmokeSeconds`), `dT90`, `dTrapped` and `helps`; `changed` when `smokePct` moves by at least 5 points (`dSmokeSeconds` by at least 10% of the larger value), `dT90` by at least 5 s, `dTrapped` by at least 0.5, `helps` flips, the top 3 differ, or an id is on one side only; `why` (ASCII), the same shape for each metric: `"Stair doors propped open, smoke exposure: +22% -> +9% with C14's exit-choice terms on (same 36 fires)."`. `exit_shift` sums each side's baseline `runs[].exitCounts` per exit into one more entry (key `exitUse`, changed when an exit moves by 5% of the evacuees or more) naming the two largest moves: `"Exit use across the baseline fires: Stair S1 exit 812 -> 640 people, Exit from ENTRY (R101) 300 -> 472."`. The CLI puts `features`, `legacyHeadline` and `changes` into the current pack and prints every changed `why`.
+- [x] **Step 4: Checks.** `check_refresh()` (fast; patch the detectors and `fire.refresh.run_many`, `fire.refresh.add_whatif` and `fire.refresh.add_fixes`, which `fire/refresh.py` imports at module level): `refresh` gives both sides the same ignitions, seeds and variant list, and scenarios equal except `exitChoice` and `id`; the input `base` is unchanged; `diff_headlines` on two hand-made packs flags exactly the expected keys (a 4-point `smokePct` move is unchanged, 6 points changed, a flipped `helps` changed, a fix on one side only changed) with ASCII `why` lines; the CLI exits 3 without C14; `json.dumps(..., allow_nan=False)` passes. `check_refresh_slow()` (prints a skip line without C14): example, R101 and R105, seed 1, 60 agents, `maxTime` 240, 2 workers: both sides finish with no failures and three `whatIf` entries each.
+- [x] **Step 5: Run it.** `python -m fire.refresh contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2` (about 170 runs), then `python -m fire.refresh data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --rooms 12 --seeds 1,2,3` in the background to `debug/refresh-office.log` (about 500 runs, roughly 15 min on the Mac). Without C14: `BLOCKED: waiting on C14`. Without C13b only: do the example, then `BLOCKED: waiting on C13b for the office refresh`. If no compared number moves at all, check that `run()` really reads `exitChoice` before you report. (Done: the example and the office, both in full; the office took three `--resume` continuations, see the D19 section of `fire/README.md`.)
+- [x] **Step 6: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`. README section "Refresh after C14 and C13b (D19)": the `--check` line and, per building, the previous pack's headline (if a `.prev.json` existed), the C14-off and current headlines, every changed `why` and the exit-use line; append "(before C14; see D19)" to the D11, D14 and any D15 example lines.
+- [x] **Step 7: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): refresh headline numbers after smoke-aware exit choice"` (no attribution lines). Handoff in the README for A (quote only the newest `headlines-<id>.json`, regenerate the precompute, and use the changed `why` lines in the demo notes) and E (optional `features`, `legacyHeadline` and `changes`: show the changed entries under the headline as "Updated for smoke-aware exit choice").
+
+D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompute until 12:37): `C14 smoke-aware exit choice: yes; C13b stair arrivals: yes`. Example: 168 runs, none failed, 1,538 s; its current side reproduces D18's batch exactly, and C14 moves 4 of 31 compared numbers (the headline +25% -> +26%). Office: both sides complete at 12:50 after three `--resume` continuations (a worker died at 11:08; the laptop was in standby 12:14-12:29; the last stretch ran with 12 workers). 4 of 29 compared numbers changed: the third weak spot (Door DQnt_pi -> Exit Stair S2 (east)), the blocked-exit smoke percent (+60% -> +55%) and the second widened door (Door DQnt_pi with the terms off, Exit Stair S2 (east) with them on); the headline goes +49% -> +54%, and D15's batch is the current side, so D15 and D18 already included C14. New along the way: `retries` and `--resume` in `fire/refresh.py`, and the sprinkler fix reusing its what-if in `fire/fixes.py`. Smoke test and slow checks print `fire checks OK`.
+
+### Task D20 (P1 · Sat noon): Run cache: reruns compute only what changed
+BLOCKED: taken over by the lead's machine at 14:21; skip
+
+**Files:** Create `fire/cache.py`; modify `fire/batch.py` (`_records`, `_ignitions`, `run_many`, `main()`), `fire/refresh.py` and, if D17 is in, `fire/sensitivity.py` (CLI `--fresh`), `fire/checks.py` (new checks; `check_timing`, `check_labels`), `fire/README.md`; produce `data/runs/cache/` (gitignored).
+
+**Interfaces:**
+- Consumes: `_records(building, tasks, workers, timeout_s, progress)` (`save`, `failed`, the progress line and ETA, the inline and spawned paths), `_run_one`'s record `{ok, wallS, scenarioId, seed, ignition, t90, t100, trapped, exitCounts, dosed, smokeSeconds, doors, heatmaps}`, the scenarios `_tasks` builds, `run_many`'s `timing`, `_ignitions` (`default_rng(base["seed"]).choice(n, count, replace=False)`: 40 rooms and 48 rooms are unrelated samples), `main()`'s budget pilot, and every caller of `run_many` (`add_exit_criticality`, `add_whatif`, `add_fixes` with widened copies, D17's `sensitivity`, D19's `refresh`). **Measured:** a 250-occupant office run takes 44–46 s on the lead's Windows laptop and D15's command is about 1,000 runs; D15's sweep was stopped mid-way and its finished baseline and propped-door runs were lost; a fire-side change (D16's ranges, D18's fields) or adding `--fixes` reruns everything today.
+- Produces: in `fire/cache.py`: `CACHE_DIR = Path("data/runs/cache")`, `CACHE_VERSION = 1`, `code_version() -> str`, `building_hash(building) -> str`, `run_key(building_hash, scenario, code) -> str`, `RunCache(directory=None, fresh=False)` with `get(key) -> dict | None`, `put(key, record)`, `hits`, `stored`; `enable(directory=None, fresh=False) -> RunCache`, `disable()`, `active() -> RunCache | None` (`directory=None` reads `CACHE_DIR` at call time); batch `timing.cached` (only with a cache); `--fresh` on the `fire.batch` and `fire.refresh` CLIs (and `fire.sensitivity`'s).
+
+- [ ] **Step 1: Keys.** `code_version` = the first 16 hex digits of sha256 over `CACHE_VERSION`; every `sim/*.py` except `smoke_test.py` and `fire/{grid,model,presets,metrics,stub}.py` (sorted by path; path, a NUL byte, then the bytes with CRLF turned into LF); `inspect.getsource(fire.batch._run_one)` (import `fire.batch` inside the function: `fire.batch` imports `fire.cache` at module level); the `importlib.metadata` versions of jupedsim, numpy and shapely; `platform.system()` and `platform.machine()`; memoized. `building_hash` and `run_key` are sha256 hex of `json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False)` (the key over `[building_hash, scenario, code]`), so widened buildings, door states, sprinklers, `smokeScale` and `exitChoice` each get their own entries.
+- [ ] **Step 2: Store.** One file per run, `<dir>/<key>.json` = `{key, code, scenarioId, record}`, written only by the parent process, through `<key>.json.tmp` and `os.replace`; only `ok` records are stored; a file that doesn't parse or holds a non-`ok` record is a miss; `fresh=True` makes every `get` miss and every `put` overwrite; a failed write prints one warning and never fails a batch.
+- [ ] **Step 3: Wire.** With `active()` set, `_records` hashes the building once and keys each task; hits are saved first (progress line `[3/12] R101 seed 1 t90=95.5 (cached)`; the record is marked `cached` in memory only) and only misses run, inline when `workers == 1` or at most one is missing; `save` stores each fresh `ok` record; the ETA counts computed runs only; `run_many` adds `timing.cached`. With no active cache nothing changes (`check_timing`'s output stays).
+- [ ] **Step 4: Stable plans.** `main()` adds `--fresh` and runs its body between `enable(fresh=args.fresh)` and `finally: disable()` (a check that calls `main()` must not leave a cache on), printing `cache data/runs/cache: code <version>` first and `cache: <hits> of <runs> runs reused` last; the budget pilot goes through the cache, so a rerun plans the same room count. `_ignitions` samples `default_rng(base["seed"]).permutation(len(candidates))[:count]` (back in plan order), so a larger `--rooms` or `--budget-min` keeps every room of a smaller one (this changes which rooms a given N picks; earlier README numbers stay as recorded). Same `--fresh` and enable in `fire.refresh`'s CLI and `fire.sensitivity`'s, when they exist.
+- [ ] **Step 5: Checks.** `check_cache()` (fast, no sim; a `tempfile.TemporaryDirectory`; `fire.batch._run_one` patched with a counting fake; `disable()` in a `finally`): a second `run_many(..., workers=1)` computes nothing and returns the same `runs`, `rooms`, `doors` and `top`, with `timing.cached` equal to the run count; a changed door state, a building copy with one door 0.1 m wider or a patched `code_version` misses; `fresh=True` recomputes and overwrites; a failed fake record isn't stored; a corrupt file is a miss; `_ignitions(large, base, 10)` is a subset of `_ignitions(large, base, 20)` (`check_batch_setup`'s 60-room fixture). Run `check_timing`'s and `check_labels`' `main()` calls under `patch("fire.cache.CACHE_DIR", <a temp dir>)`, so a real cached pilot can't change their plan lines and their fake pilots never reach `data/runs/cache`. `check_cache_slow()`: example, R101 and R105, seed 1, 60 agents, `maxTime` 120, temp cache: a spawned pass (2 workers), an all-cached inline pass and a `fresh` pass give identical `runs`.
+- [ ] **Step 6: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`; run `python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2 --whatif --fixes --out data/runs/batch-cache-test.json` twice (the second prints `cache: <N> of <N> runs reused` and takes seconds) and once more with `--fresh` (0 reused), with `python -m fire.headlines` after each pass printing the same headline. README section "Run cache (D20)": the key, what invalidates it, `--fresh`, disk use (about 30 KB per office run; delete `data/runs/cache/` to reclaim it), both timings.
+- [ ] **Step 7: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): per-run cache for incremental batches"` (no attribution lines). Handoff in the README for A (`fire.cache.enable()` before `run_many` in `tools/precompute_demo.py` reuses runs across precompute reruns on one machine) and the lead (D15's command now resumes where it stopped).
+
+### Task D21 (P1 · Sat 2 PM): The clinic: budgeted batch, what-ifs, fixes and headlines on the second building
+BLOCKED: taken over by the lead's machine at 14:21; skip
+
+**Files:** Create `fire/demo.py`; modify `fire/batch.py` (`main(argv=None)`), `fire/checks.py`, `fire/README.md`; produce `data/runs/batch-clinic.json` and `data/runs/headlines-clinic.json` (gitignored).
+
+**Interfaces:**
+- Consumes: B9's `data/buildings/clinic.json` (building `clinic`, CC BY 4.0) and `clinic.scenario.json` (scenario `clinic-fire`, 120 occupants), once they exist. Lead's prototype: 2 floors, 252 rooms (206 can be ignition rooms, so 40 are sampled), 236 doors, 9 exits (all on F1), stair groups S1–S3 on both floors, 3,912.5 m² walkable, 2,577 walkable vertices (the office has 1,173), a 120-agent run about 40 s on the lead's laptop; B9 names exits `<room name> (<side>)`; door ids contain `$` (`Dv$nncb`), so quote them in shell. `fire.batch.main` (`--occupants`, `--fire-type`, `--seeds`, `--budget-min`, `--whatif`, `--fixes`, `--out`, `--workers`, D20's `--fresh`), D18's `fire.headlines.main(argv)`, D15's design occupancy (3,479.5 m² of office walkable floor ÷ 13.9 m² per person = 250) and kitchen preset, `_ignitions`, `run_many`.
+- Produces: `fire/demo.py` with `design_occupants(building, m2_per_person=13.9) -> int` (walkable m², outer minus holes over every floor, ÷ `m2_per_person`, rounded to the nearest 10, at least 10: 250 on the office, 80 on the example, 280 on the clinic prototype), `demo_paths(building_id) -> (Path, Path)` (relative, in `data/buildings/` only, never `data/private/`), `main(argv=None)` and CLI `python -m fire.demo BUILDING_ID [--budget-min 30] [--seeds 1,2,3] [--workers N] [--occupants N] [--fire-type kitchen] [--fresh]`; a missing building or scenario prints `skipped clinic: data/buildings/clinic.json not found (workstream B adds it in B9)` and exits 0; `python -m fire.demo office` is D15's command plus the headlines.
+
+- [ ] **Step 1: Demo CLI.** `fire.batch.main(argv=None)` passes `argv` to `parse_args` (checks that patch `sys.argv` keep working). `fire/demo.py` resolves both files or skips as above, prints `clinic: 3,912.5 m2 walkable / 13.9 m2 per person -> 280 occupants, kitchen fire`, calls `fire.batch.main([building, scenario, "--occupants", N, "--fire-type", type, "--seeds", seeds, "--budget-min", M, "--whatif", "--fixes", "--out", "data/runs/batch-<id>.json"])` (paths as POSIX strings; `--workers` and `--fresh` appended when given), then `fire.headlines.main([building, out])`. 13.9 m² is D15's business rule; an outpatient clinic's 100 sq ft (9.3 m²) would mean about 420 people and twice the run time, so the README calls this an illustrative design occupancy, not an occupant-load calculation.
+- [ ] **Step 2: Checks.** `check_demo()` (fast): `design_occupants` gives 250 on the office and 80 on the example; `main(["no-such-building"])` prints a `skipped` line and returns 0; with `fire.batch.main` and `fire.headlines.main` patched, `main(["office"])` passes exactly `["data/buildings/office.json", "data/buildings/office.scenario.json", "--occupants", "250", "--fire-type", "kitchen", "--seeds", "1,2,3", "--budget-min", "30", "--whatif", "--fixes", "--out", "data/runs/batch-office.json"]`, then `["data/buildings/office.json", "data/runs/batch-office.json"]`. `check_clinic_slow()`: without the clinic, print `clinic: skipped (data/buildings/clinic.json not found)` and return; otherwise `run_many` on `_ignitions(clinic, base, 2)`, seed 1, design occupants, kitchen, `maxTime` 300, 2 workers: no failures, a non-empty `top`, every `why` ASCII and free of `M_`.
+- [ ] **Step 3: Run it.** `python -m fire.demo clinic --budget-min 30` in the background to `debug/clinic-batch.log`. Without the clinic files: `BLOCKED: waiting on B9's data/buildings/clinic.json`. Fix what breaks at this scale inside `fire/` and rerun, at most twice; a crash inside `sim/` or `buildings/` (B9 names one: `Exit areas need to be bounded by convex polygons` from a non-convex stair zone) goes into the README handoff with its error and a one-scenario repro, as in D15, plus a BLOCKED line.
+- [ ] **Step 4: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`, and Step 3 wrote `data/runs/batch-clinic.json` and `data/runs/headlines-clinic.json`. README section "Clinic batch (D21)": the command, the machine (OS, cores, workers), the plan line, rooms × seeds, `timing`, the headline, every `top`, `whatIf` and `fixes` `why` line, and the occupancy rule.
+- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): clinic demo batch and headlines"` (no attribution lines). Handoff in the README for A (`python -m fire.demo clinic --budget-min 60` on the lead's machine regenerates both files, and `python -m fire.demo office` the office's; copy them into the precompute) and E (the clinic's pack has the office's shape; its weak spots can be on either floor).
+
+## Added Sat 13:25 (demo review fixes)
+
+> From the lead's demo review. P0 tasks fix things judges see; do them first, in order.
+
+### Task D22 (P0 · Sat 3 PM): Trade-offs, not "helps": a fix that traps more people says so, and says where
+
+**Files:** Modify `fire/fixes.py` (`VERDICT`, `verdict`, `restate`, `_why`, `_inverse`, `STAT_KEYS`, `add_fixes`), `fire/whatif.py` (`room_deltas`, `_why`, `add_whatif`), `fire/headlines.py` (`FIX_KEYS`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `data/runs/batch-example-tradeoff.json` and `debug/d22-restated-<id>.json` (gitignored).
+
+**Interfaces:**
+- **Consumes, from D14 (`fire/fixes.py`):**
+  - `helps` = any gain: `dT90 <= -1 or dTrapped < 0` or a smoke gain.
+  - `_why(fix)` and the helps-first sort.
+  - `_inverse(variant)`: copies only its listed keys and negates the `d` ones.
+  - `STAT_KEYS`: the sprinkler fix copies these from the sprinkler what-if.
+- **From D11 (`fire/whatif.py`):** `compare`, whose exact output `check_whatif` pins, so leave it as it is; `_key`; `_why(label, stats)`.
+- **From D18:** `smoke_base` and `FIX_KEYS`.
+- **Other readers:**
+  - A's `tools/precompute_demo.py` imports `fire.whatif._why(label, stats)` and `fire.fixes._why(fix)`, so keep both signatures. It also reuses saved sweeps with `--resume`.
+  - E28's badge. E31's scene 5 picks the first fix with `helps` as "Best measured fix".
+  - The report card quotes `fixes[].why` verbatim.
+- **Measured: the example's "Keep Exit Main entrance clear (vs blocked): ... +1.3 trapped per fire" and the blocked-exit what-if's "-1.3 trapped per fire" are the same 47 people.** I reran the demo batch's three Lobby (L1) fires (160 occupants, kitchen, seeds 1–3).
+  - With E1 open: 16, 13 and 18 trapped (11/10/14 `untenable`, 5/3/4 `no route`), and 77, 79 and 68 people leave through E1.
+  - With E1 blocked: 0 trapped, all 160 leave through E2. t90 is 186.0, 185.9 and 190.4 s, against 221.8 s, 169.2 s and never reached. Smoke is 5,624, 5,191 and 5,812 person-seconds, against 4,132, 3,986 and 4,082.
+  - The batch's L1 `riskTrapped` is 15.7 = 47/3, and `dTrapped` is -47/36 = -1.31.
+  - `remaining` is 0 in all six runs, so this is real model behaviour, not a counting artifact. E1 is the lobby's own exit, so in a lobby fire the people heading for it walk past the fire.
+  - Sprinklers also trap 0 there, which is why the sprinkler what-if shows the same -1.3.
+- **Other demo fixes with a cost:**
+  - office `keepClear-D$77wwb`: +0.42 trapped.
+  - office `selfClosers` (vs propped open): +0.42 trapped.
+  - office `sprinklers`: +18% smoke with -2.25 trapped (D15's caveat: trapped people stop counting).
+  - clinic `keepClear-Dv$nncb`: +37% smoke.
+- **Produces, one rule shared with E34:**
+  - Gains: `dT90 <= -1` s, `dTrapped <= -0.05` per fire, `smokePct <= -5` (or `dSmokeSeconds < 0` when `smokePct` is null).
+  - Costs: `dT90 >= +1`, `dTrapped >= +0.05`, `smokePct >= +5` (or `dSmokeSeconds > 0` when null).
+  - In `fire/fixes.py`: `VERDICT = {"t90": 1.0, "trapped": 0.05, "smokePct": 5.0}` and `verdict(fix) -> {"helps", "tradeoff", "costs"}`. `helps` now means gains and no cost, `tradeoff` gains and a cost; with `n == 0`, neither.
+  - Optional fix fields `tradeoff` and `costs` (ASCII phrases).
+  - In `fire/whatif.py`: `room_deltas(baseline_runs, variant_runs, key="trapped", building=None, doors=()) -> [{floor, room, label, delta, fires, opensOnto}]`.
+  - Optional `dTrappedRooms` (first 3) on what-if entries and rerun fixes, inherited with `delta` negated by derived fixes.
+  - `restate(batch) -> dict`: pure, no reruns.
+
+- [x] **Step 1: Where the change happens.**
+  - `room_deltas` pairs runs like `compare` (by `_key`, dropping failed runs). It sums `variant[key] - baseline[key]` per ignition room, drops zeros, and sorts by |delta| (then floor, room).
+  - Each row gets `label`, which is `<room name> (<id>)`.
+  - Each row gets `opensOnto`: `"exit"` if one of `doors` joins that room to `outside`, `"door"` if it joins it to another room, else null.
+  - `add_whatif` stores the first 3 as `dTrappedRooms` when there are any (with the variant's `doors`). `add_fixes` does the same for a rerun fix (with its `door` or `doors`).
+  - `_inverse` adds `dTrappedRooms` with each `delta` negated. It's a list, so keep it out of the `d`-prefix negation loop.
+  - `STAT_KEYS` gains `dTrappedRooms`.
+- [x] **Step 2: Verdict.**
+  - `add_fixes` sets `helps`, `tradeoff` and `costs` from `verdict`, replacing D14's helps line.
+  - Sort helping fixes first, then trade-offs, then the rest, each by `dT90`, then `dSmokeSeconds`.
+  - Cost phrases: `"1.3 more trapped per fire"`, `"18% more time in smoke"` (or `"427 more person-seconds in smoke"` without `smokePct`), `"90% out 12 s later on average"`.
+  - A smoke cost adds ` (people no longer trapped keep counting)` when trapped is a gain.
+- [x] **Step 3: Name the fires behind a trapped number.**
+  - Let the total be `round(dTrapped * n)`. When |total| ≥ 1, and the first `dTrappedRooms` row has the same sign and at least half of it, the trapped phrase gets ` (47 of 47 in fires in Lobby (L1), which this exit opens onto)`.
+  - Use `door` for `opensOnto == "door"`, and drop the "which ..." part when it's null.
+- [x] **Step 4: Wording.**
+  - `_why(fix)` keeps D14's exact sentence for helping and no-gain fixes.
+  - A trade-off lists its gains, then `but` and its costs, joined with commas and a final `and`. Exactly: `"Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34), but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)."`
+  - The what-if `_why(label, stats)` adds the same parenthesis after its trapped number when `stats` has `dTrappedRooms`: `... -1.3 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).`
+- [x] **Step 5: Saved batches without reruns.**
+  - `restate(batch)` returns a copy. Every fix gets `helps`, `tradeoff`, `costs` and `why` from Steps 2–4 and is re-sorted, and every what-if `why` is re-rendered. The parentheses appear only where `dTrappedRooms` exists.
+  - `FIX_KEYS` gains `tradeoff` and `costs`, so headline packs keep them.
+- [x] **Step 6: Checks.**
+  - **Fast `check_tradeoffs()`, no sim:**
+    - `verdict` on keepClear-E1's numbers (`dT90` -58.29, `smokePct` -67.7, `dTrapped` +1.31, `n` 36) gives a trade-off.
+    - On widen-E2's numbers (`dT90`, `smokePct`, `dTrapped` = -10.6, -2.9, -0.19) it gives helps. The tuples below use the same order.
+    - On the office sprinklers (-6.7, +18.2, -2.25) it gives a trade-off whose cost carries the counting note.
+    - On (+18, -3, +0.5) it gives neither; on `n` 0, neither.
+    - `room_deltas` on hand-made L1 pairs (16/13/18 → 0) plus an R105 pair (0 → 0) gives exactly `[{"floor": "F1", "room": "L1", "label": "Lobby (L1)", "delta": -47, "fires": 3, "opensOnto": "exit"}]`.
+    - The trade-off `why` matches Step 4 exactly; a helping fix's `why` keeps D14's shape.
+    - `restate` on a hand-made batch holding the example demo's five fixes (their ids, labels, `n`, `dT90`, `dTrapped`, `dSmokeSeconds`, `smokePct`, `derivedFrom` and `faster`, copied into the check) gives `keepClear-E1` `helps` false, `tradeoff` true and a `why` starting `Trade-off: Keep Exit Main entrance clear (vs blocked):` that contains `but 1.3 more trapped per fire`. It comes after widen-E2, sprinklers, widen-DL1 and selfClosers, which stay helping.
+    - The same treatment of the office's keepClear-D$77wwb, selfClosers and sprinklers numbers marks all three as trade-offs.
+    - Every `why` is ASCII, `json.dumps(..., allow_nan=False)` passes, and inputs are unchanged.
+    - `check_whatif` and `check_fixes` pass; change only an assertion whose hand-made fix now has a cost, and name it in the commit body.
+  - **Slow `check_tradeoffs_slow()`:**
+    - Example, ignitions L1 and R105, seed 1, 160 occupants, `maxTime` 400, 2 workers, `add_whatif` with only the E1-blocked variant.
+    - `dTrappedRooms[0]` is L1 with a negative delta and `opensOnto` `"exit"`.
+    - Its `why` contains `in fires in Lobby (L1), which this exit opens onto`.
+- [x] **Step 7: Verify:**
+  - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
+  - Restate the three demo batches into `debug/d22-restated-<id>.json` and print their fix `why` lines.
+  - Run `python -m fire.batch contracts/building.example.json contracts/scenario.example.json --seeds 1,2,3 --whatif --whatif-rooms 3 --fixes --fix-rooms 3 --out data/runs/batch-example-tradeoff.json` (99 runs) in the background to `debug/d22-example.log`. Its keepClear-E1 `why` names Lobby (L1).
+  - README section "Trade-offs (D22)": the rule, the L1 table above, and every changed `why`.
+- [x] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): measured fixes with a cost read as trade-offs and name the fires behind them"` (no attribution lines). Handoffs in the README:
+  - For A: call `fire.fixes.restate(batch)` on each batch in the precompute before writing `batch-<id>.json` and the pack (no reruns). Rerun the sweeps without `--resume` to get the "in fires in ..." parentheses.
+  - For E: E34 mirrors `VERDICT`. `tradeoff` and `costs` are optional, and `helps` now excludes trade-offs.
+
+### Task D23 (P0 · Sat 4 PM): Readable names for unnamed interior doors
+BLOCKED: taken over by the lead's machine at 14:21; skip
+
+**Files:** Modify `fire/batch.py` (`door_label`, new `relabel`), `fire/fixes.py` (`widen_door` messages), `fire/headlines.py` (`build_headlines` relabels its input), `fire/checks.py` (`office_checks`, `check_labels`, new `check_door_names`), `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `debug/d23-relabeled-<id>.json` and `debug/d23-headlines-office.json` (gitignored).
+
+**Interfaces:**
+- **Consumes `door_label(building, floor_id, door_id) -> (kind, label)`.**
+  - Exits and stair doors already read well: `Exit Entry (south)`, `Stair S1 exit`, `Stair S1 door`.
+  - A plain interior door gives `Door <id> (<room name> to <room name>)`, names in floor order. So the demo shows IFC ids:
+    - `Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`: office weak spot #5 and its pack.
+    - `Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES)`: clinic weak spot #1 and its widen fix.
+    - `Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE)`.
+- **Callers of `door_label`:** `aggregate` (`top[].why`), `_exit_why`, `seed_ranges` (`stability.why`), `default_variants`, `candidate_fixes` (`Widen <label> ...`, `Keep <label> clear`), `build_headlines` (`weakSpots[].label`), `refresh.exit_shift`.
+- **Saved batches:** these strings are baked into `top[].why`, `stability.why`, `whatIf[].label` and `why`, and `fixes[].label` and `why`. Saved `runs[]` carry no per-door waits, so a saved batch can be relabeled but not re-aggregated.
+- **Error messages:** `widen_door`'s errors name raw ids (`widening D$77xsW changes room connections or walkable pieces`), and they reach `fixesSkipped[].reason`.
+- **Pinned checks:** `check_fixes` pins `door_label(building, "F1", "missing") == ("door", "Door missing")`. D14b's `office_checks` builds the plain-door expectation from the file.
+- **Measured: name collisions among plain doors (same floor, same two room names):**
+  - Example: none.
+  - Office: 3 pairs, 10 doors. For example OPEN OFFICE–CORRIDOR on F1 (D$77xaz, D$77xVs), and OPEN OFFICE–TEAM RM on F2 (five doors).
+  - Clinic: 29 pairs, 94 doors, plus 17 doors between two rooms of the same name (CORRIDOR–CORRIDOR).
+  - Two clinic room pairs have two doors each: R1D22–R1DC1 (Dv$nmZR, Dv$nmj8) and R2D21–R2DC1 (DIf2nYS, DIf2nbp).
+  - The rule below gives unique labels on every floor of all three buildings.
+- **Produces, for a plain door:**
+  - `Door between <A> and <B>`, names in floor order.
+  - When another plain door on the floor joins the same two names, or the names are equal, each name gets its room id: `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `Door between CORRIDOR (R1AC3) and CORRIDOR (R1CC1)`.
+  - When two doors join the same two rooms, append `, 1 of 2` or `, 2 of 2`, ordered by door midpoint (x, then y).
+  - With one known room: `Door from <A>`. With none: `Door <id>`, as today.
+  - Ids stay in the data: `id`, `top[].id`, `fixes[].door`.
+  - `relabel(building, batch) -> dict` (pure).
+
+- [ ] **Step 1: Rule.** Write the plain-door rule in `door_label`. Kinds, exits and stair doors are unchanged. `widen_door`'s three door errors name the door by its `door_label` label, not its id.
+- [ ] **Step 2: Relabel saved batches.**
+  - Build a map from each plain door's legacy label (today's exact string, via a private `_legacy_label`) to its new label.
+  - `relabel` replaces those strings in `top[].why`, `stability.why`, `whatIf[].label` and `why`, `fixes[].label` and `why`, and `fixesSkipped[].reason`, and returns a copy. Numbers and ids are untouched.
+  - `build_headlines` calls it on its input first, so a pack made from an old batch reads well too.
+- [ ] **Step 3: Checks.** Fast `check_door_names()`:
+  - Example: `D101` gives `Door between Kitchen and Corridor 1`, `DL1` gives `Door between Lobby and Corridor 1`.
+  - Office: `D$77xwP` gives `Door between CORRIDOR and SCIF OPEN OFFICE`, `D$77xVs` gives `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `DQnt_pi` gives `Door between SECURE DOC ROOM and OPEN OFFICE`.
+  - Clinic, skipped if missing: `Dv$nmj8` gives `Door between TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1), 1 of 2`.
+  - On every floor of the three buildings, plain-door labels are unique, ASCII, free of `:` and free of their own door id.
+  - `relabel` on a hand-made office batch whose `top`, `stability`, `whatIf`, `fixes` and `fixesSkipped` texts carry the legacy labels of D$77xwP, D$77xVs and DQnt_pi:
+    - leaves no match of `Door [A-Za-z0-9_$]+ \(` in any text field;
+    - changes nothing else (ids, numbers);
+    - changes nothing on a second pass.
+  - Move `office_checks`' plain-door expectation and `check_labels`' `D101` line to the new rule. `Door missing` stays.
+- [ ] **Step 4: Verify:**
+  - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
+  - Relabel the three demo batches into `debug/d23-relabeled-<id>.json`, printing each changed label (old -> new).
+  - `python -m fire.headlines data/buildings/office.json debug/d23-relabeled-office.json --out debug/d23-headlines-office.json` gives weak spot #5 as `Door between CORRIDOR and SCIF OPEN OFFICE`.
+  - README section "Readable door names (D23)": the rule and the old -> new list.
+- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): readable names for unnamed interior doors"` (no attribution lines). Handoffs in the README:
+  - For A: call `fire.batch.relabel(building, batch)` in the precompute before writing `batch-<id>.json`. `fire.headlines` relabels on its own. No reruns are needed.
+  - For E: text only changes. E34 shows the labels the files carry.
+
+### Task D24 (P1 · Sat 6 PM): Tiny rooms: a fire in a room thinner than a smoke cell starts at the nearest reachable cell
+BLOCKED: taken over by the lead's machine at 14:21; skip
+
+**Files:** Modify `fire/grid.py` (`FloorGraph`, `BuildingGraph.__init__`, `node_at`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`.
+
+**Interfaces:**
+- Consumes:
+  - `BuildingGraph.node_at(floor_id, x, y, room_polygon)`. Candidates are node centres inside the room polygon. If there are none, it raises `ValueError("No grid nodes inside the requested room on F2")`. `FireModel.__init__` calls it with the scenario's fire room.
+  - The per-floor `polygon` local in `__init__`: walkable ∪ door passages buffered by half a cell, prepared. Edges must be covered by it (D1's wall rule).
+  - `check_grid`'s snap-into-room case.
+- **Measured:** in all three buildings only office F2 R203b has no node inside.
+  - R203b is an OPEN OFFICE fragment of 1.16 m², 5.57 × 0.21 m (bounds 0.331, 23.818, 5.897, 24.026).
+  - It is open to CORRIDOR R201 and OPEN OFFICE R203a with no wall, and the 0.5 m grid's nodes at y = 23.75 (R201) and 24.25 (R203a) straddle it.
+  - Its nearest node, (3.25, 23.75) in R201, is 0.22 m from the room's representative point (3.114, 23.922), over walkable floor.
+  - All 3 seeds failed in D16 and in the demo batch (`failed` in `frontend/public/demo/batch-office.json`), so R203b has no risk estimate.
+  - The sim side is fine: C's keep-out gives R203b a 1.5 m disc.
+- Produces:
+  - `FloorGraph.walk`: that prepared polygon, as an optional dataclass field.
+  - A `node_at` fallback.
+  - The error message `No grid nodes inside or beside the requested room on <floor>`.
+
+- [ ] **Step 1: Keep the polygon.** Store the per-floor polygon on `FloorGraph` as `walk`.
+- [ ] **Step 2: Fallback.** Only when no node lies inside the room polygon:
+  - The anchor is (x, y) if the room polygon covers it, else the polygon's `representative_point()`.
+  - Candidates are nodes within one cell (`spec["cell"]`) of the room polygon whose straight segment to the anchor is covered by `walk`. The nearest to the anchor wins.
+  - With no candidate, raise with the new message.
+  - Rooms with a node inside behave exactly as today, so no other fire moves.
+- [ ] **Step 3: Checks.**
+  - **Fast `check_tiny_room()`:**
+    - On `fixture_building()`, a 0.09 × 2 m room inside A along its east side (`box(9.9, 3, 9.99, 5)`) gets a node in A within 0.5 m.
+    - A 0.16 × 2 m room inside the wall (`box(10.02, 3, 10.18, 5)`) still raises `ValueError` naming F1.
+    - On the office, `node_at("F2", 3.114, 23.922, <R203b polygon>)` returns the node at (3.25, 23.75), and `FireModel` with a kitchen fire in R203b builds with `source_xy` there.
+    - `check_grid` passes unchanged.
+  - **Slow `check_tiny_room_slow()`:**
+    - `_run_one` for office R203b, seed 1, 60 occupants, `maxTime` 240 returns `ok: True`.
+    - Every clinic room gets a node.
+- [ ] **Step 4: Verify:**
+  - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
+  - `run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from `apply_overrides(office.scenario, 250, "kitchen")`, has 3 ok runs. Paste their t90 and trapped into a README section "Tiny rooms (D24)" that replaces D16's "Office limitation" paragraph.
+- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
+  - Handoff for A: R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs.

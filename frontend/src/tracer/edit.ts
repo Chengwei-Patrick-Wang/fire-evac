@@ -1,6 +1,6 @@
 // Editing helpers for the tracer page: doors on room edges, door sides (as the normalizer sees
-// them), export ids, the page-level checks, and reading a saved trace back. Pure TypeScript: no
-// React, no DOM.
+// them), export ids, the page-level checks, reading a saved trace back, and bringing the AI first
+// pass's rooms into a floor. Pure TypeScript: no React, no DOM.
 import { floorScale, planToPx, pointInPolygon, polygonArea, pxToPlan, snap, snapPoint } from "./geometry";
 import type { Pt } from "./geometry";
 import { ROOM_TYPES, exportPlan, validatePlan, validateTrace } from "./plan";
@@ -291,4 +291,76 @@ export function readTrace(raw: unknown): TraceState | null {
     });
   });
   return { id: str(o.id), name: str(o.name), credits: str(o.credits), floors };
+}
+
+// ---------------------------------------------------------------- the AI first pass
+
+/** The floor image as the AI first pass sent it: its pixel size and meters per pixel. */
+export interface SentImage {
+  w: number;
+  h: number;
+  metersPerPixel: number;
+}
+
+/** A point of the AI's floor (meters, y up, from the sent image's bottom-left corner) in this
+ * floor's own image pixels (y down). The sent image may be a downscaled copy of the floor image. */
+export function sentToPx(p: Pt, f: TraceFloor, sent: SentImage): Pt {
+  const s = sent.metersPerPixel;
+  return [(p[0] / s) * (f.imageW / sent.w), (sent.h - p[1] / s) * (f.imageH / sent.h)];
+}
+
+/** One point per corner: no repeated neighbors, no closing repeat of the first point. */
+function ring(points: Pt[]): Pt[] {
+  const out: Pt[] = [];
+  for (const p of points) {
+    const q = out[out.length - 1];
+    if (!q || q[0] !== p[0] || q[1] !== p[1]) out.push(p);
+  }
+  const first = out[0];
+  const last = out[out.length - 1];
+  if (out.length > 1 && first && last && first[0] === last[0] && first[1] === last[1]) out.pop();
+  return out;
+}
+
+const AI_MIN_AREA = 1; // m2, as validatePlan
+
+export interface AiImport {
+  rooms: Array<Omit<TraceRoom, "id">>; // ai: true, in image pixels, snapped to the floor's grid
+  overlapping: number; // left out: they sit on a room already traced by hand
+  unusable: number; // left out: under 3 corners or 1 m2 once snapped, or not a room at all
+}
+
+/**
+ * The rooms of the floor POST /api/trace/propose returned, as AI draft rooms of floor f: mapped
+ * into f's image pixels, snapped to f's 0.25 m grid (which starts at f's reference point), with
+ * a known type. A room that overlaps one already traced by hand (either one's label point lies in
+ * the other) is left out, and so is one that collapses when snapped. The floor's earlier AI
+ * rooms do not count: the new draft replaces them.
+ */
+export function aiRooms(f: TraceFloor, rooms: unknown, sent: SentImage): AiImport {
+  const out: AiImport = { rooms: [], overlapping: 0, unusable: 0 };
+  if (!(floorScale(f) > 0) || !(sent.metersPerPixel > 0) || !(sent.w > 0) || !(sent.h > 0)) return out;
+  const traced = f.rooms.filter((r) => !r.ai);
+  for (const raw of Array.isArray(rooms) ? rooms : []) {
+    const o = obj(raw);
+    const corners = o && Array.isArray(o.polygon) ? o.polygon.filter(isPt) : [];
+    const polygon = ring(corners.map((p) => snapPoint(sentToPx([p[0], p[1]], f, sent), f)));
+    if (polygon.length < 3 || polygonArea(polygon.map((p) => pxToPlan(p, f))) < AI_MIN_AREA - 1e-9) {
+      out.unusable += 1;
+      continue;
+    }
+    const at = labelPoint(polygon);
+    if (traced.some((r) => pointInPolygon(at, r.polygon) || pointInPolygon(labelPoint(r.polygon), polygon))) {
+      out.overlapping += 1;
+      continue;
+    }
+    const type = str(o?.type, "other");
+    out.rooms.push({
+      name: str(o?.name).trim().slice(0, 60),
+      type: (ROOM_TYPES as readonly string[]).includes(type) ? (type as RoomType) : "other",
+      polygon,
+      ai: true,
+    });
+  }
+  return out;
 }

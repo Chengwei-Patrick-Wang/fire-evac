@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
+import { CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import { useApp } from '../store/app'
 import { useThrottledT } from '../store/clock'
 import { evacCurve, RUN_COLORS } from './curves'
+import { readSeedRange, t90Phrase } from '../model/ranges'
 
 export default function EvacCurve() {
   const runs = useApp((s) => s.runs)
@@ -26,24 +27,41 @@ export default function EvacCurve() {
 
   if (order.length === 0) return <div className="empty"><b>Load a run</b><span>Pick a precomputed run or open a file.</span></div>
   const color = (k: string) => RUN_COLORS[order.indexOf(k) % RUN_COLORS.length]
+  const band = (k: string) => {
+    const r = readSeedRange(runs[k].run)?.t90
+    return r && r.min != null && r.max != null && r.min < r.max ? t90Phrase(runs[k].run) : null
+  }
   const toggle = (k: string) =>
     useApp.setState({ compareKeys: compare.includes(k) ? compare.filter((x) => x !== k) : [...compare, k] })
 
   return (
     <div>
+      <p id="evac-summary" className="sr-only">
+        {keys.map((k) => {
+          const m = runs[k].run.metrics
+          const v = (x: number | null) => (x == null ? 'not reached' : `${x.toFixed(0)} s`)
+          return `${runs[k].label}: 50 % out at ${v(m.t50)}, 90 % at ${v(m.t90)}, everyone out at ${v(m.t100)}${band(k) ? ` (${band(k)})` : ''}. `
+        }).join('')}
+      </p>
       <div className="legend">
         {order.map((k) => (
           <label key={k} style={{ color: color(k) }}>
-            <input type="checkbox" checked={compare.includes(k)} onChange={() => toggle(k)} /> {runs[k].label}
+            <input type="checkbox" checked={compare.includes(k)} onChange={() => toggle(k)} /> {runs[k].label}{band(k) ? ` · ${band(k)}` : ''}
           </label>
         ))}
       </div>
-      <div style={{ width: '100%', height: 220 }}>
+      <div role="img" aria-label="Evacuation curve" aria-describedby="evac-summary" style={{ width: '100%', height: 220 }}>
         <ResponsiveContainer>
-          <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
+          <LineChart accessibilityLayer={false} data={data} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
             <CartesianGrid stroke="#1e293b" />
             <XAxis dataKey="t" type="number" domain={[0, 'dataMax']} stroke="#94a3b8" fontSize={11} unit=" s" />
             <YAxis domain={[0, 100]} stroke="#94a3b8" fontSize={11} unit="%" />
+            {keys.map((k) => {
+              const r = band(k) ? readSeedRange(runs[k].run)?.t90 : null
+              return r && r.min != null && r.max != null ? (
+                <ReferenceArea key={'band' + k} x1={Math.round(r.min)} x2={Math.round(r.max)} fill={color(k)} fillOpacity={0.15} ifOverflow="extendDomain" />
+              ) : null
+            })}
             {keys.map((k) => (
               <Line key={k} dataKey={k} name={runs[k].label} type="stepAfter" stroke={color(k)} dot={false} isAnimationActive={false} strokeWidth={2} strokeDasharray={runs[k].whatIf ? '6 3' : undefined} />
             ))}

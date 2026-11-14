@@ -1,4 +1,6 @@
 import { useApp } from '../store/app'
+import { captureView } from '../scene/capture'
+import { useClock } from '../store/clock'
 import { PROFILE_NAMES } from '../replay/runIndex'
 
 export default function Toolbar3D() {
@@ -96,6 +98,7 @@ export default function Toolbar3D() {
         <button
           key={n}
           title="Lens: highlight this profile"
+          aria-pressed={!lens.every(Boolean) && lens[i]}
           className={'lens ' + (lens.every(Boolean) || !lens[i] ? '' : 'on')}
           onClick={() =>
             set((s) => {
@@ -118,6 +121,7 @@ export default function Toolbar3D() {
       </button>
       <button
         disabled={split || !hasRun}
+        aria-pressed={pick}
         className={pick ? 'on' : ''}
         onClick={(e) => {
           const on = !useApp.getState().pickAgent
@@ -127,8 +131,27 @@ export default function Toolbar3D() {
       >
         Agent view
       </button>
-      <button disabled={nRuns < 2} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
+      <button disabled={nRuns < 2} aria-pressed={split} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
+      <button
+        disabled={split || building.private}
+        title={split ? 'Turn off Split to save the 3D view' : building.private ? 'Private building: do not screenshot or publish' : 'Room labels and queue counts are page overlays and are not in the image'}
+        onClick={(e) => {
+          const url = captureView()
+          if (url) {
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `fire-evac-${building.id}-t${Math.round(useClock.getState().t)}s.png`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+          }
+          e.currentTarget.blur()
+        }}
+      >
+        Save PNG
+      </button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
+      <button onClick={() => set((s) => ({ fitView: s.fitView + 1 }))}>Overview</button>
     </div>
   )
 }

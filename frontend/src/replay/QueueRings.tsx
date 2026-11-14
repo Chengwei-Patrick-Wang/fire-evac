@@ -8,59 +8,102 @@ import { floorY, toWorld } from '../scene/geometry'
 import { nearestIndex } from './runIndex'
 import { queueCounts, queueTargets } from './queues'
 import type { QueueTarget } from './queues'
+import type { Building } from '../data/types'
 
 const COL = { lo: new THREE.Color('#facc15'), mid: new THREE.Color('#fb923c'), hi: new THREE.Color('#ef4444') }
 
 interface Counts {
   v: Uint16Array
   frame: number
+  /** bumped whenever v is replaced, so the ring matrices are rewritten */
+  rev: number
 }
 
-function Ring({ target, i, counts }: { target: QueueTarget; i: number; counts: Counts }) {
-  const building = useApp((s) => s.building)!
-  const explode = useApp((s) => s.explode)
-  const visible = useApp((s) => s.visibleFloors)
-  const mesh = useRef<THREE.Mesh>(null)
-  const label = useRef<HTMLDivElement>(null)
-  const shown = useRef(-1)
-  const geo = useMemo(() => new THREE.RingGeometry(0.9, 1, 40), [])
-  const mat = useMemo(
-    () => new THREE.MeshBasicMaterial({ color: COL.lo, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+const LABELS = 20
+const COUNT_EVERY_MS = 100
+const ringGeo = new THREE.RingGeometry(0.9, 1, 40)
+const ringMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
+
+/** One InstancedMesh for every ring, plus a fixed pool of imperatively moved count labels. */
+function Rings({ targets, counts, building }: { targets: QueueTarget[]; counts: Counts; building: Building }) {
+  const mesh = useRef<THREE.InstancedMesh>(null)
+  const groups = useRef<(THREE.Group | null)[]>([])
+  const divs = useRef<(HTMLDivElement | null)[]>([])
+  const last = useRef({ rev: -1, explode: NaN, visible: undefined as string[] | null | undefined })
+  const tmp = useMemo(
+    () => ({ m: new THREE.Matrix4(), q: new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)), p: new THREE.Vector3(), s: new THREE.Vector3(), c: new THREE.Color() }),
     [],
   )
-  useEffect(() => () => {
-    geo.dispose()
-    mat.dispose()
-  }, [geo, mat])
-  const floor = building.floors.find((f) => f.id === target.floorId)
+  const floorOf = useMemo(() => {
+    const m = new Map<string, Building['floors'][number]>()
+    for (const f of building.floors) m.set(f.id, f)
+    return m
+  }, [building])
 
   useFrame(() => {
     const m = mesh.current
     if (!m) return
-    const n = counts.v[i] ?? 0
-    if (n === shown.current) return
-    shown.current = n
-    m.visible = n >= 2
-    const r = Math.min(3, 0.5 + 0.12 * n)
-    m.scale.set(r, r, 1)
-    mat.color.copy(n >= 15 ? COL.hi : n >= 5 ? COL.mid : COL.lo)
-    if (label.current) label.current.textContent = String(n)
+    const { explode, visibleFloors } = useApp.getState()
+    const l = last.current
+    if (l.rev === counts.rev && l.explode === explode && l.visible === visibleFloors) return
+    l.rev = counts.rev
+    l.explode = explode
+    l.visible = visibleFloors
+    const { m: mat, q, p, s, c } = tmp
+    const big: { i: number; n: number }[] = []
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i]
+      const f = floorOf.get(t.floorId)
+      const n = counts.v[i] ?? 0
+      if (!f || (visibleFloors && !visibleFloors.includes(f.id)) || n < 2) {
+        p.set(0, 0, 0)
+        s.set(0, 0, 0)
+      } else {
+        const w = toWorld(t.cx, t.cy, floorY(f, explode) + 0.1)
+        p.set(w[0], w[1], w[2])
+        const r = Math.min(3, 0.5 + 0.12 * n)
+        s.set(r, r, 1)
+        c.copy(n >= 15 ? COL.hi : n >= 5 ? COL.mid : COL.lo)
+        m.setColorAt(i, c)
+        big.push({ i, n })
+      }
+      mat.compose(p, q, s)
+      m.setMatrixAt(i, mat)
+    }
+    m.instanceMatrix.needsUpdate = true
+    if (m.instanceColor) m.instanceColor.needsUpdate = true
+    big.sort((a, b) => b.n - a.n)
+    for (let j = 0; j < LABELS; j++) {
+      const g = groups.current[j]
+      const d = divs.current[j]
+      if (!g || !d) continue
+      const b = big[j]
+      if (!b) {
+        d.style.display = 'none'
+        g.visible = false
+        continue
+      }
+      const t = targets[b.i]
+      const f = floorOf.get(t.floorId)!
+      const w = toWorld(t.cx, t.cy, floorY(f, explode) + 0.1)
+      g.position.set(w[0], w[1], w[2])
+      g.visible = true
+      d.style.display = ''
+      d.textContent = String(b.n)
+    }
   })
 
-  if (!floor || (visible && !visible.includes(floor.id))) return null
   return (
-    <mesh
-      ref={mesh}
-      visible={false}
-      geometry={geo}
-      material={mat}
-      position={toWorld(target.cx, target.cy, floorY(floor, explode) + 0.1)}
-      rotation={[-Math.PI / 2, 0, 0]}
-    >
-      <Html center style={{ pointerEvents: 'none' }}>
-        <div ref={label} style={{ color: '#fff', fontSize: 11, textShadow: '0 0 3px #000' }} />
-      </Html>
-    </mesh>
+    <>
+      <instancedMesh ref={mesh} args={[ringGeo, ringMat, targets.length]} frustumCulled={false} />
+      {Array.from({ length: LABELS }, (_, j) => (
+        <group key={j} ref={(g) => { groups.current[j] = g }} visible={false}>
+          <Html center style={{ pointerEvents: 'none' }}>
+            <div ref={(d) => { divs.current[j] = d }} style={{ display: 'none', color: '#fff', fontSize: 11, textShadow: '0 0 3px #000' }} />
+          </Html>
+        </group>
+      ))}
+    </>
   )
 }
 
@@ -71,14 +114,19 @@ export default function QueueRings({ runKey }: { runKey?: string }) {
   const key = runKey ?? activeKey
   const lr = useApp((s) => (key ? s.runs[key] : undefined))
   const targets = useMemo(() => (building ? queueTargets(building) : []), [building])
-  const counts = useMemo<Counts>(() => ({ v: new Uint16Array(targets.length), frame: -2 }), [targets, key])
+  const counts = useMemo<Counts>(() => ({ v: new Uint16Array(targets.length), frame: -2, rev: 0 }), [targets, key])
 
+  const lastMs = useRef(0)
   useFrame(() => {
-    if (!lr || !building) return
+    if (!lr || !building || !on) return
     const f = nearestIndex(lr.index.times, useClock.getState().t)
     if (f === counts.frame) return
+    const now = performance.now()
+    if (counts.frame !== -2 && now - lastMs.current < COUNT_EVERY_MS) return
+    lastMs.current = now
     counts.frame = f
     counts.v = queueCounts(lr.index, building, lr.run.floors, f, targets)
+    counts.rev++
   })
 
   // Dev check: client-side peak vs metrics.doors[].peakQueue.
@@ -98,11 +146,5 @@ export default function QueueRings({ runKey }: { runKey?: string }) {
   }, [lr, building, targets])
 
   if (!on || !lr || !building) return null
-  return (
-    <>
-      {targets.map((t, i) => (
-        <Ring key={key + t.kind + t.id} target={t} i={i} counts={counts} />
-      ))}
-    </>
-  )
+  return <Rings key={key} targets={targets} counts={counts} building={building} />
 }

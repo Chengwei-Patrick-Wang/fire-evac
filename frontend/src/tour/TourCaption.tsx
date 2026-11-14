@@ -8,11 +8,12 @@ export default function TourCaption() {
   useApp((s) => s.runs)
   useApp((s) => s.compareKeys)
   useApp((s) => s.batch)
+  useApp((s) => s.headlines)
   useApp((s) => s.building)
   if (scene === null) return null
   const sc = TOUR[scene]
   return (
-    <div className="tourcap">
+    <div className="tourcap" role="status" aria-live="polite">
       <div className="tourhead">
         <button aria-label="Previous scene" disabled={scene === 0} onClick={() => go(scene - 1, auto)}>‹</button>
         <b>{scene + 1}/{TOUR.length} · {sc.title}</b>

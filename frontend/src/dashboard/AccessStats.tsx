@@ -22,12 +22,12 @@ export default function AccessStats() {
         <table className="stats access">
           <thead>
             <tr className="dim">
-              <td></td>
-              <td>profile</td>
-              <td>people</td>
-              <td>out</td>
-              <td>90 % out</td>
-              <td>trapped</td>
+              <th scope="col"><span className="sr-only">color</span></th>
+              <th scope="col">profile</th>
+              <th scope="col">people</th>
+              <th scope="col">out</th>
+              <th scope="col">90 % out</th>
+              <th scope="col">trapped</th>
             </tr>
           </thead>
           <tbody>

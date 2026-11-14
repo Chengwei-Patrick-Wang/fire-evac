@@ -7,6 +7,7 @@
 import { floorScale, planToPx, pointInPolygon, polygonArea, pxToPlan, scaleFromClicks, snap, snapPoint } from "./geometry";
 import type { Pt } from "./geometry";
 import { exportPlan, validatePlan, validateTrace } from "./plan";
+import { aiRooms, sentToPx } from "./edit";
 import type { DoorState, PlanDoor, PlanV0, RoomType, TraceDoor, TraceFloor, TraceRoom, TraceState } from "./plan";
 
 function ok(cond: unknown, msg: string): asserts cond {
@@ -332,6 +333,42 @@ ok(validateTrace(unscaled).some((l) => l.startsWith("error:") && l.includes("no 
 const noRef = clone(state);
 must(noRef.floors[0], "floor 0").ref = null;
 ok(validateTrace(noRef).some((l) => l.startsWith("warning:") && l.includes("reference point")), `a missing reference point must warn, got ${show(validateTrace(noRef))}`);
+
+// ---------------------------------------------------------------- the AI first pass
+// POST /api/trace/propose answers in meters from the sent image's bottom-left corner, y up. Here
+// the sent image is the 800 x 600 px floor image halved (400 x 300 px at 0.1 m per pixel), so a
+// point (x, y) m comes back at floor pixels (x / 0.05, 600 - y / 0.05).
+const aiFloor = blankFloor({ imageW: 800, imageH: 600, scale: { p1: [0, 0], p2: [100, 0], meters: 5 } });
+const sent = { w: 400, h: 300, metersPerPixel: 0.1 };
+ok(nearPt(sentToPx([0, 0], aiFloor, sent), [0, 600]), "the AI's origin is the floor image's bottom-left corner");
+ok(nearPt(sentToPx([40, 30], aiFloor, sent), [800, 0]), `the AI's far corner is the top-right pixel, got ${show(sentToPx([40, 30], aiFloor, sent))}`);
+const proposed = [
+  { id: "AI1", name: "Office", type: "office", polygon: [[2, 1], [10, 1], [10, 6], [2, 6]] },
+  { id: "AI2", name: "Odd", type: "kitchenette", polygon: [[12, 1], [20, 1], [20, 6], [12, 6], [12, 1]] },
+  { id: "AI3", name: "Speck", type: "storage", polygon: [[30, 1], [30.5, 1], [30.5, 1.5]] },
+  { id: "AI4", name: "Line", type: "office", polygon: [[1, 1], [2, 2]] },
+  "junk",
+];
+const imported = aiRooms(aiFloor, proposed, sent);
+ok(imported.rooms.length === 2 && imported.unusable === 3 && imported.overlapping === 0, `2 rooms in, 3 unusable, got ${show(imported)}`);
+const [aiOffice, aiOdd] = [must(imported.rooms[0], "the AI office"), must(imported.rooms[1], "the AI room of an unknown type")];
+ok(show(aiOffice.polygon) === show([[40, 580], [200, 580], [200, 480], [40, 480]]), `AI room in floor pixels, got ${show(aiOffice.polygon)}`);
+ok(aiOffice.ai === true && aiOffice.name === "Office" && aiOffice.type === "office", `AI rooms are marked ai, got ${show(aiOffice)}`);
+ok(aiOdd.type === "other" && aiOdd.polygon.length === 4, `an unknown type becomes other, one point per corner, got ${show(aiOdd)}`);
+// a floor whose reference point is off the image's grid: AI vertices land on the floor's own grid
+const aiRefFloor = { ...aiFloor, ref: [13, 597] as Pt };
+for (const r of aiRooms(aiRefFloor, proposed, sent).rooms) {
+  for (const v of r.polygon) {
+    const [x, y] = pxToPlan(v, aiRefFloor);
+    ok(near(x / 0.25, Math.round(x / 0.25)) && near(y / 0.25, Math.round(y / 0.25)), `AI vertex ${show(v)} is off the floor's 0.25 m grid`);
+  }
+}
+// a room already traced by hand keeps its place; the floor's earlier AI draft does not count
+const traced: TraceRoom = { id: "h1", name: "Hand", type: "office", polygon: [[40, 580], [200, 580], [200, 480], [40, 480]] };
+const oldDraft: TraceRoom = { ...aiOdd, id: "old" };
+const again = aiRooms({ ...aiFloor, rooms: [traced, oldDraft] }, proposed, sent);
+ok(again.rooms.length === 1 && again.overlapping === 1 && again.rooms[0]?.name === "Odd", `skip only rooms traced by hand, got ${show(again)}`);
+ok(aiRooms(blankFloor(), proposed, sent).rooms.length === 0, "no scale, no AI rooms");
 
 // ---------------------------------------------------------------- report
 

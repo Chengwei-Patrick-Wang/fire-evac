@@ -6,6 +6,7 @@ import { floorY, toWorld } from './geometry'
 import { centroidOf, rampColor, riskRange, roomRiskColor, stairScore } from '../model/spots'
 import Heatmap from '../replay/Heatmap'
 import type { BuildingFloor, Vec2 } from '../data/types'
+import { readStability, roomRange, span } from '../model/ranges'
 
 function RoomFill({ poly, color, onClick }: { poly: Vec2[]; color: string; onClick: () => void }) {
   const geo = useMemo(() => {
@@ -97,6 +98,9 @@ export default function RiskOverlay() {
   const sel = selected ? batch.rooms.find((r) => r.id === selected) : null
   const selFloor = sel ? building.floors.find((f) => f.id === sel.floor) : null
   const selRoom = selFloor?.rooms.find((r) => r.id === selected)
+  const t90r = sel ? roomRange(batch, sel.id) : null
+  const trr = sel ? roomRange(batch, sel.id, 'riskTrappedRange') : null
+  const stab = readStability(batch)
   return (
     <>
       {on &&
@@ -110,8 +114,10 @@ export default function RiskOverlay() {
             <b>{sel.id}</b> {selRoom.name}
             <br />
             riskT90: {sel.riskT90 === null ? 'not reached' : `${sel.riskT90.toFixed(0)} s`}
+            {t90r ? ` (${span(t90r)}${stab ? ` over ${stab.n} seeds` : ''})` : ''}
             <br />
             riskTrapped: {sel.riskTrapped === null ? 'n/a' : sel.riskTrapped}
+            {trr ? ` (${span(trr, '', 1)})` : ''}
             <br />
             fires started here: {sel.n}
             {metric === 'riskT90' ? '' : ''}

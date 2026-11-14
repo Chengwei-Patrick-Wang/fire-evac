@@ -1,20 +1,123 @@
 {
   "version": "demo-index/v0",
+  "generated": "2026-11-14T16:54:37Z",
   "buildings": [
     {
       "id": "example-office",
       "name": "Example office (synthetic, 2 floors)",
       "file": "building.example.json",
-      "credits": "Synthetic example building made by the team; free to use."
+      "credits": "Synthetic example building made by the team; license: free to use, no attribution needed."
     },
     {
       "id": "office",
       "name": "NIBS Office",
       "file": "building-office.json",
       "credits": "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"
+    },
+    {
+      "id": "clinic",
+      "name": "NIBS Medical-Dental Clinic",
+      "file": "building-clinic.json",
+      "credits": "NIBS Common BIM Files (ERDC-CERL): Medical-Dental Clinic, via BSI (2020) Medical-Dental Test Files, buildingSMART International, https://github.com/buildingsmart-community/Community-Sample-Test-Files; license: CC BY 4.0; changes: converted to 2D plans; roof, void, elevator and outside-access service rooms removed"
     }
   ],
   "runs": [
+    {
+      "id": "example-office-R101-base",
+      "buildingId": "example-office",
+      "label": "Kitchen, baseline",
+      "file": "run-example-office-R101-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R101",
+        "x": 8,
+        "y": 3,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "closed"
+      },
+      "metrics": {
+        "t50": 95.29,
+        "t90": 120.73,
+        "t100": 199.79,
+        "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "example-office-R101-propped",
+      "buildingId": "example-office",
+      "label": "Kitchen, DSA1 propped",
+      "file": "run-example-office-R101-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R101",
+        "x": 8,
+        "y": 3,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "propped"
+      },
+      "metrics": {
+        "t50": 95.29,
+        "t90": 120.73,
+        "t100": 171.13,
+        "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "example-office-L1-base",
+      "buildingId": "example-office",
+      "label": "Lobby, baseline",
+      "file": "run-example-office-L1-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "L1",
+        "x": 23,
+        "y": 3.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "closed"
+      },
+      "metrics": {
+        "t50": 103.55,
+        "t90": 221.77,
+        "t100": null,
+        "evacuated": 144,
+        "trapped": 16
+      }
+    },
+    {
+      "id": "example-office-L1-propped",
+      "buildingId": "example-office",
+      "label": "Lobby, DSA1 propped",
+      "file": "run-example-office-L1-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "L1",
+        "x": 23,
+        "y": 3.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "propped"
+      },
+      "metrics": {
+        "t50": 103.55,
+        "t90": 223.23,
+        "t100": null,
+        "evacuated": 144,
+        "trapped": 16
+      }
+    },
     {
       "id": "example-kitchen-fire-s1",
       "buildingId": "example-office",
@@ -30,19 +133,227 @@
       },
       "doors": {},
       "metrics": {
-        "t50": 94.34,
-        "t90": 123.03,
-        "t100": 199.68,
+        "t50": 95.29,
+        "t90": 120.73,
+        "t100": 199.79,
         "evacuated": 160,
         "trapped": 0
+      }
+    },
+    {
+      "id": "clinic-R1AC1-base",
+      "buildingId": "clinic",
+      "label": "CENTRAL WAITING, baseline",
+      "file": "run-clinic-R1AC1-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R1AC1",
+        "x": 42.12,
+        "y": 41.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DqxQ3VC": "closed"
+      },
+      "metrics": {
+        "t50": 95.03,
+        "t90": 138.47,
+        "t100": 175.31,
+        "evacuated": 280,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "clinic-R1AC1-propped",
+      "buildingId": "clinic",
+      "label": "CENTRAL WAITING, DqxQ3VC propped",
+      "file": "run-clinic-R1AC1-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R1AC1",
+        "x": 42.12,
+        "y": 41.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DqxQ3VC": "propped"
+      },
+      "metrics": {
+        "t50": 95.03,
+        "t90": 138.47,
+        "t100": 175.31,
+        "evacuated": 280,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "office-R143-base",
+      "buildingId": "office",
+      "label": "SCIF OPEN OFFICE, baseline",
+      "file": "run-office-R143-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R143",
+        "x": 9.54,
+        "y": 31.26,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 97.17,
+        "t90": 134.3,
+        "t100": 183.68,
+        "evacuated": 250,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "office-R143-propped",
+      "buildingId": "office",
+      "label": "SCIF OPEN OFFICE, D$77xsW propped",
+      "file": "run-office-R143-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R143",
+        "x": 9.54,
+        "y": 31.26,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "propped"
+      },
+      "metrics": {
+        "t50": 96.94,
+        "t90": 133.67,
+        "t100": 183.68,
+        "evacuated": 250,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "office-R203c-base",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R203c), baseline",
+      "file": "run-office-R203c-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F2",
+        "room": "R203c",
+        "x": 41.35,
+        "y": 22.74,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 98.44,
+        "t90": null,
+        "t100": null,
+        "evacuated": 219,
+        "trapped": 31
+      }
+    },
+    {
+      "id": "office-R203c-propped",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R203c), D$77xsW propped",
+      "file": "run-office-R203c-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F2",
+        "room": "R203c",
+        "x": 41.35,
+        "y": 22.74,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "propped"
+      },
+      "metrics": {
+        "t50": 98.44,
+        "t90": null,
+        "t100": null,
+        "evacuated": 219,
+        "trapped": 31
+      }
+    },
+    {
+      "id": "office-R237b-base",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R237b), baseline",
+      "file": "run-office-R237b-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F2",
+        "room": "R237b",
+        "x": 6.52,
+        "y": 12.15,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 96.15,
+        "t90": 139.19,
+        "t100": null,
+        "evacuated": 238,
+        "trapped": 12
+      }
+    },
+    {
+      "id": "office-R237b-propped",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R237b), D$77xsW propped",
+      "file": "run-office-R237b-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F2",
+        "room": "R237b",
+        "x": 6.52,
+        "y": 12.15,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "propped"
+      },
+      "metrics": {
+        "t50": 96.15,
+        "t90": 139.19,
+        "t100": null,
+        "evacuated": 238,
+        "trapped": 12
       }
     }
   ],
   "batches": [
     {
-      "id": "example-kitchen-fire-batch",
+      "id": "example-office-batch",
       "buildingId": "example-office",
-      "file": "batch.example.json"
+      "file": "batch-example-office.json",
+      "report": "report-example-office.md",
+      "headlines": "headlines-example-office.json"
+    },
+    {
+      "id": "clinic-batch",
+      "buildingId": "clinic",
+      "file": "batch-clinic.json",
+      "report": "report-clinic.md",
+      "headlines": "headlines-clinic.json"
+    },
+    {
+      "id": "office-batch",
+      "buildingId": "office",
+      "file": "batch-office.json",
+      "report": "report-office.md",
+      "headlines": "headlines-office.json"
     }
   ]
 }

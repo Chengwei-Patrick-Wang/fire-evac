@@ -16,9 +16,12 @@ Behavior:
   cue delay; the first cue wins and the alarm can still start people sooner.
   scenario.premovement overrides profile delay ranges by room type.
 - People keep 2.5 m from the burning item where room geometry permits;
-  smaller keep-out areas preserve connected escape routes.
+  smaller discs or sealed empty rooms preserve connected escape routes. Fallback
+  discs may be smaller than the flame footprint; nearby people remain subject
+  to untenable trapping.
 - A burning stairwell is not an escape route; its doors close to route choice.
-- Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
+- Every 1 s: fire.step(t), smoke slows agents; traps record "untenable"
+  or "no route" when every escape option has closed.
 - Mid-run blocked interior doors act only through slowdown and trapping.
   Agents in a stairwell (status 2 or 3) are not exposed to fire.
 """
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 from collections import Counter
 from heapq import heappush, heappop
+import base64
 import argparse
 import json
 import math
@@ -39,7 +43,7 @@ import shapely
 from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
-from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
+from sim.brain import SMOKE_BETA, UNFAMILIAR_GAMMA, main_entrance, visible_smoke, route_points, RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
 from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
@@ -49,12 +53,14 @@ FIRE_EVERY = 100     # steps (1 s)
 SMOKE_EVERY = 200    # steps (2 s)
 FRAME_INTERVAL = 0.5
 SMOKE_INTERVAL = 2
+BATCH_RECORDING = {"frameInterval": 1.0, "smokeInterval": 4}
 NO_OCCUPANTS = {"corridor", "stair", "restroom", "storage"}
 WALL_CLEARANCE = 0.3   # spawn inside (room ∩ walkable).buffer(-0.3)
 MIN_SPACING = 0.5      # spawn points at least this far apart
 STOPPED = 0.0          # desired_speed before the start delay is over (1.4.2 accepts 0)
 MIN_SMOKE_SPEED = 0.2
 FIRE_KEEPOUT_M = 2.5
+KEEPOUT_SMALL_M = (0.75, 0.5)
 
 
 def _warn(msg: str) -> None:
@@ -99,8 +105,13 @@ def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
     return keepout_cut(walk, floor, room, x, y, radius)[0]
 
 
-def keepout_cut(walk, floor, room, x, y, radius):
-    """Cut a room-clipped fire disc, retaining connected exits and stair zones."""
+def keepout_cut(walk, floor, room, x, y, radius, small=KEEPOUT_SMALL_M, seal=True):
+    """Preserve existing cuts, then try small discs or seal an empty room.
+
+    Retain connected exits, stairs and body-width routes. Return infinity for
+    sealing, zero with a reasoned warning if no safe cut exists. Small discs
+    can undercut the flame footprint; fire.untenable still traps nearby people.
+    """
     if not math.isfinite(radius) or radius < 0:
         raise ValueError("fireKeepout must be finite and nonnegative")
     if radius == 0:
@@ -114,24 +125,49 @@ def keepout_cut(walk, floor, room, x, y, radius):
     room_area = walk.intersection(room_poly).area
     zones = [Polygon(z["polygon"]) for z in floor["exits"] + floor["stairs"]]
     attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
-    # Never enlarge an explicitly smaller user-supplied distance on fallback.
-    radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
-    for candidate in radii:
-        cut = walk.difference(point.buffer(candidate).intersection(room_poly))
+    def connected_cut(removed):
+        cut = walk.difference(removed)
         pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
         pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
                         key=lambda p: p.area, reverse=True)
         if not pieces or any(p.area > 0.5 for p in pieces[1:]):
-            continue
+            return None, "sealing splits the walkable area"
         retained = pieces[0]
-        if retained.intersection(room_poly).area < room_area / 4:
-            continue
         if any(z.distance(retained) > 0.1 for z in attached):
-            continue
+            return None, "sealing detaches an exit or stair"
         if body_pieces(retained) > original_pieces:
-            continue
-        return retained, candidate
-    _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
+            return None, "sealing leaves a piece narrower than a body"
+        return retained, None
+
+    # Finish the original radii, including their slot fallback, before trying
+    # smaller discs. Never enlarge an explicitly smaller user-supplied radius.
+    radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
+    for candidates in (radii, [r for r in small if 0.5 <= r < radius]):
+        fallback = None
+        for candidate in candidates:
+            removed = point.buffer(candidate).intersection(room_poly).intersection(walk)
+            retained, _ = connected_cut(removed)
+            if retained is None or retained.intersection(room_poly).area < room_area / 4:
+                continue
+            if fallback is None:
+                fallback = (retained, candidate)
+            # JuPedSim can route into a positive gap narrower than a body.
+            gap = removed.distance(walk.boundary)
+            if 0.01 < gap < 0.3:
+                continue
+            return retained, candidate
+        if fallback is not None:
+            return fallback
+    if not seal:
+        reason = "the scenario places people there"
+    elif origin.get("type") not in NO_OCCUPANTS:
+        reason = "occupied room"
+    else:
+        retained, reason = connected_cut(room_poly.intersection(walk))
+        if retained is not None:
+            return retained, math.inf
+    _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out disc and the room "
+          f"cannot be sealed ({reason}); keeping walkable area")
     return walk, 0.0
 
 
@@ -246,6 +282,11 @@ class _FloorSim:
         self.id = floor["id"]
         self.index = index
         self.walk = walk
+        self.room_ids = [r["id"] for r in floor["rooms"]]
+        self.room_tree = shapely.STRtree([Polygon(r["polygon"]) for r in floor["rooms"]])
+        self.doors = floor["doors"]
+        self.stair_rooms = {s["id"]: s["room"] for s in floor["stairs"]}
+        self.room_routes = {}
         self.sim = jps.Simulation(model=jps.CollisionFreeSpeedModel(), geometry=self.walk, dt=DT)
         self.stages: list[dict] = []
         self.jid2idx: dict[int, int] = {}
@@ -262,6 +303,15 @@ class _FloorSim:
         for zone in zones:
             if not reachable_zone(zone["poly"], self.walk, f"{self.id} {zone['kind']} {zone['id']}"):
                 continue
+            # JuPedSim targets a stage's centroid. A keep-out can leave the
+            # zone attached while removing that target (especially stair rooms).
+            if not self.walk.contains(zone["poly"].centroid):
+                from shapely.ops import triangulate
+                usable = zone["poly"].intersection(self.walk)
+                triangles = [p for p in triangulate(usable) if usable.covers(p)]
+                if not triangles:
+                    continue
+                zone["poly"] = max(triangles, key=lambda p: p.area)
             stage = self.sim.add_exit_stage(zone["poly"])
             journey = self.sim.add_journey(jps.JourneyDescription([stage]))
             self.stages.append(dict(zone, stage=stage, journey=journey,
@@ -319,7 +369,7 @@ def _frame(sims: list[_FloorSim], trapped: set, status: list[int], transit: dict
         waiting = status[i] == 2
         x, y = entry["wait_pos"] if waiting else entry["pos"]
         floor = entry["floor"] if waiting else entry["to"]
-        rows.append([i, round(x, 2), round(y, 2), indices[floor], 2 if waiting else 3])
+        rows.append([i, round(x, 2) + 0.0, round(y, 2) + 0.0, indices[floor], 2 if waiting else 3])
     rows.sort(key=lambda r: r[0])
     return rows
 
@@ -384,8 +434,26 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     smoke_every = _interval_steps(scenario, "smokeInterval", SMOKE_INTERVAL)
     frame_interval, smoke_interval = frame_every * DT, smoke_every * DT
     watch = StuckWatch()
-    brain = RuleBrain(seed)
-    distances = {}
+    weights = scenario.get("exitChoice", {})
+    beta = float(weights.get("smoke", SMOKE_BETA))
+    gamma = float(weights.get("unfamiliar", UNFAMILIAR_GAMMA))
+    if not all(math.isfinite(v) and v >= 0 for v in (beta, gamma)):
+        raise ValueError("exitChoice weights must be finite and nonnegative")
+    entrance = main_entrance(building, scenario)
+    brain = RuleBrain(seed, beta, gamma)
+    distances, routes = {}, {}
+    smoke_grids, route_smoke, previous_smoke = {}, {}, {}
+
+    def grid_visibility(fid, xs, ys):
+        grid = smoke_grids.get(fid)
+        out = np.full(np.shape(xs), 30.0)
+        if grid is not None:
+            snap, visibility = grid
+            col = np.floor((xs - snap["origin"][0]) / snap["cell"]).astype(int)
+            row = np.floor((ys - snap["origin"][1]) / snap["cell"]).astype(int)
+            valid = (col >= 0) & (row >= 0) & (col < snap["cols"]) & (row < snap["rows"])
+            out[valid] = visibility[row[valid], col[valid]]
+        return out
     print(f"routing: {ROUTING_MODE}")
     blocked = {key for key, state in scenario.get("doors", {}).items() if state == "blocked"}
     walkable = {f["id"]: floor_walkable(f, blocked) for f in building["floors"]}
@@ -396,16 +464,24 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     if radius and ignition and fire.hrr(float(scenario.get("maxTime", 600))) > 0:
         for floor in building["floors"]:
             if floor["id"] == ignition.get("floor"):
-                walkable[floor["id"]] = fire_keepout(
+                origin = fire_room(floor, ignition.get("room"), ignition["x"], ignition["y"])
+                per_room = scenario.get("occupants", {}).get("perRoom", {})
+                seal = origin is None or per_room.get(origin["id"], 0) <= 0
+                walkable[floor["id"]] = keepout_cut(
                     walkable[floor["id"]], floor, ignition.get("room"),
-                    ignition["x"], ignition["y"], radius)
+                    ignition["x"], ignition["y"], radius, seal=seal)[0]
     burning_doors = set()
+    burning_groups = set()
+    closed_groups = set()
     for floor in building["floors"]:
         if floor["id"] == ignition.get("floor"):
             origin = fire_room(floor, ignition.get("room"), ignition["x"], ignition["y"])
             for stair in floor["stairs"]:
                 if origin and stair["room"] == origin["id"]:
-                    burning_doors.update(stair_doors(floor, stair))
+                    doors = stair_doors(floor, stair)
+                    burning_doors.update(doors)
+                    if not doors:
+                        burning_groups.add(stair["group"])
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
     cue_rng = np.random.default_rng([seed, 3])
@@ -463,6 +539,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     trapped: set[int] = set()
     transit = {}
     arrivals = {}
+    arrival_regions = {}
     assisted = set()
 
     def zone_queues(t):
@@ -483,6 +560,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             return set()
         if st["kind"] == "exit":
             return {st["door"]} & blocked
+        if st["group"] in closed_groups:
+            return {f"stair {st['group']} closed"}
         closed = set()
         for fid in (fs.id, st["to"]):
             floor = floors[by_id[fid].index]
@@ -491,12 +570,53 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 closed.update(stair_doors(floor, stair))
         return closed
 
+    def trap(i, t, fs, pos, reason):
+        nonlocal active
+        if i in trapped:
+            return
+        trapped.add(i)
+        active -= 1
+        if where[i] is not None:
+            floor_sim, jid = where[i]
+            floor_sim.sim.mark_agent_for_removal(jid)
+        where[i] = None
+        events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
+                       "x": round(pos[0], 2), "y": round(pos[1], 2), "reason": reason})
+
+    def room_reachable(fs, st, blocked_doors):
+        key = (st["id"], frozenset(blocked_doors))
+        if key not in fs.room_routes:
+            if st["kind"] == "stair":
+                reached = {fs.stair_rooms[st["id"]]}
+            else:
+                reached = {r for d in fs.doors if d["id"] == st["door"]
+                           for r in d["connects"] if r != "outside"}
+            edges = [d["connects"] for d in fs.doors if d["id"] not in blocked_doors
+                     and "outside" not in d["connects"]]
+            while True:
+                expanded = reached | {r for edge in edges if reached.intersection(edge) for r in edge}
+                if expanded == reached:
+                    break
+                reached = expanded
+            fs.room_routes[key] = reached
+        return fs.room_routes[key]
+
     def choose(i, t, fs, pos, trigger, speed=None):
         current = None if trigger in ("start", "arrive") else (target[i]["id"] if target[i] else None)
         stages = [st for st in fs.stages if not blocking_doors(fs, st)]
+        # Door cuts can leave a hairline geometric connection that a routing
+        # point can cross but a person cannot. Use the building's room graph
+        # to detect routes severed by blocked doors. Do not infer connectivity
+        # for open/doorless spaces that the room graph never represented.
+        if blocked:
+            rooms = {fs.room_ids[int(j)] for j in fs.room_tree.query(Point(pos), predicate="within")}
+            if (any(rooms.intersection(room_reachable(fs, st, set())) for st in stages)
+                    and not any(rooms.intersection(room_reachable(fs, st, blocked)) for st in stages)):
+                stages = []
         profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
         stages = mobility_options(stages, profile["stairs"])
         if not stages:
+            trap(i, t, fs, pos, "no route")
             return None
         if trigger == "stuck":
             stages = [st for st in stages if st["id"] != current] or stages
@@ -505,11 +625,18 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             key = (fs.id, st["id"], round(pos[0] * 2), round(pos[1] * 2))
             if key not in distances:
                 goal = st["poly"].intersection(fs.walk).representative_point()
-                distances[key] = route_length(fs.walk, pos, (goal.x, goal.y))
+                routes[key] = route_points(fs.walk, pos, (goal.x, goal.y))
+                distances[key] = sum(math.dist(a, b) for a, b in zip(routes[key], routes[key][1:]))
+            memory_key = (i, fs.id, st["id"])
+            seen = visible_smoke(routes[key], min(30, fire.visibility(fs.id, *pos)),
+                                 lambda xs, ys: grid_visibility(fs.id, xs, ys)) if fs.id in smoke_grids else 0
+            route_smoke[memory_key] = max(route_smoke.get(memory_key, 0), seen)
             options.append({"id": st["id"], "kind": st["kind"], "name": st["name"],
                             "dist": distances[key], "queue": queues.get((fs.id, st["id"]), 0),
                             "flow": (1.3 if st["kind"] == "exit" else 1.1) * st["width"],
-                            "tail": st["tail"], **({"assist": True} if st.get("assist") else {})})
+                            "tail": st["tail"], "smoke": round(route_smoke[memory_key], 1),
+                            **({"unfamiliar": True} if agents[i]["profile"] == "visitor"
+                               and st["kind"] == "exit" and st["id"] != entrance else {}), **({"assist": True} if st.get("assist") else {})})
         obs = {"idx": i, "t": t, "floor": fs.id, "x": pos[0], "y": pos[1],
                "profile": agents[i]["profile"], "visibility": fire.visibility(fs.id, *pos),
                "speed": agents[i]["v0"] if speed is None else speed,
@@ -544,6 +671,13 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     brain.left[i, fs.id, current] = t
                     brain.switches[i] = brain.switches.get(i, 0) + 1
         else:
+            if trigger == "tick" and i not in flagged:
+                amount = next((o["smoke"] for o in options if o["id"] == current), 0)
+                tick_key = (i, fs.id, current)
+                if beta > 0 and amount - previous_smoke.get(tick_key, 0) >= 1.0:
+                    obs["trigger"] = "smoke"
+                for option in options:
+                    previous_smoke[i, fs.id, option["id"]] = option["smoke"]
             decision = brain.decide(obs)
         return apply_choice(i, t, fs, current, trigger, decision)
 
@@ -554,7 +688,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         if current is not None and st["id"] != current:
             reason = decision["reason"]
             if trigger == "blocked":
-                reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
+                if target[i].get("group") in closed_groups:
+                    reason = f"stair {target[i]['group']} closed"
+                else:
+                    reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
             events.append({"t": t, "type": "reroute", "idx": i, "floor": fs.id,
                            "from": current, "to": st["id"], "reason": reason})
         return st
@@ -597,9 +734,18 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         t = round(k * DT, 2)
         if k % FIRE_EVERY == 0:
             fire.step(t)
+            smoke_grids.clear()
+            for fs in sims:
+                snap = fire.snapshot(fs.id)
+                if snap is not None:
+                    density = np.frombuffer(base64.b64decode(snap["d"]), np.uint8).reshape(snap["rows"], snap["cols"])
+                    visibility = np.full(density.shape, 30.0)
+                    np.divide(100.0, density, out=visibility, where=density > 0)
+                    smoke_grids[fs.id] = (snap, np.minimum(30, visibility))
             fire_blocks = set(fire.blocked_doors())
             if fire.hrr(t) > 0:
                 fire_blocks.update(burning_doors)
+                closed_groups.update(burning_groups)
             new_blocks = fire_blocks - blocked
             for door in sorted(new_blocks):
                 if door in door_floors:
@@ -628,18 +774,25 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     center = entry["arrival"].centroid
                     entry["target"] = choose(i, t, fs, (center.x, center.y), "arrive")
                 st = entry["target"]
+                if i in trapped:
+                    heappop(queue)
+                    del transit[i]
+                    continue
                 if st is None:
                     break
                 if st["kind"] == "stair" and st["group"] == group:
                     heappop(queue)
                     enter_stair(i, t, fs, st)
                     continue
-                arrival = entry["arrival"]
-                if not arrival.within(fs.walk):
-                    arrival = arrival.intersection(fs.walk)
-                region = arrival.buffer(-0.3)
-                if region.is_empty:
-                    region = arrival.buffer(-0.1)
+                # Both the stair edge and the actual floor boundary need body
+                # clearance. fs.walk already excludes blocked doors and fire.
+                # Never relax clearance for a narrow/empty landing: retry FIFO.
+                key = (fid, group, agents[i]["radius"])
+                if key not in arrival_regions:
+                    clearance = agents[i]["radius"] + 0.25
+                    arrival_regions[key] = entry["arrival"].buffer(-clearance).intersection(
+                        fs.walk.buffer(-clearance))
+                region = arrival_regions[key]
                 positions = [ag.position for ag in fs.sim.agents()]
                 gap = max(MIN_SPACING, agents[i]["radius"] +
                           max((agents[fs.jid2idx[ag.id]]["radius"] for ag in fs.sim.agents()
@@ -664,11 +817,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     continue
                 x, y = ag.position
                 if fire.untenable(fs.id, x, y):
-                    fs.sim.mark_agent_for_removal(ag.id)
-                    trapped.add(i)
-                    active -= 1
-                    events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
-                                   "x": round(x, 2), "y": round(y, 2)})
+                    trap(i, t, fs, (x, y), "untenable")
                 elif status[i] == 0:
                     if i not in cues:
                         if (fire.hrr(t) > 0 and fs.id == ignition.get("floor")
@@ -690,6 +839,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     ag.model.desired_speed = smoke_speed(v0, vis)
                     trigger = "blocked" if blocking_doors(fs, target[i]) else ("stuck" if stuck else "tick")
                     st = choose(i, t, fs, (x, y), trigger, ag.model.desired_speed)
+                    if i in trapped:
+                        continue
                     if st is None:
                         fs.sim.switch_agent_journey(ag.id, fs.park_journey, fs.park_stage)
                         ag.target = (x, y)
@@ -792,6 +943,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
 
     metrics["profiles"], metrics["assist"] = profile_metrics(agents, events)
 
+    # Round only the exported events, after all dynamics and metrics used the
+    # original times (especially the stair FIFO and assistance deadlines).
     fire_cfg = scenario.get("fire") or {}
     return {
         "version": "run/v0",
@@ -806,7 +959,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "frames": frames,
         "smoke": list(smoke.values()),
         "fire": {"floor": fire_cfg.get("floor"), "x": fire_cfg.get("x"), "y": fire_cfg.get("y"), "hrr": hrr},
-        "events": events,
+        "events": [{key: round(value, 2) + 0.0 if key in {"t", "enter", "arrive", "until", "x", "y"}
+                    else value for key, value in event.items()} for event in events],
         "metrics": metrics,
     }
 
@@ -817,16 +971,35 @@ def main(argv: list[str]) -> int:
     parser.add_argument("scenario")
     parser.add_argument("out")
     parser.add_argument("--agents", type=int)
+    parser.add_argument("--seeds", type=int, help="run N seeds with rule-based agents")
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args(argv)
     if args.agents is not None and args.agents < 0:
         parser.error("--agents must be nonnegative")
+    if args.seeds is not None and args.seeds < 1:
+        parser.error("--seeds must be positive")
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     building = json.loads(Path(args.building).read_text(encoding="utf-8"))
     scenario = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
     if args.agents is not None:
         scenario.setdefault("occupants", {}).pop("perRoom", None)
         scenario["occupants"]["total"] = args.agents
     t0 = time.perf_counter()
+    if args.seeds is not None:
+        scenario["brain"] = "rules"
     result = run(building, scenario)
+    if args.seeds is not None:
+        from sim.seeds import seed_range
+        result["metrics"]["seedRange"] = seed_range(
+            building, scenario, args.seeds, args.workers, base=result)
+        summary = result["metrics"]["seedRange"]["t90"]
+        current = result["metrics"]["t90"]
+        current_text = f"{current:.1f} s" if current is not None else "not reached"
+        range_text = (f"{summary['min']:.1f}–{summary['max']:.1f} s, median {summary['median']:.1f}"
+                      if summary["min"] is not None else "not reached in any seed")
+        print(f"t90 {current_text} (seed {result['seed']}); {args.seeds} seeds: {range_text}"
+              + (f" ({summary['missing']} missing)" if summary["missing"] else ""))
     elapsed = time.perf_counter() - t0
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

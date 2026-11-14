@@ -1,6 +1,264 @@
 # Overnight status
 
+## Sat 15:20: D22 merged; C23 to C26 queued
+
+- **Merged:** ws-d **D22**. A measured fix that costs something now reads as a trade-off and names the fires behind the cost. For example: "Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner…, but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)." Five demo fixes become trade-offs; they show on the site after the precompute rerun.
+- **Running on the lead's machine:** D23 (readable interior door names), E34 (trade-off badges, readable labels in lists) and **C23**, a fire in every room of the office and the clinic after C21 (hard stop 19:30).
+- **Queued for C:** C24 (narrow doors: 0.86 m doors wedge when 200 people push at once, though the real layouts evacuate fully), C25 (faster runs with identical results), C26 (determinism guard).
+- **Next for A:** rerun the demo precompute once the fixes that change numbers have landed.
+
+## Sat 14:55: the demo is live at https://fire-evac-sim.netlify.app
+
+- **Static site:** https://fire-evac-sim.netlify.app is public. Netlify builds it from `main` on every push, so each merge redeploys within a couple of minutes. All three buildings load. The About overlay's QR code points at this URL. Publishing gets locked at feature freeze so nothing changes during judging.
+- **Merged:**
+  - E32: what-if notes pass axe contrast.
+  - E33: in static mode the Sprinklers box is disabled and quotes the measured sprinkler what-if instead (example: "Sprinklers on: 90% out 10 s sooner…").
+- **Running (lead's machine):** D22 (trade-off wording) and E34 (trade-off badges, readable labels in the fix list and door dropdown). The C23+ writer is still working.
+- **Devpost:** use the site URL as the demo link. The repo is still private, so make it public, or add judges, before submitting the code link.
+
+## Sat 14:30: the lead's machine takes over every remaining task
+
+The team is moving to other work, so **you can stop your runners**. The lead's machine claimed every open task on its branch ("BLOCKED: taken over by the lead's machine"), and it runs them one workstream at a time:
+
+- **D:** D22 (running now), then D23, D24, D20, D21 and D17.
+- **E:** E32 (running now), then E33 and E34. It works in a new worktree, `../HackUMass-ws-e-lead`.
+- **C:** C23 and later are being written now: a post-C21 robustness sweep, live-run speed without changing results, narrow doors, and a determinism guard. The lead runs them when they're ready.
+- **A:** after D22 and D23, the demo precompute reruns, so the static demo picks up the new wording, labels and keep-outs.
+
+Merges keep landing on `main` every 30 minutes, as before.
+
+## Sat 14:25: C22 merged; the credibility chart now holds up
+
+- **C (Althan):** **C22** is merged. The corridor speed chart now measures steady walking, and the sim tracks the references:
+
+  | Density | Sim | References |
+  | --- | --- | --- |
+  | lowest bin | 1.19 m/s | 1.34 and 1.20 |
+  | middle bin | 0.86 m/s | 1.01 and 0.99 |
+  | highest bin | 0.39 m/s | 0.58 and 0.62 |
+
+  Speed now falls as density rises. The demo copy (`frontend/public/demo/calibration.json`) is synced. That clears both new C tasks: thanks!
+- **D, E:** D22, D23 and E32 (P0) haven't started. The lead's machine takes them over at the 14:43 pass if your branch is still quiet.
+
+## Sat 13:55: C21 merged
+
+- **C (Althan):** your runner is back. **C21** is merged: fire keep-outs now fall back to a smaller disc, and seal off rooms where the full disc fails (R227 and similar). Sim, fire and privacy checks pass, and the example outputs are unchanged. C22 is next.
+- **D, E:** your new P0s (D22, D23, E32) are waiting. Restart your runners if you haven't. If a branch is still quiet at about 14:30, the lead's machine takes over its next P0.
+- **A:** the office demo files predate C21's keep-out change. They get refreshed in the precompute rerun after D22 and D23.
+
+## Sat 13:30: demo-review fix tasks added (C, D, E): restart your runners
+
+New tasks are on `main`, under "Added Sat 13:25 (demo review fixes)" in each plan. **P0s first.** Your runner picks them up after `tools/overnight/run.sh <claude|codex> <letter>` (it merges main each round).
+
+- **C (Althan):**
+  - **C21 (P0)** fire keep-out fallback. In R227 the 1.0 m disc cuts off a dead end, but 0.75 m works. The same bug hits 24 office rooms and 102 clinic rooms.
+  - **C22 (P0)** corridor speed against density, measured in steady walking, so the credibility chart compares like with like.
+- **D (Aidan):**
+  - **D22 (P0)** trade-off wording. The "+1.3 trapped" is real model behavior, not an artifact: all 47 extra trapped people are in the three lobby fires, and E1 is the lobby's own exit. A fix that traps more people must say so, and say where.
+  - **D23 (P0)** readable names for unnamed interior doors.
+  - **D24 (P1)** tiny rooms: R203b is 0.21 m wide, so no 0.5 m smoke-grid node lies inside it.
+- **E (Donovan):**
+  - **E32 (P0)** what-if note contrast (axe).
+  - **E33 (P1)** static mode: the Sprinklers box says it needs the backend.
+  - **E34 (P1)** fix lines show trade-offs, and no list or dropdown shows a raw door id.
+- **A (lead):** after D22 and D23 land, rerun the precompute so the demo files pick up the new wording and labels.
+
+## Sat 13:20: report labels and D19 finished
+
+**Merged:**
+- ws-a: report cards show readable labels and no raw IFC ids. For example, "Exit Stair S1 (west)", and "Door between PHYSICAL EXAM (R1C18a) and PROVIDER CUBICLES (R1D16)" for an unnamed interior door. Template and live Gemini cards share the fix (`backend/llm/features.py`).
+- ws-d: **D19 is complete.** The office runs ran clean with C14's terms off. Only 4 of 29 office numbers change with C14 on (see `fire/README.md`), and the headline is +49% with it off, +54% with it on.
+
+**Still shows raw ids** (fix tasks are coming for D and E): weak-spot labels in `headlines-*.json` (from D's `door_label`), and the measured-fixes list in the app (E).
+
+**Netlify:** the dry run passes (`python tools/deploy_demo.py`): the build and privacy scan are clean, and the demo is 13.8 MB, 1.5 MB gzipped. The live deploy waits on the lead.
+
+## Sat 12:45: D19 merged; lunch-hour work
+
+**Merged:** ws-d **D19** (lead takeover): `fire/refresh.py` reruns the same fires with C14's smoke-aware exit choice off and on, then lists which headline numbers changed.
+- Example (168 runs, 0 failed): propped stair doors +25% -> +26% time in smoke. Widening door DL1 flips from not helping to helping.
+- Office: propped stair doors +49% -> +54%. The 3rd weak spot becomes Exit Stair S2 (east), and blocking Stair S1 adds 55% more smoke time (was 60%).
+- D15's and D18's batches already ran with C14 on, so their numbers stand.
+- Still missing: the office's C14-off fixes. They are finishing now with `--resume`.
+
+**Running over lunch on the lead's laptop:**
+- D19's office fixes (until 13:30 at the latest).
+- A: readable labels in report-card headings, with no raw IFC ids like `D$77wwb`.
+- Fix tasks for **C, D and E**, from the demo review: the R227 keep-out; the "+1.3 trapped" fix wording; the R203b sliver; readable interior door labels; the what-if contrast; the Sprinklers checkbox in static mode. The tasks get appended to your plans when they're ready.
+
+**Frame rate:** the office demo runs at about 29 FPS in a small window once no simulations run.
+
+## Sat 12:05: A5 done; all three buildings precomputed
+
+**Merged:** ws-a, **A5 done**. The static demo now covers all three buildings:
+- the example: 2 what-if pairs;
+- the office: 98 rooms x 3 seeds, what-ifs and fixes on the 8 worst rooms, 3 pairs;
+- the clinic: 25 rooms x 3 seeds, 1 pair.
+
+Each building has a report card (template text for now) and a D18 headline pack. `frontend/public/demo` is 13.8 MB (1.5 MB gzipped). The Netlify config and `tools/deploy_demo.py` are ready, but nothing is deployed: that waits on the lead.
+
+**Needs to know:**
+- **E (Donovan):**
+  - `npm run qa` shows 2 axe color-contrast problems from the `.whatif-headline .dim` opacity. They appear now because the demo has real what-ifs.
+  - Static mode ignores the Sprinklers checkbox.
+- **D (Aidan):** office room R203b, a 1.16 m2 sliver, fails every seed in the smoke grid.
+- **Lead:** the Netlify site and deploy, a curl and phone check, the freeze reruns, and live Gemini report cards.
+
+## Sat 11:50: B15 merged; example headline pack in the demo
+
+**Merged:**
+- ws-b **B15** (Jaya): plan images (example F1/F2, office F1/F2), a ready trace of the example (`data/buildings/plans/example.trace.json`, plus `example.plan.json` and `index.json`) for the "plan to 3D" demo moment. The door-width cap is now 0.6-6.0 m, per the 11:35 ruling.
+- ws-a (A5): the example's demo sweeps now carry D18's smoke percent, and the demo has the example's headline pack (`headlines-example-office.json`).
+
+**Needs to know:**
+- **A, E:** for the "building in" beat, load `data/buildings/plans/example.trace.json` in the tracer (see `buildings/README.md`).
+- **Still running on the lead's laptop:** the clinic precompute (A5) and D19's office refresh.
+
+## Sat 11:35: B15 unblocked again
+
+- **B (Jaya):** B15 stopped on the example's lobby door DL1, a 4.0 m opening that B14's validator rejects (it only allows 0.6-3.0 m). The lead ruled on ws-b:
+  - DL1 is correct, and the example contract stays as it is.
+  - Raise the cap in `buildings/validate.py` to 0.6-6.0 m, and add a smoke-test case where a 4.0 m door passes and a 7.0 m door is flagged.
+  - Then finish B15.
+
+  The plan images, traced example and index from 11:19 merge into main once B15 is done.
+
+## Sat 11:20: office demo data merged
+
+**Merged:**
+- ws-a, A5 part 1 (10:50): the example building's precomputed what-if runs, batch and report card, plus `tools/precompute_demo.py` and the Netlify config (not deployed).
+- ws-a, A5 part 2: **the office demo data.** It covers 294 fires (98 rooms x 3 seeds), three what-if pairs (R143, R203c, R237b) and the office report card. The guided demo now works on the office. The example is trimmed to two pairs.
+
+**Still running on the lead's laptop:** the clinic precompute (A5) and D19's office refresh.
+
+**Needs to know:**
+- **E, A:** weak-spot headings in the office report show raw IFC door ids (`D$77wwb`). Use the readable label.
+- **D, E:** the example report says "keep the main entrance clear: +1.3 trapped per fire". The likely cause is that the main entrance sits next to the kitchen fire. It reads badly as a fix, so check the wording or the logic.
+- **Everyone:** report cards are template text while Gemini is out of quota. The lead decides on billing.
+- **B (Jaya):** your runner is merging main again. B15 is unblocked and next.
+
+## Sat 09:55: D18 merged (headline pack); lead took over D19; B15 unblocked
+
+**Merged:**
+- ws-d **D18** (lead takeover): `fire/headlines.py` reads a saved batch and writes `data/runs/headlines-<id>.json` (headlines/v0, about 7 KB).
+  - Office headline: "Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average."
+  - Example headline: the same line with +26% across 12 paired fires.
+  - What-if entries now carry `baseSmokeSeconds` and `smokePct`. `sources` holds relative paths only, so no local paths reach `frontend/public/demo/`.
+- main: the example building's credits now mention a license ("license: free to use, no attribution needed"). That unblocks **B15**. The examples and the demo copies of the office and clinic were regenerated; the demo copies were behind `data/buildings/`. Every check passes.
+
+**Needs to know:**
+- **A, E:** the precompute picks up the headline pack (`batches[].headlines`) once ws-a merges main. E's Report tab can show the pack with no API or Gemini call; use `smokePct` instead of recomputing the percent.
+- **B (Jaya):** B15 is unblocked; the lead's ruling is in the plan. It's P1 and next on your list. B7 stays superseded by C15, and B8 waits on the UMass decision.
+- **D (Aidan):** the lead took over **D19** (refresh after C14 and C13b) at 09:47. It reruns the example and the office with C14's exit-choice terms off and on, about an hour on the shared laptop. D17 (P2), D20 (P1) and D21 (P1) are still yours.
+- **Lead note:** the lead's open-task count treated any mention of "BLOCKED:" inside a step as a blocker, which hid D19 from 04:30 until now. Counted strictly, D has D17, D19, D20 and D21 open, and B has none.
+
+**Still running:** A5 (demo precompute) and D19.
+
+## Sat 09:15: D15 merged (office demo batch); lead took over D18
+
+**Merged:** ws-d **D15** (lead takeover), the real office demo batch. It ran 12 rooms x 3 seeds: 252 runs plus a pilot, 0 failed, and every comparison has n=36. Wall time was 49 min on the shared laptop. The command is in `fire/README.md`. The output `data/runs/batch-office.json` is gitignored and sits on the lead's laptop in `../HackUMass-ws-d-lead/data/runs/`. The blocked-exit sweep ran clean, so C13b fixed the old crash.
+
+**Office headline numbers (for the demo, A6 and E's Report tab):**
+- Weak spots:
+  1. Fire in OPEN OFFICE (R237b): 14.3 people trapped on average; 90% out after 141 s.
+  2. Exit Stair S1 (west): 15 people queued at peak; 181 person-seconds of waiting per fire.
+  3. Exit Stair S2 (east): 10 people queued at peak; 114 person-seconds.
+  4. The door from SECURE DOC ROOM to OPEN OFFICE: 5 people queued at peak; 26 person-seconds, all of them in smoke.
+
+  The top 3 hold in 2 of 3 seeds, and S1 ranks first in 3 of 3.
+- What-ifs, per fire:
+  - Propped stair doors: +152 person-seconds in smoke (+54%), no change in 90% out.
+  - Stair S1 blocked: 90% out 13 s later (slower in 36 of 36), +154 person-seconds in smoke.
+  - Sprinklers: 1.2 fewer people trapped.
+- Best measured fix: widen Exit Stair S1 (west) from 0.86 m to 1.36 m. 90% are out 2 s sooner, with 6% less time in smoke (faster in 23 of 36 fires).
+- The story: the fire's location barely changes 90% out (135-141 s for every room). Nearly everyone trapped comes from the OPEN OFFICE fire, because the SECURE DOC ROOM (R205) has its only door into the open office.
+
+**Needs to know:**
+- **D, E, A (sprinklers):** the sprinklers what-if shows +47% time in smoke. That is how smoke time is counted, not harm: the sim drops trapped people from the frames, so their smoke time stops counting. In a paired check, trapped went 12 -> 0 and smoke time went 2,003 -> 3,626 person-seconds. Show sprinklers by people trapped, not by smoke time. The caveat is in `fire/README.md`.
+- **C (Althan):** every fire in office room R227 logs `WARNING (sim): F2/R227: no safe fire keep-out cut; keeping walkable area`, so people can still walk through that burning room. Worth a look at 10 AM.
+- **Everyone running batches or the precompute:** prefix the command with `OPENBLAS_NUM_THREADS=1`. Each pool worker drops from about 550 MB to about 33 MB with identical results. Memory reached 47.8 of 48.6 GB while two batches ran.
+- **D (Aidan):** the lead took over **D18 (headline numbers pack)** at 09:10; it is running now. D20 (run cache, P1) is still yours. The sprinklers what-if and the sprinklers fix rerun the same scenario (about 1/7 of the runtime) and could share one set of runs. `--budget-min 20` gives a 30-35 min batch on a shared laptop.
+
+**Still running:** A5, the demo precompute.
+
+## Sat 08:05: Morning summary (read this first)
+
+**On `main`, by workstream (every check passes):**
+- **A (lead):**
+  - Done: the API with routers and the `tools/check_all.py` merge gate; the tracer page with a Gemini first pass (it walks a model chain when one model is out of quota); batch endpoints; the Gemini client, report card (`/api/report`) and `decide`/`decide_batch`. API runs carry smoke exposure.
+  - Running: A5, the demo precompute (rerun).
+  - Open: A6 (Devpost, video, slides), A9 (UMass trace; needs a decision), A10 (personas and the all-LLM showcase; limited by the Gemini quota).
+- **B (Jaya), plan complete:** IFC import, normalizer hardening, overrides and validation, the building index, AI room tidy, tracer showcase assets, and every public building validated. The **NIBS office** has readable exit names, the 250-occupant kitchen scenario and clear door widths. The **NIBS clinic** is CC BY 4.0: cite BSI (2020) and list changes.
+- **C (Althan), plan complete:**
+  - stair transfer between floors;
+  - exit choice that weighs queues, visible smoke and unfamiliar exits;
+  - the fire keep-out, early start on fire and smoke cues, and waiting beside the stair flow with per-profile metrics;
+  - the LLM brain and the all-LLM crowd mode;
+  - the robustness sweep and the clinic at 300 agents;
+  - flow and walking-speed-in-smoke validation (`data/calibration.json`), seed ranges, smaller run files.
+- **D (Aidan):**
+  - Done: the smoke-front fire model, metrics, the batch runner, ranking and risk map, RSET/ASET, exit criticality, smoke exposure, the paired what-if sweep, fire-aware chokepoints, measured suggested fixes, seed ranges with top-3 stability, batch timing.
+  - The runner went quiet at 04:24. The lead took over D14b (merged) and **D15, the office demo batch, now running**.
+  - Open: D17–D21 (sensitivity, headline pack, refresh after C14, run cache, clinic batch).
+- **E (Donovan), plan complete:** the full app:
+  - 3D replay with smoke, heatmap and queue rings; dashboard; live runs; risk map and weak spots; what-if split screen; report card; credibility panel;
+  - guided demo mode, About with QR and phone layout, agent's-eye view, deep links, printable report and PNG export;
+  - accessibility pass and results, measured fixes, honest ranges, headline pack, clinic-scale performance, headless visual QA (`npm run qa`).
+
+**Demo buildings:** the synthetic example (2 floors), the NIBS office (2 floors, 99 rooms), the NIBS clinic (2 floors, 252 rooms).
+
+**Overnight findings:**
+- Propping the stair doors barely changes evacuation time but raises smoke exposure by about 22%, so the what-if leads with exposure.
+- Fixed sim bugs:
+  - people routed through flames;
+  - wheelchair waits blocking a stair;
+  - stair-arrival crashes;
+  - a keep-out slot in the clinic;
+  - a doorless clinic stair people walked down while it burned.
+
+**Decisions waiting for the lead:**
+1. **Gemini billing.** The free tier allows 20 requests per day per model (it resets around 3 AM ET). Enable billing for daytime testing and the live demo, or rely on precomputed reports.
+2. **The public Netlify deploy** of the static demo. A5 prepares it; nothing is published without the lead's OK.
+3. **Devpost, video and slides (A6).** Credits: NIBS Common BIM Files (ERDC-CERL), buildingSMART (clinic, CC BY 4.0), JuPedSim, three.js / React Three Fiber.
+4. **The UMass Student Union trace (A9):** yes or no. Its results stay private either way.
+
+**10 AM sync focus:**
+- Run the guided demo end to end on the office: judge's fire → propped stair door → risk map → measured fixes.
+- Review the report card text and pick the hero building.
+- Split the rest of the day: Devpost and video, demo rehearsal, D17–D21, polish.
+
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
+
+## Sat 06:50: integration
+
+- **Merged D14b** (the lead's takeover: fire checks read labels and widths from the office file) and **B13–B16:**
+  - a demo-ready office with readable exit names and the 250-occupant kitchen scenario, keeping the same ids;
+  - every public building validated in the smoke test;
+  - tracer showcase assets;
+  - clear door widths.
+
+  All checks pass.
+- **D:** B13 and B16 rebuilt `data/buildings/office.json` (readable names, clear widths) and `office.scenario.json` (250 occupants, kitchen). D15's batch and D19's refresh should use them.
+- **Lead's machine:** a worktree cleanup briefly broke its Python environment (rebuilt at 06:45). Teammates' branches weren't affected. A's demo precompute (A5) reruns after 08:00.
+
+## Sat 06:20: integration and a takeover
+
+- **Merged:**
+  - **C:** C17 robustness sweep, C18 the clinic at demo scale, C19 run-file size, C20 walking speed in smoke.
+  - **E:** E28–E31: measured fixes, honest ranges, credibility on measured data, building index, the headline numbers pack.
+- **B held:** `ws-b` (B13–B16) fails `python tools/check_all.py fire`, because `check_labels` pins the old office exit names: `AssertionError: ('exit', 'Exit Entry (south)')`. It merges once D14b lands.
+- **D: the lead took over D14b,** since your runner has made no commits since about 04:25 while P0 tasks are open. D14b is claimed on `ws-d` with a BLOCKED line, so your runner skips it. D15 and the rest are untouched and still yours. If your runner is alive, carry on.
+
+## Sat 05:00: integration
+
+- **Merged:**
+  - **B:** the NIBS clinic as a second building (`data/buildings/clinic.json` plus its scenario), AI room tidy, the building index (`data/buildings/index.json`), the opt-in vertex budget.
+  - **C:** C13b (stair arrivals near blocked exits), C14 (smoke-aware exit choice), C15 (flow validation, written to `data/calibration.json`), C16 (seed ranges).
+  - **D:** D16, ranges across seeds and top-3 stability.
+  - **E:** E24 deep links with QR, E25 printable report and PNG export, E26 accessibility pass, E27 clinic-scale performance.
+- **The full check passes on the combined `main`.** Examples were regenerated with the smoke-aware exit choice: 160/160 out, t90 121 s.
+- **D:** D15's BLOCKED line is cleared on `ws-d`, because C13b is on `main`, so run the office demo batch now. C14 is on `main` too, so D19's refresh can run.
+- **B, C, E:** your next tasks (B13–B16, C17–C20, E28–E31) are being written.
 
 ## Sat 04:35: integration
 

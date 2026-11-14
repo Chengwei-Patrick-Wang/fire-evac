@@ -71,7 +71,7 @@ function shoelace(p: Vec2[]) {
   return Math.abs(a) / 2
 }
 
-function insidePoint(poly: Vec2[]): Vec2 | null {
+export function insidePoint(poly: Vec2[]): Vec2 | null {
   if (poly.length < 3) return null
   const n = poly.length
   const avg: Vec2 = [poly.reduce((s, p) => s + p[0], 0) / n, poly.reduce((s, p) => s + p[1], 0) / n]

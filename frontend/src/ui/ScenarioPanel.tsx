@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useApp } from '../store/app'
-import { FIRE_TYPES, roomAt } from '../model/scenarioDraft'
+import { FIRE_TYPES, insidePoint, roomAt } from '../model/scenarioDraft'
 import WhatIfCard from './WhatIfCard'
 import type { DoorState, Profile } from '../data/types'
 
@@ -17,6 +17,13 @@ export default function ScenarioPanel() {
   const room =
     fire.floor && fire.room ? building.floors.find((f) => f.id === fire.floor)?.rooms.find((r) => r.id === fire.room) : null
   const ghost = fire.floor && fire.x !== undefined && fire.y !== undefined ? roomAt(building, fire.floor, fire.x, fire.y) : null
+  const fireRooms = [...building.floors]
+    .sort((a, b) => a.level - b.level)
+    .map((f) => {
+      const sr = new Set(f.stairs.map((s) => s.room))
+      return { f, rs: f.rooms.filter((r) => r.type !== 'stair' && !sr.has(r.id) && insidePoint(r.polygon) && roomAt(building, f.id, ...(insidePoint(r.polygon) as [number, number]))) }
+    })
+    .filter((o) => o.rs.length)
   const num = (v: string, d: number) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d)
 
   return (
@@ -26,6 +33,30 @@ export default function ScenarioPanel() {
         <select value={fire.type} onChange={(e) => patchDraft({ fire: { ...fire, type: e.target.value } })}>
           {FIRE_TYPES.map((t) => (
             <option key={t}>{t}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Fire room
+        <select
+          value={fire.floor && fire.room ? `${fire.floor}|${fire.room}` : ''}
+          onChange={(e) => {
+            const [fl, rm] = e.target.value.split('|')
+            const r = building.floors.find((f) => f.id === fl)?.rooms.find((x) => x.id === rm)
+            const pt = r ? insidePoint(r.polygon) : null
+            if (!r || !pt) return
+            patchDraft({ fire: { ...fire, floor: fl, room: rm, x: Math.round(pt[0] * 100) / 100, y: Math.round(pt[1] * 100) / 100, start: 0 } })
+          }}
+        >
+          {!(fire.floor && fire.room && fireRooms.some((o) => o.f.id === fire.floor && o.rs.some((r) => r.id === fire.room))) && (
+            <option value="">{fire.room ?? 'Pick a room'}</option>
+          )}
+          {fireRooms.map(({ f, rs }) => (
+            <optgroup key={f.id} label={f.id}>
+              {rs.map((r) => (
+                <option key={r.id} value={`${f.id}|${r.id}`}>{r.name ?? r.id}</option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </label>
@@ -80,7 +111,7 @@ export default function ScenarioPanel() {
       {Object.entries(doors).map(([id, st]) => (
         <div className="doorrow" key={id}>
           <span>{id}</span>
-          <select value={st} onChange={(e) => patchDraft({ doors: { ...doors, [id]: e.target.value as DoorState } })}>
+          <select aria-label={`State of ${id}`} value={st} onChange={(e) => patchDraft({ doors: { ...doors, [id]: e.target.value as DoorState } })}>
             {STATES.map((s) => (
               <option key={s}>{s}</option>
             ))}
@@ -98,7 +129,7 @@ export default function ScenarioPanel() {
         </div>
       ))}
       <div className="doorrow">
-        <select value={doorPick} onChange={(e) => setDoorPick(e.target.value)}>
+        <select aria-label="Door to override" value={doorPick} onChange={(e) => setDoorPick(e.target.value)}>
           <option value="">Door…</option>
           {doorIds
             .filter((d) => !(d in doors))

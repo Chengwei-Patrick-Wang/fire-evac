@@ -2,19 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
 import WhatIfHeadline from './WhatIfHeadline'
+import HeadlinePack from './HeadlinePack'
+import MeasuredFixes from './MeasuredFixes'
+import { readFixes, readSkipped } from '../model/fixes'
 import { fetchReport } from '../data/loader'
+import type { Batch } from '../data/types'
+
+export function reportRef(batch: Batch | null, runKey: string | null) {
+  const ref = batch ? { batchId: batch.id } : runKey ? { runId: runKey } : null
+  return ref ? { ref, key: JSON.stringify(ref) } : null
+}
 
 export default function ReportCard() {
   const mode = useApp((s) => s.mode)
   const batch = useApp((s) => s.batch)
   const runKey = useApp((s) => s.activeRunKey)
+  const pack = useApp((s) => s.headlines)
   const [md, setMd] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const seq = useRef(0)
 
-  const ref = batch ? { batchId: batch.id } : runKey ? { runId: runKey } : null
-  const refKey = ref ? JSON.stringify(ref) : ''
+  const rr = reportRef(batch, runKey)
+  const ref = rr?.ref ?? null
+  const refKey = rr?.key ?? ''
 
   const load = async (refresh = false) => {
     if (!ref) return
@@ -23,7 +34,10 @@ export default function ReportCard() {
     setErr(null)
     try {
       const text = await fetchReport(ref, refresh)
-      if (me === seq.current) setMd(text)
+      if (me === seq.current) {
+        setMd(text)
+        useApp.setState({ report: { key: refKey, md: text } })
+      }
     } catch {
       if (me === seq.current) setErr('Report unavailable (needs the backend and Gemini)')
     } finally {
@@ -41,10 +55,13 @@ export default function ReportCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refKey, mode])
 
-  if (!ref) return <div className="empty"><b>Load a run</b><span>Its report appears here.</span></div>
+  const printBtn = <button onClick={() => useApp.getState().setPrintView(true)}>Print report</button>
+  if (!ref) return <div className="empty"><b>Load a run</b><span>Its report appears here.</span>{printBtn}</div>
   return (
     <div className="report">
-      <WhatIfHeadline />
+      {printBtn}
+      {pack ? <HeadlinePack /> : <WhatIfHeadline />}
+      {!pack && batch && <MeasuredFixes fixes={readFixes(batch)} skipped={readSkipped(batch)} top={batch.top} />}
       {mode === 'live' && (
         <button disabled={busy} onClick={() => void load(md !== null)}>
           {busy ? 'Generating…' : md !== null ? 'Regenerate' : 'Generate'}

@@ -148,7 +148,9 @@ export default function Agents({ runKey }: { runKey?: string }) {
         const w = toWorld(out.x, out.y, floorY(f, explode) + 2.3)
         list.push({ i, p: [w[0], w[1], w[2]], s: Math.max(0, Math.round(t - ix.times[g])) })
       }
-      setTimers(list)
+      setTimers((cur) =>
+        cur.length === list.length && cur.every((c, j) => c.i === list[j].i && c.s === list[j].s) ? cur : list,
+      )
     }
   })
 
