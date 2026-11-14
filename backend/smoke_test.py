@@ -398,6 +398,61 @@ def check_report_run(client):
         sprinklers = next(ln for ln in md3.splitlines() if "Sprinklers on" in ln)
         assert "90% out 0.5 s sooner on average (slower in 0 of" in sprinklers, sprinklers
 
+        # A11, fire spread. A batch's card gets the sentence from fire.spread's schedule at the base's material (drywall
+        # when it names none): the other rooms on fire by maxTime, per fire on average and at most (the first room in run
+        # order wins a tie). A run's card gets it from its own fire.rooms and fire.material (C27), and without them it
+        # is the card it always was.
+        def hand_batch(*rooms, material="wood"):  # the example's fires in these rooms only, in this order
+            hand = json.loads(json.dumps(batch))
+            hand["runs"] = [rr for room in rooms for rr in hand["runs"] if rr["ignition"]["room"] == room]
+            if material is None:
+                hand["base"]["fire"].pop("material", None)
+            else:
+                hand["base"]["fire"]["material"] = material
+            return hand
+
+        wood = ("Fire spread at illustrative wood speeds: 14.0 other rooms per fire on average by 400 s, "
+                "at most 14 rooms (fire in Kitchen (R101))")
+        md_wood = features.report(hand_batch("R101", "L1"), building)
+        assert f". {wood}." in md_wood and md_wood.index("90% out:") < md_wood.index(wood), md_wood
+        lobby = names.room_label("F1", "L1")
+        assert f"(fire in {lobby})" in features.report(hand_batch("L1", "R101"), building)  # a tie: the first one wins
+        md_mixed = features.report(hand_batch("R101", "L1", "SA1"), building)  # the stair reaches all 23 other rooms
+        assert ("Fire spread at illustrative wood speeds: 17.0 other rooms per fire on average by 400 s, "
+                f"at most 23 rooms (fire in {names.room_label('F1', 'SA1')})") in md_mixed, md_mixed
+        md_default = features.report(hand_batch("R101", "L1", material=None), building)  # no fire.material: drywall
+        assert ("Fire spread at illustrative drywall speeds: 11.0 other rooms per fire on average by 400 s, "
+                "at most 11 rooms (fire in Kitchen (R101))") in md_default, md_default
+        md_steel = features.report(hand_batch("R101", material="steel"), building)  # unknown: no sentence, a card still
+        assert "Fire spread" not in md_steel and "Template summary" in md_steel, md_steel
+        had, spread_module = "fire.spread" in sys.modules, sys.modules.get("fire.spread")
+        sys.modules["fire.spread"] = None  # the import fails
+        try:
+            assert "Fire spread" not in features.report(hand_batch("R101", "L1"), building)
+        finally:
+            if had:
+                sys.modules["fire.spread"] = spread_module
+            else:
+                sys.modules.pop("fire.spread", None)
+
+        def hand_run(material, *ignites):  # a run made by C27's sim: fire.rooms (the first is the ignition room), material
+            rooms = [{"room": f"X{i}", "floor": "F1", "ignite": float(t)} for i, t in enumerate(ignites)]
+            return dict(run, fire=dict(run["fire"], material=material, rooms=rooms))
+
+        spread = "Fire spread at illustrative drywall speeds: 2 other rooms by 360 s"
+        md_run = features.report(hand_run("drywall", 0, 180, 360), building)
+        assert md_run.count(f". {spread}.") == 1 and md_run.index("Evacuation:") < md_run.index(spread), md_run
+        plain = dict(run, fire={k: v for k, v in run["fire"].items() if k not in ("rooms", "material")})
+        md_plain = features.report(plain, building)
+        assert "Fire spread" not in md_plain and md_run.replace(f". {spread}.", ".", 1) == md_plain, md_plain
+        assert "Fire spread at illustrative wood speeds: 1 other room by 90 s." in features.report(hand_run("wood", 0, 90), building)
+        assert ("Fire spread at illustrative wood speeds: the fire stayed in its room."
+                in features.report(hand_run("wood", 0), building))
+        for fire_bad in ({"rooms": [{"room": "R101", "floor": "F1", "ignite": 0}]}, {"material": "wood"},
+                         {"material": "wood", "rooms": "R101"}, {"material": "wood", "rooms": [None, 3, {"room": "A"}]},
+                         {"material": "**", "rooms": [{"room": "R101", "floor": "F1", "ignite": 0}]}):
+            assert "Fire spread" not in features.report(dict(plain, fire=dict(plain["fire"], **fire_bad)), building), fire_bad
+
         # a live run, asked for by its scenario id (what the frontend sends today)
         fake = {"version": "run/v0", "id": "smoke-report-run", "buildingId": "example-office",
                 "scenarioId": "smoke-report-scenario", "seed": 1, "frameInterval": 0.5, "floors": ["F1", "F2"],
