@@ -63,9 +63,13 @@ export default function Credibility() {
         <>
           <h4>{cal.data.title}</h4>
           {cal.example && <div className="stamp">EXAMPLE VALUES</div>}
-          <div style={{ width: '100%', height: 220 }}>
+          <div role="img" aria-label="Calibration chart" aria-describedby="cred-summary" style={{ width: '100%', height: 220 }}>
+            <p id="cred-summary" className="sr-only">
+              {rows.map((r) => `${r.label}: Simulated ${r.simulated}, ${names.filter((n) => r[n] !== undefined).map((n) => `${n} ${r[n]}`).join(', ')}`).join('; ')}
+              {' (persons per second).'}
+            </p>
             <ResponsiveContainer>
-              <BarChart data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -10 }}>
+              <BarChart accessibilityLayer={false} data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -10 }}>
                 <CartesianGrid stroke="#1e293b" />
                 <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} unit=" p/s" />

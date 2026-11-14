@@ -11,6 +11,7 @@ import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import Scrubber from './ui/Scrubber'
+import ReplaySummary from './ui/ReplaySummary'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
 import AgentLegend from './ui/AgentLegend'
 import ErrorBoundary from './ui/ErrorBoundary'
@@ -325,6 +326,7 @@ export default function App() {
 
   return (
     <div className="app" key="replay">
+      <button className="skip" onClick={() => document.getElementById('play')?.focus()}>Skip to replay controls</button>
       <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
       <aside className={'left' + (phone && openPanel !== 'left' ? ' collapsed' : '')}>
         <h3>Scenario</h3>
@@ -360,6 +362,7 @@ export default function App() {
             <AgentReadout />
             <NewBuildingCard />
             <TourCaption />
+            <ReplaySummary />
           </>
       </main>
       <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>

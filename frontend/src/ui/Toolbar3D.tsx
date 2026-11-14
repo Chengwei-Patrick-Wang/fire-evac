@@ -98,6 +98,7 @@ export default function Toolbar3D() {
         <button
           key={n}
           title="Lens: highlight this profile"
+          aria-pressed={!lens.every(Boolean) && lens[i]}
           className={'lens ' + (lens.every(Boolean) || !lens[i] ? '' : 'on')}
           onClick={() =>
             set((s) => {
@@ -120,6 +121,7 @@ export default function Toolbar3D() {
       </button>
       <button
         disabled={split || !hasRun}
+        aria-pressed={pick}
         className={pick ? 'on' : ''}
         onClick={(e) => {
           const on = !useApp.getState().pickAgent
@@ -129,7 +131,7 @@ export default function Toolbar3D() {
       >
         Agent view
       </button>
-      <button disabled={nRuns < 2} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
+      <button disabled={nRuns < 2} aria-pressed={split} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
       <button
         disabled={split || building.private}
         title={split ? 'Turn off Split to save the 3D view' : building.private ? 'Private building: do not screenshot or publish' : 'Room labels and queue counts are page overlays and are not in the image'}
@@ -149,6 +151,7 @@ export default function Toolbar3D() {
         Save PNG
       </button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
+      <button onClick={() => set((s) => ({ fitView: s.fitView + 1 }))}>Overview</button>
     </div>
   )
 }

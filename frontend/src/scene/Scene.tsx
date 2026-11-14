@@ -13,18 +13,26 @@ import RiskOverlay from './RiskOverlay'
 import AgentCam from '../replay/AgentCam'
 import { CameraSyncPane } from './cameraSync'
 import { CaptureHook } from './capture'
+import { useA11y } from '../ui/a11y'
 import { perfOn } from '../ui/perf'
 
 export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: string }) {
   const autoRotate = useApp((s) => s.autoRotate)
+  const reduceMotion = useA11y((s) => s.reduceMotion)
+  const contrast = useA11y((s) => s.contrast)
+  const buildingName = useApp((s) => s.building?.name ?? 'building')
   const following = useApp((s) => s.follow !== null)
   return (
-    <div style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%', isolation: 'isolate' }}>
+    <div
+      role="img"
+      aria-label={`3D replay of ${buildingName}`}
+      aria-describedby="replay-summary"
+      style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%', isolation: 'isolate' }}>
       <Canvas dpr={[1, 2]} camera={{ fov: 50, near: 0.1, far: 1000 }}>
-        <color attach="background" args={['#0b1220']} />
+        <color attach="background" args={[contrast ? '#000000' : '#0b1220']} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[20, 40, 20]} intensity={0.8} />
-        <OrbitControls makeDefault enabled={!following} autoRotate={autoRotate} autoRotateSpeed={0.5} />
+        <OrbitControls makeDefault enabled={!following} autoRotate={autoRotate && !reduceMotion} autoRotateSpeed={0.5} />
         <CameraRig />
         {!runKey && <AgentCam />}
         {!paneId && <CaptureHook />}

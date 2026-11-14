@@ -1,9 +1,12 @@
 // Headless visual QA: node scripts/qa.mjs [--open FILE]...  (run `npm run build` first; `npm run qa` does both)
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { preview } from 'vite'
+
+// axe rules we accept as-is, one line of reason each (none yet)
+const AXE_ALLOW = []
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = join(root, 'qa')
@@ -67,7 +70,7 @@ try {
     const names = ['results', 'risk', 'report', 'cred']
     for (let i = 0; i < names.length; i++) {
       await step(`${prefix}tab-${names[i]}`, async () => {
-        await page.locator('.results .tabs button').nth(i).click()
+        await page.locator('.results [role=tab]').nth(i).click()
         await page.waitForTimeout(1000)
         await shot(`${prefix}tab-${names[i]}`)
       })
@@ -221,7 +224,7 @@ try {
     await page.keyboard.press('Escape')
   })
   await step('print', async () => {
-    await page.locator('.results .tabs button').nth(2).click()
+    await page.locator('.results [role=tab]').nth(2).click()
     await page.locator('.results button', { hasText: 'Print report' }).first().click()
     await page.locator('.printreport').waitFor({ timeout: 15000 })
     await page.waitForTimeout(1000)
@@ -242,6 +245,79 @@ try {
     const share = await changedShare(readFileSync(f).toString('base64'))
     lines.push(`save-3d.png: changed ${(share * 100).toFixed(1)}%`)
     if (share < 0.01) problems.push('blank Save PNG')
+  })
+  await step('a11y', async () => {
+    const axePath = join(root, 'node_modules', 'axe-core', 'axe.min.js')
+    let haveAxe = existsSync(axePath)
+    if (haveAxe) await page.addScriptTag({ path: axePath })
+    else lines.push('axe skipped: not installed')
+    const runAxe = async (label, sel) => {
+      if (!haveAxe) return
+      const res = await page.evaluate(
+        async (sel) => {
+          const r = await window.axe.run(document.querySelector(sel), { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })
+          return r.violations.map((v) => ({ id: v.id, impact: v.impact, target: String(v.nodes[0]?.target?.[0] ?? ''), n: v.nodes.length }))
+        },
+        sel,
+      )
+      for (const v of res) {
+        if ((v.impact === 'serious' || v.impact === 'critical') && !AXE_ALLOW.includes(v.id)) problems.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
+        else lines.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
+      }
+      lines.push(`axe ${label}: ${res.length} violations`)
+    }
+    await page.evaluate(() => {
+      window.__tour.getState().stop()
+      window.__clock.setState({ playing: false })
+    })
+    const names = ['results', 'risk', 'report', 'cred']
+    for (let i = 0; i < names.length; i++) {
+      await page.locator('.results [role=tab]').nth(i).click()
+      await page.waitForTimeout(600)
+      await runAxe(`tab ${names[i]}`, '.app')
+    }
+    await page.locator('header.topbar button', { hasText: 'About' }).click()
+    await page.locator('[role=dialog]').waitFor({ timeout: 10000 })
+    await runAxe('about', '[role=dialog]')
+    await page.keyboard.press('Escape')
+    await page.locator('.results [role=tab]').first().click()
+
+    await page.evaluate(() => document.body.focus())
+    await page.evaluate(() => document.activeElement && document.activeElement.blur())
+    for (let i = 1; i <= 60; i++) {
+      await page.keyboard.press('Tab')
+      const bad = await page.evaluate(() => {
+        const el = document.activeElement
+        if (!el || el === document.body) return null
+        const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim() || (el.labels && el.labels.length ? el.labels[0].textContent.trim() : '') || (el.getAttribute('aria-labelledby') ? 'x' : '')
+        return name ? null : `${el.tagName.toLowerCase()}.${el.className}`
+      })
+      if (bad) problems.push(`tab ${i}: focused element has no accessible name: ${bad}`)
+      if (i === 8) await shot('a11y-focus')
+    }
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.reload()
+    await page.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+    await page.evaluate(() => window.__tour.getState().go(0, false))
+    await page.waitForTimeout(3000)
+    const c = page.locator('main.center canvas').first()
+    const a = await c.screenshot()
+    await page.waitForTimeout(1000)
+    const b = await c.screenshot()
+    if (!a.equals(b)) problems.push('motion despite reduced motion')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.evaluate(() => {
+      window.__tour.getState().stop()
+      window.__app.setState({ autoRotate: false })
+    })
+
+    await page.locator('header.topbar button', { hasText: 'Display' }).click()
+    await page.locator('#display-panel label', { hasText: 'High contrast' }).click()
+    await page.waitForTimeout(500)
+    await shot('contrast')
+    await page.locator('#display-panel label', { hasText: 'High contrast' }).click()
+    await page.keyboard.press('Escape')
   })
   for (let n = 0; n < opens.length; n++) {
     await step(`open-${n + 1}`, async () => {

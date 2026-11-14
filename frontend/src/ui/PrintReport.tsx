@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useDialogFocus } from './a11y'
 import { createPortal } from 'react-dom'
 import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
@@ -16,6 +17,8 @@ export default function PrintReport() {
   const mode = useApp((s) => s.mode)
   const report = useApp((s) => s.report)
   const [fetched, setFetched] = useState<{ key: string; md: string } | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  useDialogFocus(rootRef, true)
   const rr = reportRef(batch, runKey)
   const key = rr?.key ?? ''
 
@@ -51,10 +54,10 @@ export default function PrintReport() {
   const floors = building ? [...building.floors].sort((a, b) => a.level - b.level) : []
   const failed = batch?.failed?.length
   return createPortal(
-    <div className="printreport">
+    <div className="printreport" ref={rootRef} role="dialog" aria-modal="true" aria-label="Printable report">
       <div className="noprint bar">
         <button onClick={() => window.print()}>Print / Save as PDF</button>
-        <button onClick={() => useApp.getState().setPrintView(false)}>Close</button>
+        <button data-close onClick={() => useApp.getState().setPrintView(false)}>Close</button>
       </div>
       <div className="page">
         <h1>Evacuation report: {building?.name ?? ''}</h1>

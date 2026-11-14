@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useApp } from '../store/app'
 import { useClock } from '../store/clock'
+import { useTour } from '../tour/tour'
 
 const fmt = (t: number) => {
   const m = Math.floor(t / 60)
@@ -17,7 +18,10 @@ export default function Scrubber() {
 
   useEffect(() => {
     const paint = (t: number) => {
-      if (range.current) range.current.value = String(t)
+      if (range.current) {
+        range.current.value = String(t)
+        range.current.setAttribute('aria-valuetext', `${fmt(t)} of ${fmt(useClock.getState().duration)}`)
+      }
       if (label.current) label.current.textContent = `${fmt(t)} / ${fmt(useClock.getState().duration)}`
     }
     paint(useClock.getState().t)
@@ -26,9 +30,21 @@ export default function Scrubber() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return
       const el = e.target as HTMLElement
       const tag = el?.tagName
+      if (e.code !== 'Space') {
+        if (e.ctrlKey || e.altKey || e.metaKey) return
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || el?.isContentEditable) return
+        if (useTour.getState().scene !== null) return
+        const c = useClock.getState()
+        if (e.key === 'ArrowLeft') c.seek(Math.max(0, c.t - (e.shiftKey ? 1 : 5)))
+        else if (e.key === 'ArrowRight') c.seek(Math.min(c.duration, c.t + (e.shiftKey ? 1 : 5)))
+        else if (e.key === 'Home') c.seek(0)
+        else if (e.key === 'End') c.seek(c.duration)
+        else return
+        e.preventDefault()
+        return
+      }
       if (tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON' || (tag === 'INPUT' && (el as HTMLInputElement).type === 'text')) return
       e.preventDefault()
       useClock.getState().toggle()
@@ -63,9 +79,9 @@ export default function Scrubber() {
 
   return (
     <div className="scrubber">
-      <button onClick={() => useClock.getState().toggle()} title="Space">{playing ? 'Pause' : 'Play'}</button>
+      <button id="play" aria-keyshortcuts="Space" onClick={() => useClock.getState().toggle()} title="Space">{playing ? 'Pause' : 'Play'}</button>
       {[1, 2, 5, 10].map((s) => (
-        <button key={s} className={(s === speed ? 'on' : '') + (s === 2 || s === 5 ? ' opt' : '')} onClick={() => useClock.getState().setSpeed(s)}>{s}x</button>
+        <button key={s} aria-pressed={s === speed} className={(s === speed ? 'on' : '') + (s === 2 || s === 5 ? ' opt' : '')} onClick={() => useClock.getState().setSpeed(s)}>{s}x</button>
       ))}
       <div className="track">
         <input
@@ -75,6 +91,15 @@ export default function Scrubber() {
           max={duration || 1}
           step={0.1}
           defaultValue={0}
+          aria-label="Replay time"
+          onKeyDown={(e) => {
+            const d = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : e.key === 'PageUp' ? 10 : e.key === 'PageDown' ? -10 : 0
+            if (!d) return
+            e.preventDefault()
+            e.stopPropagation()
+            const c = useClock.getState()
+            c.seek(Math.min(c.duration, Math.max(0, c.t + d)))
+          }}
           onChange={(e) => useClock.getState().seek(+e.target.value)}
         />
         {duration > 0 &&
@@ -83,6 +108,7 @@ export default function Scrubber() {
               key={i}
               className="mark"
               title={`${m.label} ${fmt(m.t)}`}
+              aria-label={`${m.label} ${fmt(m.t)}`}
               style={{ left: `${Math.min(100, (m.t / duration) * 100)}%`, background: m.color }}
               onClick={() => useClock.getState().seek(m.t)}
             />

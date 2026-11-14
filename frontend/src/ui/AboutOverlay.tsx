@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { useDialogFocus } from './a11y'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
 import { useTour } from '../tour/tour'
@@ -28,6 +29,9 @@ export default function AboutOverlay() {
   const about = useApp((s) => s.about)
   const credits = useApp((s) => s.building?.credits)
 
+  const cardRef = useRef<HTMLDivElement>(null)
+  useDialogFocus(cardRef, about)
+
   const close = () => {
     markAboutSeen()
     useApp.getState().setAbout(false)
@@ -49,7 +53,7 @@ export default function AboutOverlay() {
   const extra = credits && !/synthetic/i.test(credits) ? credits : null
   return (
     <div className="about-backdrop" role="dialog" aria-modal="true" aria-label="About" onClick={close}>
-      <div className="about-card" onClick={(e) => e.stopPropagation()}>
+      <div className="about-card" ref={cardRef} onClick={(e) => e.stopPropagation()}>
         <h2>Fire evacuation sim</h2>
         <p className="pitch">Give us a building, and we'll show where people get stuck before a fire does.</p>
         <h3>How it works</h3>
@@ -69,7 +73,7 @@ export default function AboutOverlay() {
           {extra && <li>{extra}</li>}
           <li>Libraries: JuPedSim, three.js, React Three Fiber, Recharts</li>
         </ul>
-        <p className="dim">Shortcuts: Space play/pause, W baseline ↔ what-if, 1–6 demo scenes, Esc stops the demo.</p>
+        <p className="dim">Shortcuts: Space play/pause, ←/→ scrub 5 s, Home/End, W baseline ↔ what-if, 1–6 demo scenes, Esc stops the demo.</p>
         {url && (
           <div className="qr">
             <div className="qrtile">
@@ -90,7 +94,7 @@ export default function AboutOverlay() {
           >
             Play the 3-minute demo
           </button>
-          <button onClick={close}>Close</button>
+          <button data-close onClick={close}>Close</button>
         </div>
       </div>
     </div>

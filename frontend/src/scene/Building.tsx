@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useA11y } from '../ui/a11y'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
@@ -74,7 +75,7 @@ const labelStyle = { pointerEvents: 'none' as const }
 
 const RISE_S = 1.4
 const STAGGER_S = 0.25
-const reduced = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+const reduced = () => useA11y.getState().reduceMotion
 
 function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<string, DoorState>; order: number }) {
   const reveal = useApp((s) => s.reveal)

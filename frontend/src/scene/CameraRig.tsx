@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useApp } from '../store/app'
 import type * as THREE from 'three'
+import { useA11y } from '../ui/a11y'
 import { cameraPose } from '../model/link'
 import { buildingBounds, fitDistance, floorY, toWorld } from './geometry'
 
@@ -126,7 +127,7 @@ export default function CameraRig() {
       until.current = 0
       return
     }
-    const k = 1 - Math.exp(-4 * dt)
+    const k = useA11y.getState().reduceMotion ? 1 : 1 - Math.exp(-4 * dt)
     camera.position.x += (g.p[0] - camera.position.x) * k
     camera.position.y += (g.p[1] - camera.position.y) * k
     camera.position.z += (g.p[2] - camera.position.z) * k

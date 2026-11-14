@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { useA11y } from '../ui/a11y'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
@@ -22,7 +23,7 @@ export default function Fire({ runKey }: { runKey?: string }) {
     if (!mesh.current || !fire) return
     const kw = hrrAt(fire.hrr, useClock.getState().t)
     const r = fire.hrr && fire.hrr.length ? 0.3 + 0.9 * Math.sqrt(kw / 1500) : 0.3
-    const flick = 1 + 0.05 * Math.sin(clock.elapsedTime * 17) * Math.cos(clock.elapsedTime * 5.3)
+    const flick = useA11y.getState().reduceMotion ? 1 : 1 + 0.05 * Math.sin(clock.elapsedTime * 17) * Math.cos(clock.elapsedTime * 5.3)
     mesh.current.scale.setScalar(r * flick)
     if (light.current) light.current.intensity = (2 + 6 * Math.min(1, kw / 1500)) * flick
   })

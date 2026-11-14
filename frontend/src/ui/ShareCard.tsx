@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
+import { useDialogFocus } from './a11y'
 import { cachedIndexIds, phoneReachable, shareUrl } from '../model/link'
 
 export default function ShareCard() {
@@ -10,6 +11,8 @@ export default function ShareCard() {
   const [url, setUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  useDialogFocus(cardRef, share)
 
   useEffect(() => {
     if (!share) return
@@ -55,8 +58,8 @@ export default function ShareCard() {
     setTimeout(() => setCopied(false), 2000)
   }
   return (
-    <div className="sharecard" role="dialog" aria-label="Share this view">
-      <button className="sharex" aria-label="Close" onClick={() => useApp.getState().setShare(false)}>×</button>
+    <div className="sharecard" ref={cardRef} role="dialog" aria-label="Share this view">
+      <button data-close className="sharex" aria-label="Close" onClick={() => useApp.getState().setShare(false)}>×</button>
       <h3>Share this view</h3>
       {isPrivate || !url ? (
         <p className="dim">Private building: no public links</p>

@@ -178,3 +178,26 @@ body.printing .printreport .page { margin: 0; padding: 0; box-shadow: none; max-
 body.printing .noprint { display: none; }
 body.printing section, body.printing figure, body.printing tr { break-inside: avoid; }
 body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+
+/* Accessibility */
+.brand { margin: 0; font-size: var(--fs-md); font-weight: 700; white-space: nowrap; }
+.file input { display: block; position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.file { position: relative; }
+.skip { position: absolute; left: 8px; top: 8px; z-index: 200; transform: translateY(-200%); }
+.skip:focus { transform: none; }
+.displaypanel { position: fixed; top: 44px; right: 12px; z-index: 60; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 10px 12px; font-size: var(--fs-sm); }
+a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--warn); outline-offset: 1px; }
+.spots li button.spot { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+:root[data-motion="reduce"] .tourbar { animation: none; width: 100%; }
+:root[data-motion="reduce"] .spinner { animation-duration: 3s; }
+:root[data-contrast="high"] button, :root[data-contrast="high"] select, :root[data-contrast="high"] input { border: 2px solid #fff; }
+:root[data-contrast="high"] button:focus-visible, :root[data-contrast="high"] select:focus-visible, :root[data-contrast="high"] input:focus-visible, :root[data-contrast="high"] .file:focus-within { outline: 3px solid #ffd400; outline-offset: 2px; }
+:root[data-contrast="high"] a { text-decoration: underline; color: #fff; }
+:root[data-contrast="high"] .about-card a { color: #fff; }
+:root[data-contrast="high"] .badge { background: #000; border: 1px solid #fff; color: #fff; }
+:root[data-contrast="high"] .toolbar3d, :root[data-contrast="high"] .agentlegend, :root[data-contrast="high"] .tourcap,
+:root[data-contrast="high"] .banner, :root[data-contrast="high"] .pane-caption, :root[data-contrast="high"] .agentreadout { background: #000; border: 2px solid #fff; color: #fff; }
+:root[data-contrast="high"] .about-card, :root[data-contrast="high"] .sharecard, :root[data-contrast="high"] .displaypanel { background: #000; border: 2px solid #fff; }
+.aboutbtns button:first-child, .topbar .demo, .toggles button.on { color: #fff; }
+.results .stats th[scope=row] { text-align: left; font-weight: 400; padding: 2px 8px 2px 0; }
+.results .stats th[scope=col] { text-align: left; font-weight: 400; font-size: 11px; }
