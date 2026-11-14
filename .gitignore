@@ -14,3 +14,4 @@ debug/
 .DS_Store
 .claude/settings.local.json
 handoff/
+.claude/launch.json
