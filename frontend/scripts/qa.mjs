@@ -1,5 +1,5 @@
 // Headless visual QA: node scripts/qa.mjs [--open FILE]...  (run `npm run build` first; `npm run qa` does both)
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
@@ -73,17 +73,8 @@ try {
       })
     }
   }
-  const blankCheck = async (name) => {
-    const canvases = page.locator('main.center canvas')
-    const n = await canvases.count()
-    if (n === 0) {
-      problems.push(`no canvas in ${name}`)
-      lines.push(`${name}: no canvas`)
-      return
-    }
-    for (let i = 0; i < n; i++) {
-      const buf = await canvases.nth(i).screenshot()
-      const share = await page.evaluate(async (b64) => {
+  const changedShare = (b64) =>
+    page.evaluate(async (b64) => {
         const img = new Image()
         img.src = 'data:image/png;base64,' + b64
         await img.decode()
@@ -113,7 +104,18 @@ try {
           if (Math.abs(d[p] - r) + Math.abs(d[p + 1] - gg) + Math.abs(d[p + 2] - bb) > 40) diff++
         }
         return diff / (d.length / 4)
-      }, buf.toString('base64'))
+    }, b64)
+  const blankCheck = async (name) => {
+    const canvases = page.locator('main.center canvas')
+    const n = await canvases.count()
+    if (n === 0) {
+      problems.push(`no canvas in ${name}`)
+      lines.push(`${name}: no canvas`)
+      return
+    }
+    for (let i = 0; i < n; i++) {
+      const buf = await canvases.nth(i).screenshot()
+      const share = await changedShare(buf.toString('base64'))
       lines.push(`${name}: canvas ${i} changed ${(share * 100).toFixed(1)}%`)
       if (share < 0.01) problems.push(`blank canvas in ${name}`)
     }
@@ -217,6 +219,29 @@ try {
     await page.waitForTimeout(500)
     await shot('share')
     await page.keyboard.press('Escape')
+  })
+  await step('print', async () => {
+    await page.locator('.results .tabs button').nth(2).click()
+    await page.locator('.results button', { hasText: 'Print report' }).first().click()
+    await page.locator('.printreport').waitFor({ timeout: 15000 })
+    await page.waitForTimeout(1000)
+    await shot('print-view')
+    await page.emulateMedia({ media: 'print' })
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: join(out, 'print-media.png'), fullPage: true })
+    shots.push('print-media')
+    await page.pdf({ path: join(out, 'report.pdf'), format: 'Letter', printBackground: true })
+    await page.emulateMedia({ media: 'screen' })
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('.printreport'), null, { timeout: 10000 })
+  })
+  await step('save-png', async () => {
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.locator('.toolbar3d button', { hasText: 'Save PNG' }).click()])
+    const f = join(out, 'save-3d.png')
+    await dl.saveAs(f)
+    const share = await changedShare(readFileSync(f).toString('base64'))
+    lines.push(`save-3d.png: changed ${(share * 100).toFixed(1)}%`)
+    if (share < 0.01) problems.push('blank Save PNG')
   })
   for (let n = 0; n < opens.length; n++) {
     await step(`open-${n + 1}`, async () => {

@@ -5,10 +5,40 @@ import { useApp } from '../store/app'
 
 const COLORS = ['#38bdf8', '#f59e0b', '#a78bfa', '#34d399']
 
-export default function Credibility() {
-  const [cal, setCal] = useState<{ data: Calibration; example: boolean } | null | undefined>(undefined)
+export function Limits() {
   const building = useApp((s) => s.building)
   const lr = useApp((s) => (s.activeRunKey ? s.runs[s.activeRunKey] : null))
+  const sc = lr?.scenario
+  const doors = sc?.doors ?? lr?.doors ?? {}
+  const doorText = Object.entries(doors).map(([k, v]) => `${k}: ${v}`).join(', ')
+  const mix = sc?.occupants.mix
+    ? Object.entries(sc.occupants.mix).map(([k, v]) => `${k} ${Math.round((v ?? 0) * 100)}%`).join(', ')
+    : null
+  return (
+    <>
+      <h4>Limits</h4>
+      <ul className="dim">
+        <li>Not a compliance tool.</li>
+        <li>The fire and smoke model is illustrative (a smoke front, not CFD).</li>
+        <li>One seed is one possible night.</li>
+        {lr && (
+          <li>
+            This run: {sc ? `${sc.occupants.total} occupants` : `${lr.run.agents.length} agents`}
+            {mix ? ` (${mix})` : ''}, seed {sc?.seed ?? lr.run.seed}
+            {sc?.alarmTime != null ? `, alarm at ${sc.alarmTime} s` : ''}
+            {doorText ? `, doors ${doorText}` : ''}.
+          </li>
+        )}
+      </ul>
+      <p className="dim">
+        Credits: {building?.credits ?? 'none listed'}. Libraries: JuPedSim, React Three Fiber, three.js, Recharts.
+      </p>
+    </>
+  )
+}
+
+export default function Credibility() {
+  const [cal, setCal] = useState<{ data: Calibration; example: boolean } | null | undefined>(undefined)
 
   useEffect(() => {
     let live = true
@@ -26,13 +56,6 @@ export default function Credibility() {
         return r
       })
     : []
-  const sc = lr?.scenario
-  const doors = sc?.doors ?? lr?.doors ?? {}
-  const doorText = Object.entries(doors).map(([k, v]) => `${k}: ${v}`).join(', ')
-  const mix = sc?.occupants.mix
-    ? Object.entries(sc.occupants.mix).map(([k, v]) => `${k} ${Math.round((v ?? 0) * 100)}%`).join(', ')
-    : null
-
   return (
     <div className="cred">
       {cal === undefined && <p className="dim">Loading…</p>}
@@ -59,23 +82,7 @@ export default function Credibility() {
           <p className="dim">Illustrative: door flow only, not a validation of the whole model.</p>
         </>
       )}
-      <h4>Limits</h4>
-      <ul className="dim">
-        <li>Not a compliance tool.</li>
-        <li>The fire and smoke model is illustrative (a smoke front, not CFD).</li>
-        <li>One seed is one possible night.</li>
-        {lr && (
-          <li>
-            This run: {sc ? `${sc.occupants.total} occupants` : `${lr.run.agents.length} agents`}
-            {mix ? ` (${mix})` : ''}, seed {sc?.seed ?? lr.run.seed}
-            {sc?.alarmTime != null ? `, alarm at ${sc.alarmTime} s` : ''}
-            {doorText ? `, doors ${doorText}` : ''}.
-          </li>
-        )}
-      </ul>
-      <p className="dim">
-        Credits: {building?.credits ?? 'none listed'}. Libraries: JuPedSim, React Three Fiber, three.js, Recharts.
-      </p>
+      <Limits />
     </div>
   )
 }

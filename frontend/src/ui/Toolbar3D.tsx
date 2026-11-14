@@ -1,4 +1,6 @@
 import { useApp } from '../store/app'
+import { captureView } from '../scene/capture'
+import { useClock } from '../store/clock'
 import { PROFILE_NAMES } from '../replay/runIndex'
 
 export default function Toolbar3D() {
@@ -128,6 +130,24 @@ export default function Toolbar3D() {
         Agent view
       </button>
       <button disabled={nRuns < 2} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
+      <button
+        disabled={split || building.private}
+        title={split ? 'Turn off Split to save the 3D view' : building.private ? 'Private building: do not screenshot or publish' : 'Room labels and queue counts are page overlays and are not in the image'}
+        onClick={(e) => {
+          const url = captureView()
+          if (url) {
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `fire-evac-${building.id}-t${Math.round(useClock.getState().t)}s.png`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+          }
+          e.currentTarget.blur()
+        }}
+      >
+        Save PNG
+      </button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
     </div>
   )

@@ -3,6 +3,12 @@ import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
 import WhatIfHeadline from './WhatIfHeadline'
 import { fetchReport } from '../data/loader'
+import type { Batch } from '../data/types'
+
+export function reportRef(batch: Batch | null, runKey: string | null) {
+  const ref = batch ? { batchId: batch.id } : runKey ? { runId: runKey } : null
+  return ref ? { ref, key: JSON.stringify(ref) } : null
+}
 
 export default function ReportCard() {
   const mode = useApp((s) => s.mode)
@@ -13,8 +19,9 @@ export default function ReportCard() {
   const [err, setErr] = useState<string | null>(null)
   const seq = useRef(0)
 
-  const ref = batch ? { batchId: batch.id } : runKey ? { runId: runKey } : null
-  const refKey = ref ? JSON.stringify(ref) : ''
+  const rr = reportRef(batch, runKey)
+  const ref = rr?.ref ?? null
+  const refKey = rr?.key ?? ''
 
   const load = async (refresh = false) => {
     if (!ref) return
@@ -23,7 +30,10 @@ export default function ReportCard() {
     setErr(null)
     try {
       const text = await fetchReport(ref, refresh)
-      if (me === seq.current) setMd(text)
+      if (me === seq.current) {
+        setMd(text)
+        useApp.setState({ report: { key: refKey, md: text } })
+      }
     } catch {
       if (me === seq.current) setErr('Report unavailable (needs the backend and Gemini)')
     } finally {
@@ -41,9 +51,11 @@ export default function ReportCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refKey, mode])
 
-  if (!ref) return <div className="empty"><b>Load a run</b><span>Its report appears here.</span></div>
+  const printBtn = <button onClick={() => useApp.getState().setPrintView(true)}>Print report</button>
+  if (!ref) return <div className="empty"><b>Load a run</b><span>Its report appears here.</span>{printBtn}</div>
   return (
     <div className="report">
+      {printBtn}
       <WhatIfHeadline />
       {mode === 'live' && (
         <button disabled={busy} onClick={() => void load(md !== null)}>

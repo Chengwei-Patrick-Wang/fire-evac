@@ -40,6 +40,7 @@ if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
   Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour, __pose: cameraPose })
 
 const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
+const PrintReport = lazy(() => import('./ui/PrintReport'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
 
 function msg(e: unknown) {
@@ -247,7 +248,7 @@ function Credits() {
 }
 
 export default function App() {
-  const { view, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
+  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
@@ -372,6 +373,11 @@ export default function App() {
       <ClockDriver />
       <AboutOverlay />
       <ShareCard />
+      {printView && (
+        <Suspense fallback={null}>
+          <PrintReport />
+        </Suspense>
+      )}
       <Credits />
 
     </div>

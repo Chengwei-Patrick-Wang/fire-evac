@@ -12,6 +12,7 @@ import FirePicker from './FirePicker'
 import RiskOverlay from './RiskOverlay'
 import AgentCam from '../replay/AgentCam'
 import { CameraSyncPane } from './cameraSync'
+import { CaptureHook } from './capture'
 import { perfOn } from '../ui/perf'
 
 export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: string }) {
@@ -26,6 +27,7 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
         <OrbitControls makeDefault enabled={!following} autoRotate={autoRotate} autoRotateSpeed={0.5} />
         <CameraRig />
         {!runKey && <AgentCam />}
+        {!paneId && <CaptureHook />}
         {paneId && <CameraSyncPane paneId={paneId} />}
         <Building runKey={runKey} />
         <Agents runKey={runKey} />
