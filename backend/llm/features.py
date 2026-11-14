@@ -20,6 +20,11 @@ present, evacuation time second: propping the stair doors moved t90 by +0.2 s on
 exposure by +22% (measured Sat 3 AM). Long waits are framed as gaps in the building, never as
 traits of people (spec 12), and the card ends with the limits line and the writer line.
 
+Fire spread (A11). The numbers end with one sentence on the illustrative room-to-room spread (fire/spread.py). A batch
+gets it from the schedule at the base's material (fire.material, drywall when absent): the mean number of other rooms
+on fire by maxTime per fire, and the most for one fire room, named. A run gets it from its own fire.rooms and
+fire.material (C27's sim writes both) when both are there, and without them keeps the card it always had.
+
 Names. A spot is named in words, never by its door id: an IFC code like D$77wwb means nothing to a
 judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR and OPEN
 OFFICE" (an unnamed interior door is named by the two rooms it joins, with their room ids only where
@@ -408,6 +413,66 @@ def _whatifs(batch: dict, runs: list[dict], names: _Names) -> list[dict]:
     return out
 
 
+def _spread_batch(base: dict, runs: list[dict], names: _Names, max_time: float | None) -> str | None:
+    """A11: how far an illustrative fire spreads, room to room, in this batch: for each fire (run) the other rooms that
+    catch fire by maxTime in fire.spread's schedule for its ignition room, at the base's material (drywall when it names
+    none). The mean counts every fire, so a room with three seeds counts three times; the first room in run order wins a
+    tie for "at most". None when fire.spread cannot be imported, the material is not one it knows, or no room resolves:
+    the card never fails over this sentence."""
+    try:
+        from fire.spread import ignition_schedule, material_name  # lazy: it brings shapely in, which the card does not need
+    except ImportError:
+        return None
+    try:
+        home = base.get("fire") if isinstance(base.get("fire"), dict) else {}
+        fire = {k: v for k, v in home.items() if k not in ("x", "y")}  # the room names the fire; a stale point must not
+        material = material_name(fire)
+        limit = 600.0 if max_time is None else max_time  # fire.spread's own default for a scenario without maxTime
+        others: dict[tuple[str, str], int | None] = {}  # ignition room -> the other rooms on fire by maxTime
+        fires: list[tuple[int, tuple[str, str]]] = []
+        for r in runs:
+            ignition = r.get("ignition")
+            if not isinstance(ignition, dict):
+                continue
+            key = (str(ignition.get("floor")), str(ignition.get("room")))
+            if key not in others:
+                schedule = ignition_schedule(names.building, {**base, "fire": {**fire, "floor": key[0], "room": key[1]}})
+                others[key] = (sum(1 for e in schedule if (e["floor"], e["room"]) != key and e["ignite"] <= limit)
+                               if schedule else None)  # no schedule: the room is not in the building
+            if others[key] is not None:
+                fires.append((others[key], key))
+        if not fires:
+            return None
+        most, where = fires[0]
+        for count, key in fires[1:]:
+            if count > most:
+                most, where = count, key
+        mean = sum(count for count, _ in fires) / len(fires)
+        return (f"Fire spread at illustrative {material} speeds: {mean:.1f} other rooms per fire on average by "
+                f"{_s(limit)}, at most {_plural(most, 'room')} (fire in {names.room_label(*where)})")
+    except Exception:  # noqa: BLE001 - a bad material, building or run: the card goes without the sentence
+        return None
+
+
+_MATERIAL_WORD = re.compile(r"[a-z][a-z-]{0,19}")  # a material name read from a file: one plain lowercase word
+
+
+def _spread_run(fire: dict) -> str | None:
+    """A11: the run's own fire.rooms ({room, floor, ignite}, the first the ignition room) and fire.material, as C27's sim
+    writes them; None when either is missing, so a run made before the spread model keeps the card it always had."""
+    material, rooms = fire.get("material"), fire.get("rooms")
+    if not (isinstance(material, str) and _MATERIAL_WORD.fullmatch(material) and isinstance(rooms, list)):
+        return None
+    ignites = [_num(r.get("ignite")) for r in rooms if isinstance(r, dict) and r.get("room") is not None]
+    ignites = [t for t in ignites if t is not None]
+    if not ignites:
+        return None
+    head = f"Fire spread at illustrative {material} speeds: "
+    if len(ignites) == 1:
+        return head + "the fire stayed in its room"
+    return head + f"{_plural(len(ignites) - 1, 'other room')} by {_s(max(ignites))}"
+
+
 def _batch_facts(batch: dict, names: _Names) -> dict:
     runs = [r for r in batch.get("runs") or [] if isinstance(r, dict)]
     n = len(runs)
@@ -449,6 +514,9 @@ def _batch_facts(batch: dict, names: _Names) -> dict:
         sentences.append(text)
         trapped = sum(1 for r in runs if (_num(r.get("trapped")) or 0) > 0)
         sentences.append(f"People trapped in {trapped} of {n} fires" if trapped else "No one trapped in any fire")
+        spread = _spread_batch(base, runs, names, max_time)
+        if spread:
+            sentences.append(spread)
 
     spots = []
     for item in (batch.get("top") or [])[:SPOTS]:
@@ -530,6 +598,9 @@ def _run_facts(run: dict, names: _Names) -> dict:
     sentences.append("Evacuation: " + "; ".join(out))
     if trapped is not None:
         sentences.append(f"Trapped: {trapped:,.0f}" if trapped else "No one trapped")
+    spread = _spread_run(fire)
+    if spread:
+        sentences.append(spread)
 
     doors = [d for d in m.get("doors") or []
              if isinstance(d, dict) and d.get("id") is not None and (_num(d.get("waitPersonSeconds")) or 0) > 0]

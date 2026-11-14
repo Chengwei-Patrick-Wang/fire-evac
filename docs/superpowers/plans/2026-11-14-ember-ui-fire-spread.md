@@ -325,14 +325,14 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
 - [ ] **Step 6: Backend.** `fire.material` already passes through (see Interfaces). In `backend/smoke_test.py`, the real-run check gets two twins:
   - one with `fire.material: "wood"`, whose run has `fire.material == "wood"`;
   - one with `"steel"`, whose job ends in `{"status": "error"}` naming `concrete, drywall, wood`.
-- [ ] **Step 7: Material pair.**
+- [x] **Step 7: Material pair.**
   - `PRESETS["office"]["material_pair"] = {"room": "R143", "material": "wood"}`. R143 is the tour's first room; from it, drywall reaches 21 rooms by 400 s and wood 37.
   - `base_scenario` sets `base["fire"].setdefault("material", "drywall")`. The batch's `base` then records the material, and old `--resume` checkpoints are refused.
   - `build_jobs(..., material_pair=None)` adds one job after the pair room's baseline and propped jobs: the baseline's scenario with `fire.material` set to `wood` and id `office-R143-wood`. Seed, people, doors and fire point stay the same.
   - `run_entry` adds `material` to every entry. The wood job gets `whatIf: "material"` and the label in Produces; `write_run` names its file `run-office-R143-wood.json`.
   - `order_by_story` keeps the kinds `("base", "propped", "material")`. The wood entry follows its room's propped entry, so the tour's pairing and `findPrecomputedVariant` still find the propped run first.
   - `process_building` prints `R143, drywall -> wood: t90 <a> -> <b>, trapped <a> -> <b>, rooms on fire <n> -> <m>`.
-- [ ] **Step 8: Report cards.** In `backend/llm/features.py`, import `ignition_schedule` lazily from `fire.spread`, and skip the sentence on ImportError.
+- [x] **Step 8: Report cards.** In `backend/llm/features.py`, import `ignition_schedule` lazily from `fire.spread`, and skip the sentence on ImportError.
   - `_batch_facts`: take the material from `base.fire.material` (default `drywall`). For each ignition room in `runs`, count the other rooms with ignite ≤ maxTime in `ignition_schedule(names.building, <base with that fire room>)`, then write the batch sentence from Produces. The first room in run order wins a tie for "at most".
   - `_run_facts`: write the run sentence from `run.fire.rooms` and `run.fire.material` when they're present.
   - `backend/smoke_test.py`:

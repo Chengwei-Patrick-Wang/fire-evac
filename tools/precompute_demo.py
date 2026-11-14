@@ -22,6 +22,9 @@ Per building it makes
        exterior one). The index lists the pair whose propped run adds the most person-seconds in smoke
        first, because the demo's tour plays a building's first baseline and its propped partner as the
        what-if scene; --rooms keeps the order you give;
+       a preset's "material_pair" (the office: R143, wood) adds a third run after that room's propped one: the
+       baseline's very fire, people, doors and seed with fire.material set to the pair's material (office-R143-wood,
+       whatIf "material"), so the app can set wood against drywall (illustrative spread speeds, fire/spread.py);
     4. the batch's report card, written from the template: LLM_PROVIDER is forced to off here.
    --live-reports is a separate mode: it rewrites report-*.md with Gemini from the batches already
    in the demo folder, never simulating and never replacing a card by a worse one (see live_reports).
@@ -31,6 +34,7 @@ Files go to frontend/public/demo/ (or --out), next to what frontend/scripts/sync
                              name sync-demo uses, so the two never rewrite each other's index entry)
     run-ID-ROOM-base.json    baseline run (ID is the building id)
     run-ID-ROOM-propped.json the same fire with --propped-door propped
+    run-ID-ROOM-wood.json    the material pair (a preset's "material_pair"): the baseline's fire with fire.material wood
     batch-ID.json            batch/v0 with whatIf and fixes when the sweeps ran
     report-ID.md             the report card
     headlines-ID.json        D18's headline numbers pack, only when fire/headlines.py is on the branch; made from
@@ -101,6 +105,7 @@ BATCH_TIMEOUT_S = 6 * 3600  # run_many's deadline: this runs unattended, a slow 
 FAILED_OK = 0.03  # share of batch fires that may fail before the batch is repeated or refused
 JOBS_TIMEOUT_S = 3600  # the baseline and propped runs together (a few minutes when nothing hangs)
 DEFAULT_MIX = {"typical": 0.85, "older": 0.1, "visitor": 0.05}
+DEFAULT_MATERIAL = "drywall"  # fire.spread's default: a scenario without fire.material spreads at drywall speeds
 
 # Demo defaults by building id; the command line wins over them, and they over the scenario file.
 PRESETS = {
@@ -111,7 +116,10 @@ PRESETS = {
     # a pair of thinned office runs is 2 MB: three pairs keep the demo folder under its 15 MB aim. R143 is the scenario's
     # own room and the best what-if story (the stair door next to it), R203c the worst fire (most people trapped) and R237b
     # the OPEN OFFICE fire the team quotes (D15); "--top 4" (the 4 highest-risk plus R143) or "--rooms" replaces them.
-    "office": {"occupants": 250, "fire_type": "kitchen", "rooms": ["R143", "R203c", "R237b"], "sweep_rooms": 8},
+    # material_pair (A11): R143's baseline again with wood-speed fire spread (illustrative), the app's wood-against-drywall
+    # what-if. R143 is the tour's first room; from it drywall reaches 21 rooms by 400 s and wood 37.
+    "office": {"occupants": 250, "fire_type": "kitchen", "rooms": ["R143", "R203c", "R237b"], "sweep_rooms": 8,
+               "material_pair": {"room": "R143", "material": "wood"}},
     # the clinic's design occupancy (D21: 3,910 m2 of walkable floor / 13.9 m2 per person, rounded to 10) and the same
     # kitchen preset. A clinic run is 2-4 MB and minutes long, so its demo is one pair (R1AC1, the waiting room C18
     # measured) and a smaller batch (24 evenly spaced rooms, sweeps on the 3 worst). The preset keys "rooms",
@@ -247,6 +255,9 @@ def base_scenario(building: dict, source: Path, args, preset: dict, seeds: list[
                 "maxTime": 400}
     base = copy.deepcopy(base)
     base["fire"] = dict(base.get("fire") or {"type": "kitchen", "start": 0})
+    # The batch's base records the material, so a --resume checkpoint made before the spread model (its request.base has
+    # no fire.material) no longer matches and is refused: its numbers were made without spread.
+    base["fire"].setdefault("material", DEFAULT_MATERIAL)
     occupants = args.occupants if args.occupants is not None else preset.get("occupants")
     if occupants is not None:
         mix = (base.get("occupants") or {}).get("mix") or dict(DEFAULT_MIX)
@@ -542,10 +553,13 @@ def run_key(building_id: str, room: str, variant: str) -> str:
 
 
 def build_jobs(building: dict, base: dict, rooms: list[tuple[str, str]], door: str | None,
-               home_point: bool = False) -> list[dict]:
+               home_point: bool = False, material_pair: dict | None = None) -> list[dict]:
     """A baseline job and, with a door, a propped job per room: same seed, doors differ only in `door`.
     home_point keeps the scenario file's own fire point in the room that file names (the example building:
-    sync-demo lists contracts/run.example.json, a baseline of that very fire, so ours must be the same fire)."""
+    sync-demo lists contracts/run.example.json, a baseline of that very fire, so ours must be the same fire).
+    material_pair {"room", "material"} (a preset's) adds one job after that room's baseline and propped jobs: the
+    baseline's scenario with fire.material set to the pair's material and the id ID-ROOM-MATERIAL. Seed, people,
+    doors and fire point stay the same, so the two runs differ only in how fast the fire spreads."""
     table = room_table(building)
     jobs = []
     for floor_id, room_id in rooms:
@@ -553,6 +567,7 @@ def build_jobs(building: dict, base: dict, rooms: list[tuple[str, str]], door: s
         home = base.get("fire") or {}
         if home_point and home.get("room") == room_id and home.get("x") is not None and home.get("y") is not None:
             x, y = float(home["x"]), float(home["y"])
+        baseline = None
         for variant, state in (("base", "closed"), ("propped", "propped")):
             if variant == "propped" and door is None:
                 continue
@@ -561,7 +576,17 @@ def build_jobs(building: dict, base: dict, rooms: list[tuple[str, str]], door: s
             scenario["fire"].update(floor=floor_id, room=room_id, x=x, y=y)
             if door is not None:
                 scenario["doors"] = {**base.get("doors", {}), door: state}
+            if variant == "base":
+                baseline = scenario
             jobs.append({"key": scenario["id"], "room": room_id, "floor": floor_id, "variant": variant,
+                         "scenario": scenario})
+        if material_pair and material_pair["room"] == room_id and \
+                material_pair["material"] != baseline["fire"].get("material", DEFAULT_MATERIAL):
+            material = material_pair["material"]
+            scenario = copy.deepcopy(baseline)
+            scenario["id"] = run_key(building["id"], room_id, material)
+            scenario["fire"]["material"] = material
+            jobs.append({"key": scenario["id"], "room": room_id, "floor": floor_id, "variant": material,
                          "scenario": scenario})
     return jobs
 
@@ -774,15 +799,24 @@ def write_atomic(path: Path, content: str | bytes) -> None:
 
 
 def run_entry(key: str, building: dict, scenario: dict, run: dict, file: str, variant: str, door: str | None) -> dict:
+    """variant: "base", "propped", or a material name (the material pair's run: whatIf "material")."""
     metrics = run.get("metrics") or {}
     fire = scenario["fire"]
-    label = room_label(building, fire["room"]) + (", baseline" if variant == "base" else f", {door} propped")
+    material = fire.get("material", DEFAULT_MATERIAL)
+    where = room_label(building, fire["room"])
+    if variant == "base":
+        label, what_if = f"{where}, baseline", None
+    elif variant == "propped":
+        label, what_if = f"{where}, {door} propped", "propped"
+    else:
+        label, what_if = f"{where}, {material} (illustrative)", "material"
     return {
         "id": key,
         "buildingId": building["id"],
         "label": label,
         "file": file,
-        "whatIf": None if variant == "base" else "propped",
+        "whatIf": what_if,
+        "material": material,
         "fire": {"floor": fire["floor"], "room": fire["room"], "x": round(fire["x"], 2), "y": round(fire["y"], 2),
                  "type": fire["type"]},
         "doors": dict(scenario.get("doors") or {}),
@@ -829,7 +863,9 @@ def smoke_seconds(metrics: dict) -> float | None:
 def order_by_story(runs: list[dict]) -> list[dict]:
     """The demo's tour (scene 4) takes the first baseline listed for a building and its propped partner, so the
     pair whose propped run adds the most person-seconds in smoke goes first: a what-if that shows something.
-    The rest keep their risk order, and so does everything when --rooms names the order."""
+    The rest keep their risk order, and so does everything when --rooms names the order. A room's material run
+    (whatIf "material") follows its propped run, so the tour's pairing and findPrecomputedVariant still find
+    the propped run first."""
     by_room: dict[str, dict[str, dict]] = {}
     for item in runs:
         by_room.setdefault(item["entry"]["fire"]["room"], {})[item["entry"]["whatIf"] or "base"] = item
@@ -843,7 +879,7 @@ def order_by_story(runs: list[dict]) -> list[dict]:
     if order != list(by_room):
         say("  order in the index (what-if that adds the most smoke first): "
             + ", ".join(f"{room} ({gain[room]:+,.0f})" if room in gain else room for room in order))
-    return [item for room in order for kind in ("base", "propped") if (item := by_room[room].get(kind))]
+    return [item for room in order for kind in ("base", "propped", "material") if (item := by_room[room].get(kind))]
 
 
 def pair_story(a: dict, b: dict) -> str:
@@ -956,7 +992,13 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     rooms = pick_rooms(building, batch, base, args, preset)
     door = pick_door(building, batch, preset, args)
     say(f"  runs: {', '.join(r for _, r in rooms)}; propped door: {door or 'none (no stair door found)'}")
-    jobs = build_jobs(building, base, rooms, door, home_point=bool(preset.get("home_point")))
+    material_pair = preset.get("material_pair")
+    jobs = build_jobs(building, base, rooms, door, home_point=bool(preset.get("home_point")), material_pair=material_pair)
+    if material_pair:
+        made = any(j["variant"] == material_pair["material"] for j in jobs)
+        say(f"  material pair: {material_pair['room']}, {base['fire'].get('material', DEFAULT_MATERIAL)} -> "
+            f"{material_pair['material']}" + ("" if made else f" (left out: {material_pair['room']} has no baseline here, "
+                                                             "or the base already uses that material)"))
     results = simulate_jobs(building, jobs, workers)
 
     runs, dropped = [], []
@@ -968,13 +1010,15 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
             if result.get("trace"):
                 say(result["trace"])
             continue
-        if job["variant"] == "propped" and run_key(building_id, job["room"], "base") in dropped:
+        if job["variant"] != "base" and run_key(building_id, job["room"], "base") in dropped:  # a propped or material run
             dropped.append(job["key"])
             say(f"  WARNING: {job['key']} dropped: its baseline failed")
             continue
         entry, name, text = write_run(result["run"], building, job["scenario"], job["variant"], door, args)
         note = batch_match_note(batch, job["scenario"], result["run"]) if job["variant"] == "base" else None
-        runs.append({"entry": entry, "name": name, "text": text, "note": note, "metrics": result["run"]["metrics"]})
+        on_fire = (result["run"].get("fire") or {}).get("rooms")  # C27's fire.rooms: absent from runs made before it
+        runs.append({"entry": entry, "name": name, "text": text, "note": note, "metrics": result["run"]["metrics"],
+                     "rooms": len(on_fire) if isinstance(on_fire, list) else None})
     if not runs:
         fail(f"{building_id}: no run finished")
     if not args.rooms:
@@ -1018,10 +1062,17 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     pairs: dict[str, dict] = {}
     for item in runs:
         e = item["entry"]
-        pairs.setdefault(e["fire"]["room"], {})[e["whatIf"] or "base"] = item["metrics"]
+        pairs.setdefault(e["fire"]["room"], {})[e["whatIf"] or "base"] = item
     for room, pair in pairs.items():
         if "propped" in pair:
-            say(f"  {room}, baseline -> {door} propped: {pair_story(pair['base'], pair['propped'])}")
+            say(f"  {room}, baseline -> {door} propped: {pair_story(pair['base']['metrics'], pair['propped']['metrics'])}")
+        if "material" in pair:
+            a, b = pair["base"], pair["material"]
+            on_fire = [("n/a" if p["rooms"] is None else p["rooms"]) for p in (a, b)]  # n/a: runs made before C27
+            say(f"  {room}, {a['entry']['material']} -> {b['entry']['material']}: "
+                f"t90 {a['metrics'].get('t90')} -> {b['metrics'].get('t90')}, "
+                f"trapped {a['metrics'].get('trapped')} -> {b['metrics'].get('trapped')}, "
+                f"rooms on fire {on_fire[0]} -> {on_fire[1]}")
     return True
 
 
