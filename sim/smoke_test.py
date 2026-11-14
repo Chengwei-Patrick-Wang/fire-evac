@@ -90,6 +90,63 @@ def check_llm(building, scenario, baseline):
     print(f"mixed LLM OK: {len(flagged)} flagged, {len(logs)} decisions; timeout and rules fallback OK")
 
 
+def check_llm_batch(building, scenario):
+    from unittest.mock import patch
+    from sim.brain import LLMBrain
+
+    showcase = dict(scenario, brain="llm", occupants={"total": 24, "mix": {"typical": 1}},
+                    premovement={"office": [0, 0], "classroom": [0, 0]}, alarmTime=0)
+    calls = []
+    def nearest(observations):
+        calls.append(deepcopy(observations))
+        return [{"target": min(o["options"], key=lambda p: p["dist"])["id"],
+                 "action": "go", "reason": "batch stub"} for o in observations]
+
+    with patch("sim.run.load_llm_batch_decider", return_value=nearest):
+        result = run(building, showcase, NoFire(building, showcase))
+    logs = [e for e in result["events"] if e["type"] == "llm"]
+    assert all(a.get("llm") for a in result["agents"])
+    assert result["metrics"]["evacuated"] == 24
+    assert any(len(call) > 1 for call in calls)
+    assert len(calls) == len({e["t"] for e in logs})
+    assert len(calls) <= int(result["frames"][-1]["t"]) + 1
+    assert len(logs) == sum(map(len, calls))
+    for event, obs in zip(logs, (o for call in calls for o in call)):
+        assert event["reason"] == "batch stub" and not event.get("fallback")
+        assert event["target"] == min(obs["options"], key=lambda p: p["dist"])["id"]
+        if obs["current"] is not None and event["target"] != obs["current"]:
+            assert any(e["type"] == "reroute" and e["idx"] == event["idx"]
+                       and e["t"] == event["t"] and e["to"] == event["target"]
+                       for e in result["events"])
+    def broken(observations):
+        raise RuntimeError("offline")
+    with patch("sim.run.load_llm_batch_decider", return_value=broken):
+        fallback = run(building, showcase, NoFire(building, showcase))
+    assert fallback["metrics"]["evacuated"] == 24
+    assert all(e.get("fallback") for e in fallback["events"] if e["type"] == "llm")
+    oversized = dict(showcase, occupants={"total": 151, "mix": {"typical": 1}})
+    try:
+        run(building, oversized, NoFire(building, oversized))
+        assert False, "151-agent showcase accepted"
+    except ValueError as exc:
+        assert "150" in str(exc)
+    observations = calls[0]
+    for provider in (lambda obs: [], lambda obs: [None] * len(obs),
+                     lambda obs: [{"target": "invalid"}] * len(obs)):
+        answers = LLMBrain(RuleBrain(42), decide_batch=provider).decide_batch(observations)
+        assert len(answers) == len(observations) and all(a.get("fallback") for a in answers)
+    def slow(observations):
+        time.sleep(0.2)
+        return [None] * len(observations)
+    timed_brain = LLMBrain(RuleBrain(42), timeout=0.01, decide_batch=slow)
+    assert all(a.get("fallback") for a in timed_brain.decide_batch(observations))
+    pending = timed_brain.pending
+    assert all(a.get("fallback") for a in timed_brain.decide_batch(observations))
+    assert timed_brain.pending is pending
+    pending.result(timeout=1)
+    print(f"all-LLM OK: {len(calls)} batches, {len(logs)} decisions; cap and fallbacks OK")
+
+
 def check_floors() -> None:
     building = load_building()
     net = StairNet(building)
@@ -704,6 +761,91 @@ def check_recording(building, scenario):
     print("recording intervals OK")
 
 
+def check_office_keepout():
+    from sim.run import keepout_cut, body_pieces
+    path = ROOT / "data/buildings/office.json"
+    if not path.exists():
+        print("office keep-out skipped: office building missing")
+        return
+    building = json.loads(path.read_text())
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    walk = floor_walkable(floor)
+    radii = {}
+    for rid in ("R125", "R101", "RS101", "R143"):
+        room = next(r for r in floor["rooms"] if r["id"] == rid)
+        point = Polygon(room["polygon"]).representative_point()
+        cut, radius = keepout_cut(walk, floor, rid, point.x, point.y, 2.5)
+        assert radius in (2.5, 1.5, 1.0, 0.0)
+        assert body_pieces(cut) <= body_pieces(walk)
+        assert all(Polygon(z["polygon"]).distance(cut) <= 0.1
+                   for z in floor["exits"] + floor["stairs"])
+        radii[rid] = radius
+    print(f"office keep-out OK: {radii}")
+
+
+def check_stair_fire(building, fast):
+    from sim.floors import stair_doors
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    stair = next(s for s in floor["stairs"] if s["room"] == "SA1")
+    point = Polygon(stair["polygon"]).representative_point()
+    class StairFire(NoFire):
+        def step(self, t):
+            self.t = t
+        def hrr(self, t):
+            return 500 if t >= 75 else 0
+        def untenable(self, fid, x, y):
+            return self.t >= 75 and fid == "F1" and point.distance(Point(x, y)) <= 1.2
+    scenario = deepcopy(fast)
+    scenario["fire"] = {"floor": "F1", "room": "SA1", "x": point.x,
+                        "y": point.y, "type": "trash", "start": 75}
+    result = run(building, scenario, StairFire(building, scenario))
+    stairs = [e for e in result["events"] if e["type"] == "stair" and e["group"] == "SA"]
+    assert stairs and all(e["t"] < 75 for e in stairs), stairs
+    blocks = [e for e in result["events"] if e["type"] == "door_blocked"]
+    assert {e["door"] for e in blocks} == stair_doors(floor, stair)
+    assert all(e["t"] == 75 for e in blocks)
+    cut = fire_keepout(floor_walkable(floor), floor, "SA1", point.x, point.y, 2.5).buffer(0.01)
+    fid = result["floors"].index("F1")
+    for frame in result["frames"]:
+        rows = [a for a in frame["a"] if a[3] == fid and a[4] in (0, 1)]
+        assert all(cut.covers(Point(a[1], a[2])) for a in rows)
+    assert result["metrics"]["remaining"] == result["metrics"]["inStairs"] == 0
+    print(f"burning stair OK: {len(stairs)} SA transfers before 75 s; none after")
+
+
+def check_scale():
+    from unittest.mock import patch
+    from sim.scale import fire_scenarios, run_scale
+    from sim.floors import stair_doors
+    building = json.loads((ROOT / "data/buildings/office.json").read_text())
+    base = json.loads((ROOT / "data/buildings/office.scenario.json").read_text())
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    stair = next(s for s in floor["stairs"] if s["room"] == "RS101")
+    exits = {e["id"] for e in floor["exits"] if e["door"] in stair_doors(floor, stair)}
+    def checked_run(building, scenario):
+        result = run(building, scenario)
+        events = result["events"]
+        for event in events:
+            if event["type"] == "stuck":
+                assert any(e["type"] == "exit" and e["idx"] == event["idx"]
+                           and e["t"] > event["t"] for e in events)
+        if scenario["fire"]["room"] == "RS101":
+            assert not any(e["type"] == "stair" and e["group"] == "S1" for e in events)
+            assert not any(e["type"] == "exit" and e["exit"] in exits for e in events)
+        return result
+    with patch("sim.scale.run", side_effect=checked_run):
+        rows = run_scale(building, fire_scenarios(building, base))
+    for row in rows:
+        assert row["remaining"] == row["inStairs"] == 0
+        assert row["trapped"] <= 3 and row["mb"] <= 8
+        # The current office has a recoverable R122 door stall in the kitchen
+        # run (away from its keep-out). checked_run requires every stall to exit;
+        # retain the zero-stall check for the unaffected lobby fixture.
+        if row["name"] == "lobby":
+            assert row["stuck"] == 0
+        print(f"office scale OK: {row}")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -726,14 +868,18 @@ def main(argv=None) -> int:
     fast = fast_scenario(scenario)
     core = timed("fast core", check_core, building, fast)
     timed("fast cues", check_cues, building, fast)
+    timed("office keep-out", check_office_keepout)
+    timed("burning stair", check_stair_fire, building, fast)
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
     timed("fast assistance", check_assistance, building, fast)
     timed("fast LLM", check_llm, building, fast, core)
+    timed("fast all-LLM", check_llm_batch, building, fast)
     timed("recording", check_recording, building, fast)
 
     if args.slow:
+        timed("office scale", check_scale)
         core = timed("full core", check_core, building, scenario)
         timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)

@@ -2,6 +2,21 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 04:35: integration
+
+- **Merged:**
+  - **C:** C8, the all-LLM crowd mode; C13, the real office at demo scale (safe fire routes, stair arrivals outside the keep-out).
+  - **D:** D14 measured suggested fixes; D15 office batch prep (labels, design occupancy).
+- **C: please do C13b next** (inserted before C14). D15 is blocked by stair arrivals placed within 0.2 m of the boundary next to a blocked exit; the repro is in the task.
+- **D:** D15 stays BLOCKED until C13b merges, and the lead clears its line then. Continue with D16 and D17. D18–D21 are being written.
+- **B and E:** your new tasks (B9–B12, E24–E27) are on `main`. Your runner picks them up after its next merge of `main`.
+
+## Sat 04:20: new tasks and rulings
+
+- **C:** C13–C16 are in your plan. C13 covers two crashes found on the real office: a stairwell fire (RS101) crashes `run()` when stair arrivals are drawn inside the fire keep-out, and the keep-out leaves a 0.21 m gap in break room R125 that traps an agent.
+- **B:** **B7 is superseded by C15.** The 0.8 m jam is a crowd-model deadlock (about 42–67 of 200 pass, even with no fire), not geometry. Leave B7 BLOCKED; C15 writes `data/calibration.json` with 0.8 m listed under `limits`. B9–B12 are still being written.
+- **D:** once C14 (smoke-aware exit choice) is merged, rerun D11's what-if sweep, because people will avoid stairs they can see filling with smoke and the numbers will shift.
+
 ## Sat 04:10: integration
 
 - **Merged ws-a (A):** the Gemini client (retries, fallback to `gemini-2.5-flash`), the report card and `/api/report`, and `backend.llm.features.decide(obs)` / `decide_batch(observations)` in the shapes `sim/brain.py` uses. API runs now carry D10's smoke exposure.

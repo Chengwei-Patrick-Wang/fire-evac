@@ -86,9 +86,10 @@ class LLMBrain:
     Python cannot interrupt a running thread. The backend must also enforce its
     network timeout; shutdown here never waits for a slow provider.
     """
-    def __init__(self, rule, decide, timeout=4.0):
+    def __init__(self, rule, decide=None, timeout=60.0, decide_batch=None):
         self.rule = rule
         self.provider = decide
+        self.batch_provider = decide_batch
         self.timeout = timeout
         self.pending = None
 
@@ -106,6 +107,29 @@ class LLMBrain:
                 pass
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
+        return self._validated(obs, result)
+
+    def decide_batch(self, observations):
+        from concurrent.futures import ThreadPoolExecutor
+        from copy import deepcopy
+
+        if not observations:
+            return []
+        results = None
+        if self.batch_provider is not None and (self.pending is None or self.pending.done()):
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                self.pending = pool.submit(self.batch_provider, deepcopy(observations))
+                results = self.pending.result(timeout=self.timeout)
+            except Exception:
+                pass
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+        if not isinstance(results, list) or len(results) != len(observations):
+            results = [None] * len(observations)
+        return [self._validated(obs, result) for obs, result in zip(observations, results)]
+
+    def _validated(self, obs, result):
         if (isinstance(result, dict) and result.get("action") in ("go", "reroute", "wait")
             and result.get("target") in [o["id"] for o in obs["options"]]
             and isinstance(result.get("reason"), str)):
@@ -123,4 +147,15 @@ def load_llm_decider():
     except ImportError:
         import warnings
         warnings.warn("LLM decisions unavailable; using rules", RuntimeWarning)
+        return None
+
+
+def load_llm_batch_decider():
+    """Optional batch provider, never imported by rule-only runs."""
+    try:
+        from backend.llm.features import decide_batch
+        return decide_batch
+    except ImportError:
+        import warnings
+        warnings.warn("LLM batch decisions unavailable; using rules", RuntimeWarning)
         return None
