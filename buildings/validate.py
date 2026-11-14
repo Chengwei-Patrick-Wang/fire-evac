@@ -3,7 +3,7 @@ from collections import defaultdict
 
 from shapely import make_valid
 from shapely.geometry import Polygon
-from shapely.ops import nearest_points
+from shapely.ops import nearest_points, unary_union
 
 
 def validate(building: dict) -> dict:
@@ -15,6 +15,7 @@ def validate(building: dict) -> dict:
         rooms = {r["id"]: make_valid(Polygon(r["polygon"])) for r in floor["rooms"]}
         pieces = sorted((Polygon(p["outer"], p.get("holes", []))
                          for p in floor["walkable"]), key=lambda p: p.area, reverse=True)
+        walkable = unary_union(pieces)
         if pieces:
             main = pieces[0]
             for piece in pieces[1:]:
@@ -25,7 +26,8 @@ def validate(building: dict) -> dict:
         connected = {rid for door in floor["doors"] for rid in door.get("connects", [])}
         for room in floor["rooms"]:
             rid = room["id"]
-            if rid not in connected and not any(rid != other and poly.intersection(rooms[rid]).area > 1
+            if rid not in connected and not any(rid != other and (poly.intersection(rooms[rid]).area > 1
+                                                  or poly.boundary.intersection(rooms[rid].boundary).intersection(walkable).length > 0.5)
                                                   for other, poly in rooms.items()):
                 report["roomsNoDoor"].append({"floor": fid, "id": rid, "name": room.get("name", rid)})
         for stair in floor["stairs"]:
