@@ -138,3 +138,34 @@ export function sampleAgent(ix: RunIndex, idx: number, t: number, out: AgentSamp
   }
   return false
 }
+
+/** Last index with times[i] <= t (clamped to 0). */
+export function nearestIndex(times: ArrayLike<number>, t: number): number {
+  let lo = 0
+  let hi = times.length - 1
+  if (hi < 0) return -1
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (times[mid] <= t) lo = mid
+    else hi = mid - 1
+  }
+  return lo
+}
+
+/** Heat release rate (kW) at t, linear between [t, kW] pairs; 0 when empty. */
+export function hrrAt(hrr: [number, number][] | undefined, t: number): number {
+  if (!hrr || hrr.length === 0) return 0
+  if (t <= hrr[0][0]) return hrr[0][1]
+  const last = hrr[hrr.length - 1]
+  if (t >= last[0]) return last[1]
+  let lo = 0
+  let hi = hrr.length - 1
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1
+    if (hrr[mid][0] <= t) lo = mid
+    else hi = mid
+  }
+  const [t0, k0] = hrr[lo]
+  const [t1, k1] = hrr[hi]
+  return t1 > t0 ? k0 + ((k1 - k0) * (t - t0)) / (t1 - t0) : k1
+}

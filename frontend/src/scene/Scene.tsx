@@ -3,6 +3,8 @@ import { OrbitControls, Stats } from '@react-three/drei'
 import Building from './Building'
 import CameraRig from './CameraRig'
 import Agents from '../replay/Agents'
+import Smoke from '../replay/Smoke'
+import Fire from '../replay/Fire'
 
 export default function Scene({ runKey }: { runKey?: string }) {
   return (
@@ -15,6 +17,8 @@ export default function Scene({ runKey }: { runKey?: string }) {
         <CameraRig />
         <Building runKey={runKey} />
         <Agents runKey={runKey} />
+        <Smoke runKey={runKey} />
+        <Fire runKey={runKey} />
         {import.meta.env.DEV && <Stats />}
       </Canvas>
     </div>

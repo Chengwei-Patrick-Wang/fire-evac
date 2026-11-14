@@ -5,6 +5,8 @@ export default function Toolbar3D() {
   const explode = useApp((s) => s.explode)
   const visible = useApp((s) => s.visibleFloors)
   const labels = useApp((s) => s.layers.labels)
+  const smoke = useApp((s) => s.layers.smoke)
+  const fire = useApp((s) => s.layers.fire)
   if (!building) return null
   const set = useApp.setState
   const isOn = (id: string) => !visible || visible.includes(id)
@@ -32,6 +34,16 @@ export default function Toolbar3D() {
         />{' '}
         Labels
       </label>
+      {(['smoke', 'fire'] as const).map((k) => (
+        <label key={k}>
+          <input
+            type="checkbox"
+            checked={k === 'smoke' ? smoke : fire}
+            onChange={(e) => set((s) => ({ layers: { ...s.layers, [k]: e.target.checked } }))}
+          />{' '}
+          {k === 'smoke' ? 'Smoke' : 'Fire'}
+        </label>
+      ))}
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
     </div>
   )

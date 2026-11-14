@@ -58,3 +58,9 @@ export function buildingBounds(b: Building) {
   if (!isFinite(minX)) { minX = minY = 0; maxX = maxY = 10; minZ = 0; maxZ = 3 }
   return { minX, minY, maxX, maxY, minZ, maxZ, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, span: Math.max(maxX - minX, maxY - minY, maxZ - minZ) }
 }
+
+export function gridPlacement(g: { origin: Vec2; cell: number; cols: number; rows: number }) {
+  const w = g.cols * g.cell
+  const h = g.rows * g.cell
+  return { center: [g.origin[0] + w / 2, g.origin[1] + h / 2] as Vec2, size: [w, h] as Vec2 }
+}
