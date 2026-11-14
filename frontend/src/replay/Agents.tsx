@@ -10,9 +10,17 @@ import { nearestIndex, sampleAgent } from './runIndex'
 import type { AgentSample } from './runIndex'
 
 const PROFILE_COLORS = ['#38bdf8', '#a78bfa', '#facc15', '#f472b6', '#fb7185', '#34d399']
-const WAITING = '#f59e0b'
-const NOT_MOVING = '#6b7280'
-const TRAPPED = '#ef4444'
+export { PROFILE_COLORS }
+export const STATUS_COLORS = {
+  notMoving: '#94a3b8',
+  moving: '#38bdf8',
+  waiting: '#fbbf24',
+  stairwell: '#c084fc',
+  trapped: '#ef4444',
+}
+const WAITING = STATUS_COLORS.waiting
+const NOT_MOVING = STATUS_COLORS.notMoving
+const TRAPPED = STATUS_COLORS.trapped
 const DIM = '#1f2937'
 const STATUS_NAMES = ['not moving', 'moving', 'waiting', 'exiting']
 type Timer = { i: number; p: [number, number, number]; s: number }
@@ -28,6 +36,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
   const ring = useRef<THREE.InstancedMesh>(null)
   const lens = useApp((s) => s.lens)
   const trails = useApp((s) => s.trails)
+  const agentColor = useApp((s) => s.agentColor)
   const lensOn = !lens.every(Boolean)
   const lensKey = lens.map((v) => (v ? 1 : 0)).join('')
   const [hover, setHover] = useState<number | null>(null)
@@ -41,8 +50,12 @@ export default function Agents({ runKey }: { runKey?: string }) {
     }
     return [...set].filter((i) => i >= 0 && i < n).sort((a, b) => a - b)
   }, [lr, n])
-  const keys = useMemo(() => new Int16Array(n).fill(-2), [n, key, lensKey])
-  const colors = useMemo(() => PROFILE_COLORS.map((c) => new THREE.Color(c)), [])
+  const keys = useMemo(() => new Int16Array(n).fill(-2), [n, key, lensKey, agentColor])
+  const colors = useMemo(
+    () => (agentColor === 'profile' ? PROFILE_COLORS : [0, 1, 2, 3, 4, 5].map(() => STATUS_COLORS.moving)).map((c) => new THREE.Color(c)),
+    [agentColor],
+  )
+  const stairColor = useMemo(() => new THREE.Color(STATUS_COLORS.stairwell), [])
   const tmp = useMemo(
     () => ({
       m: new THREE.Matrix4(),
@@ -79,7 +92,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
         k = lensOn && !lens[ix.profile[i]] ? 200 : out.trapped ? 100 : out.st === 0 ? 0 : out.st === 2 ? 2 : out.st === 3 ? 30 + ix.profile[i] : 10 + ix.profile[i]
         const w = toWorld(out.x, out.y, floorY(f, useApp.getState().explode) + 0.87)
         p.set(w[0], w[1], w[2])
-        const sc = k >= 30 && k < 100 ? 0.6 : 1
+        const sc = i === useApp.getState().follow ? 0 : k >= 30 && k < 100 ? 0.6 : 1
         s.set(sc, sc, sc)
       } else {
         p.set(0, 0, 0)
@@ -93,7 +106,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
         else if (k === 100) c.set(TRAPPED)
         else if (k === 0) c.set(NOT_MOVING)
         else if (k === 2) c.set(WAITING)
-        else if (k >= 30) c.copy(colors[k - 30])
+        else if (k >= 30) c.copy(agentColor === 'profile' ? colors[k - 30] : stairColor)
         else c.copy(colors[k - 10])
         m.setColorAt(i, c)
         if (m.instanceColor) m.instanceColor.needsUpdate = true
@@ -167,9 +180,15 @@ export default function Agents({ runKey }: { runKey?: string }) {
           if (e.instanceId !== undefined) setHover(e.instanceId)
         }}
         onPointerOut={() => setHover(null)}
+        onClick={(e) => {
+          if (!useApp.getState().pickAgent || e.instanceId === undefined) return
+          e.stopPropagation()
+          useApp.getState().setFollow(e.instanceId)
+          useApp.getState().setNotice(null)
+        }}
       >
         <capsuleGeometry args={[0.22, 1.3]} />
-        <meshStandardMaterial />
+        <meshBasicMaterial toneMapped={false} />
       </instancedMesh>
       {llmIdx.length > 0 && (
         <instancedMesh key={`ring-${key}-${llmIdx.length}`} ref={ring} args={[undefined, undefined, llmIdx.length]} frustumCulled={false}>

@@ -65,7 +65,7 @@ export default function Scrubber() {
     <div className="scrubber">
       <button onClick={() => useClock.getState().toggle()} title="Space">{playing ? 'Pause' : 'Play'}</button>
       {[1, 2, 5, 10].map((s) => (
-        <button key={s} className={s === speed ? 'on' : ''} onClick={() => useClock.getState().setSpeed(s)}>{s}x</button>
+        <button key={s} className={(s === speed ? 'on' : '') + (s === 2 || s === 5 ? ' opt' : '')} onClick={() => useClock.getState().setSpeed(s)}>{s}x</button>
       ))}
       <div className="track">
         <input

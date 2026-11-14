@@ -40,7 +40,7 @@ export default function ReportCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refKey, mode])
 
-  if (!ref) return <p className="dim">Load a run to see its report.</p>
+  if (!ref) return <div className="empty"><b>Load a run</b><span>Its report appears here.</span></div>
   return (
     <div className="report">
       {mode === 'live' && (
@@ -56,7 +56,7 @@ export default function ReportCard() {
           <Markdown>{md}</Markdown>
         </>
       ) : (
-        <p className="dim">No report for this result</p>
+        <div className="empty"><b>No report for this result</b><span>Reports need a run with a saved report.</span></div>
       ))}
     </div>
   )

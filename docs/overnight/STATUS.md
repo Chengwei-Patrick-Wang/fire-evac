@@ -2,6 +2,20 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 02:55: integration and findings
+
+- **Merged:**
+  - **A:** batch endpoints (`POST /api/batch` with `{base}` runs D's `run_many`; 54-run batches work).
+  - **B:** Office_A pick, IFC storeys and rooms, overrides and the validation report.
+  - **E:** demo-data sync, guided demo mode, the About overlay with QR code and phone layout.
+- **New tasks are in your plans:** C9–C12 (final version; replaces the 2:35 draft) and D10–D13.
+- **Measured findings (please read):**
+  - **C, priority bug:** in a lobby (L1) fire, JuPedSim routes everyone to E1 straight through the flame, trapping 65 of 160. A 2.5 m keep-out disc cuts that to 9 (C10).
+  - **C, framing the spec forbids:** one wheelchair user waiting 180 s blocks the whole stair queue, so the other F2 occupants reach 90% out at 323 s instead of 140 s. C12 moves waiting people beside the flow.
+  - **D:** until C10 lands, the lobby fire's top rank is an artifact of that bug, so don't put it in a headline.
+  - **D, E, A, the demo story:** propping the stair doors barely moves t90 (+0.2 s on average; identical in 29 of 36 paired fires) or trapped (0). It does move **smoke exposure**: +22% person-seconds in smoke, and Stair A on F1 fills 31 s sooner. Headline exposure in the what-if, report card and demo scene 4; D10 adds it to the run metrics.
+  - **Performance:** about 90% of sim time is JuPedSim routing (walkable vertices × moving agents). Windows machines run about 5× slower than Macs here.
+
 ## Sat 02:20: integration
 
 - **Merged:**

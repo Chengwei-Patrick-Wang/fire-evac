@@ -14,6 +14,19 @@ export default function Toolbar3D() {
   const split = useApp((s) => s.split)
   const lens = useApp((s) => s.lens)
   const trails = useApp((s) => s.trails)
+  const agentColor = useApp((s) => s.agentColor)
+  const pick = useApp((s) => s.pickAgent)
+  const hasSmoke = useApp((s) => {
+    const r = s.activeRunKey ? s.runs[s.activeRunKey]?.run : undefined
+    return !!r?.smoke?.length
+  })
+  const hasHeat = useApp((s) => {
+    const r = s.activeRunKey ? s.runs[s.activeRunKey]?.run : undefined
+    return !!r?.metrics.heatmaps?.length
+  })
+  const crowding = useApp((s) => s.crowding)
+  const hasBatch = useApp((s) => s.batch !== null)
+  const hasRun = useApp((s) => s.activeRunKey !== null)
   const nRuns =useApp((s) => s.runOrder.length)
   if (!building) return null
   const set = useApp.setState
@@ -48,16 +61,24 @@ export default function Toolbar3D() {
         ['heatmap', 'Heatmap', heatmap],
         ['queues', 'Queues', queues],
         ['risk', 'Risk map', risk],
-      ] as const).map(([k, name, val]) => (
-        <label key={k}>
+      ] as const).map(([k, name, val]) => {
+        const why =
+          k === 'smoke' && !hasSmoke ? 'This run has no smoke frames'
+          : k === 'heatmap' && !hasHeat && !(crowding && risk) ? 'This run has no heatmap data'
+          : k === 'risk' && !hasBatch ? 'No batch for this building'
+          : ''
+        return (
+        <label key={k} className={why ? 'off' : ''} title={why || undefined}>
           <input
             type="checkbox"
-            checked={val}
+            disabled={!!why}
+            checked={val && !(k === 'smoke' && !hasSmoke) && !(k === 'heatmap' && !hasHeat && !(crowding && risk)) && !(k === 'risk' && !hasBatch)}
             onChange={(e) => set((s) => ({ layers: { ...s.layers, [k]: e.target.checked } }))}
           />{' '}
           {name}
         </label>
-      ))}
+        )
+      })}
       <label>
         <input type="checkbox" checked={trails} onChange={(e) => set({ trails: e.target.checked })} /> Trails
       </label>
@@ -65,7 +86,7 @@ export default function Toolbar3D() {
         <button
           key={n}
           title="Lens: highlight this profile"
-          className={lens.every(Boolean) || !lens[i] ? '' : 'on'}
+          className={'lens ' + (lens.every(Boolean) || !lens[i] ? '' : 'on')}
           onClick={() =>
             set((s) => {
               const all = s.lens.every(Boolean)
@@ -79,7 +100,24 @@ export default function Toolbar3D() {
           {n}
         </button>
       ))}
-      <button disabled={nRuns < 2} className={split ? 'on' : ''} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
+      <button
+        title="Color agents by status or by profile"
+        onClick={() => set((s) => ({ agentColor: s.agentColor === 'status' ? 'profile' : 'status' }))}
+      >
+        Color: {agentColor}
+      </button>
+      <button
+        disabled={split || !hasRun}
+        className={pick ? 'on' : ''}
+        onClick={(e) => {
+          const on = !useApp.getState().pickAgent
+          set({ pickAgent: on, notice: on ? 'Click a person to see what they see' : null })
+          e.currentTarget.blur()
+        }}
+      >
+        Agent view
+      </button>
+      <button disabled={nRuns < 2} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
     </div>
   )

@@ -12,7 +12,7 @@ const ROOM_COLORS: Record<string, string> = {
   classroom: '#38bdf8', office: '#a78bfa', lobby: '#34d399', corridor: '#64748b',
   lab: '#f472b6', kitchen: '#fb923c', restroom: '#94a3b8', storage: '#a16207',
 }
-const DOOR_COLORS: Record<DoorState, string> = { open: '#3b82f6', closed: '#1e3a8a', propped: '#22d3ee', blocked: '#ef4444' }
+export const DOOR_COLORS: Record<DoorState, string> = { open: '#3b82f6', closed: '#1e3a8a', propped: '#22d3ee', blocked: '#ef4444' }
 
 function shapeOf(poly: Vec2[]) {
   const s = new THREE.Shape()
@@ -102,7 +102,7 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
         <Walls floor={floor} />
       </group>
       {roomsOn &&
-        rooms.map((r) => <Flat key={r.id} poly={r.polygon} y={0.02} color={ROOM_COLORS[r.type] ?? '#94a3b8'} opacity={0.12} />)}
+        rooms.map((r) => <Flat key={r.id} poly={r.polygon} y={0.02} color={ROOM_COLORS[r.type] ?? '#475569'} opacity={0.15} />)}
       {labels &&
         rooms.map((r) => {
           const [x, y] = centroid(r.polygon)
@@ -121,7 +121,7 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
         const [x, y] = centroid(s.polygon)
         return (
           <group key={s.id}>
-            <Flat poly={s.polygon} y={0.04} color="#f97316" opacity={0.6} />
+            <Flat poly={s.polygon} y={0.04} color="#f97316" opacity={0.35} />
             {labels && (
               <Html position={toWorld(x, y, 0.3)} center style={labelStyle}>
                 <div style={{ fontSize: 11, color: '#fdba74', textShadow: '0 0 3px #000' }}>{s.group}</div>

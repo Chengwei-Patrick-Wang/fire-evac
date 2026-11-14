@@ -40,8 +40,8 @@ export default function ExitBars() {
     return { rows, used: [...usedSet].sort(), any }
   }, [lr, building])
 
-  if (!lr) return <p className="dim">Load a run</p>
-  if (!data.any) return <p className="dim">No one reached an exit in this run</p>
+  if (!lr) return <div className="empty"><b>Load a run</b><span>Exit use appears once a run is loaded.</span></div>
+  if (!data.any) return <div className="empty"><b>No exits used</b><span>No one reached an exit in this run.</span></div>
   return (
     <div style={{ width: '100%', height: 200 }}>
       <ResponsiveContainer>
