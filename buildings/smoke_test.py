@@ -1,6 +1,6 @@
 """Smoke test for the normalizer: python -m buildings.smoke_test
 
-Normalizes contracts/plan.example.json, writes contracts/building.example.json,
+Normalizes contracts/plan.example.json, writes debug/building.example.json,
 and checks the review-focus geometry (rooms separated by walls, exits, stairs).
 """
 from __future__ import annotations
@@ -16,12 +16,31 @@ from buildings.normalize import plan_to_building
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = ROOT / "contracts" / "plan.example.json"
-OUT = ROOT / "contracts" / "building.example.json"
+OUT = ROOT / "debug" / "building.example.json"
+IFC_PATH = ROOT / "data" / "raw" / "team-downloads" / "Office_A_20110811.ifc"
+
+
+def check_ifc():
+    if not IFC_PATH.exists():
+        print("SKIP ifc: file missing")
+        return
+    from buildings.ifc import extract
+    plan = extract(IFC_PATH)
+    floors = plan["floors"]
+    assert floors and all(f["rooms"] for f in floors)
+    assert all(a["elevation"] < b["elevation"] for a, b in zip(floors, floors[1:]))
+    polygons = [Polygon(r["polygon"]) for f in floors for r in f["rooms"]]
+    assert all(p.is_valid and not p.interiors and 1 <= p.area <= 2000 for p in polygons)
+    minx, miny, maxx, maxy = unary_union(polygons).bounds
+    assert minx == 0 and miny == 0
+    assert 10 <= maxx <= 500 and 10 <= maxy <= 500
+    print(f"IFC: {len(floors)} floors, {len(polygons)} rooms, {maxx:.1f} x {maxy:.1f} m")
 
 
 def main() -> int:
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
     b = plan_to_building(plan)
+    OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(b, indent=1), encoding="utf-8")
 
     assert b["version"] == "building/v0"
@@ -73,6 +92,7 @@ def main() -> int:
         assert n_parts == expected, f"{f['id']}: {n_parts} pieces without doors, expected {expected}"
 
     print(f"wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.0f} KB)")
+    check_ifc()
     print("OK")
     return 0
 
