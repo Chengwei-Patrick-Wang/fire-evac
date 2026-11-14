@@ -150,6 +150,19 @@ try {
     await page.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
     webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'))
   })
+  await step('whatif-static', async () => {
+    // No VITE_API_URL here, so the app is in static mode: the Sprinklers box must be off and quote the measured what-if.
+    const box = page.locator('.scenario .whatif')
+    await box.scrollIntoViewIfNeeded()
+    await page.waitForFunction(() => /fires:/.test(document.querySelector('.scenario .whatif .note')?.textContent ?? ''), null, { timeout: 5000 }).catch(() => {})
+    const check = box.locator('label.check', { hasText: 'Sprinklers' }).locator('input[type=checkbox]')
+    if ((await check.count()) === 0 || (await check.isEnabled())) problems.push('whatif-static: the Sprinklers checkbox is missing or enabled in static mode')
+    const notes = box.locator('p.note')
+    const note = (await notes.count()) > 0 ? ((await notes.first().textContent()) ?? '') : ''
+    if (!/Sprinklers need the live backend/.test(note)) problems.push(`whatif-static: note lacks "Sprinklers need the live backend": "${note}"`)
+    if (!/fires:/.test(note)) problems.push(`whatif-static: note lacks the measured "fires:" quote: "${note}"`)
+    await shot('whatif-static')
+  })
   await step('replay-60s', async () => {
     const t0 = Date.now()
     await page.evaluate(() => {

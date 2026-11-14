@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../store/app'
 import { compareRuns, defaultWhatIfDoor, stairDoors } from '../model/whatif'
-import { pairHeadline } from '../model/exposure'
+import { pairHeadline, readWhatIf } from '../model/exposure'
 import type { DoorState } from '../data/types'
 
 const STATES: DoorState[] = ['propped', 'open', 'closed', 'blocked']
@@ -17,6 +17,9 @@ export default function WhatIfCard() {
   const err = useApp((s) => s.whatIfError)
   const runWhatIf = useApp((s) => s.runWhatIf)
   const switchRun = useApp((s) => s.switchRun)
+  const live = useApp((s) => s.mode) === 'live'
+  const batch = useApp((s) => s.batch)
+  const headlines = useApp((s) => s.headlines)
   const active = activeKey ? runs[activeKey] : null
   const base = active?.whatIf ? runs[active.whatIf.baselineKey] : active
   const fire = base?.run.fire
@@ -31,6 +34,11 @@ export default function WhatIfCard() {
   )
   const def = building && fire ? defaultWhatIfDoor(building, fire) : null
   const chosen = door || def || ''
+
+  // Static mode cannot run sprinklers, so quote the measured what-if (the batch's, else the headline pack's).
+  const measured = live
+    ? undefined
+    : [...readWhatIf(batch), ...(headlines?.whatIf ?? [])].find((e) => e.id === 'sprinklers' && typeof e.n === 'number' && e.n > 0)
 
   // W toggles between the baseline and the latest what-if.
   useEffect(() => {
@@ -81,10 +89,22 @@ export default function WhatIfCard() {
         </select>
       </div>
       <label className="check">
-        <input type="checkbox" checked={sprinklers} onChange={(e) => setSprinklers(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={live && sprinklers}
+          disabled={!live}
+          title={live ? undefined : 'Sprinklers need the live backend'}
+          onChange={(e) => setSprinklers(e.target.checked)}
+        />
         Sprinklers
       </label>
-      <button className="run" disabled={!base || !chosen || !!busy} onClick={() => void runWhatIf(chosen, state, sprinklers)}>
+      {!live && (
+        <p className="dim note">
+          Sprinklers need the live backend.
+          {measured ? ` Measured across ${measured.n} fires: ${measured.why}` : ' This static demo has precomputed propped-door runs only.'}
+        </p>
+      )}
+      <button className="run" disabled={!base || !chosen || !!busy} onClick={() => void runWhatIf(chosen, state, live && sprinklers)}>
         {busy ?? 'Run what-if'}
       </button>
       {err && <p className="err">{err}</p>}

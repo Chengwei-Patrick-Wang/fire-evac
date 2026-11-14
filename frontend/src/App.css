@@ -66,6 +66,7 @@ select { background: var(--line); color: inherit; border: 1px solid var(--line-s
 .scenario .doorrow { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
 .scenario button.run { background: #f97316; color: var(--bg); font-weight: 600; }
 .scenario .err { color: var(--danger); }
+.whatif .note { margin: 2px 0 6px; font-size: var(--fs-xs) }
 .credits.split { display: flex }
 .credits.split .src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis }
 .credits .lic { flex: none; margin-left: 12px }
