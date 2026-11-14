@@ -117,23 +117,64 @@ def check_ifc():
     assert sample[0]["rooms"][0]["group"] == sample[1]["rooms"][0]["group"]
     assert sample[1]["rooms"][0]["group"] != sample[1]["rooms"][1]["group"]
 
-def check_building(name="office"):
-    from buildings.validate import validate
-    building = json.loads((ROOT / f"data/buildings/{name}.json").read_text(encoding="utf-8"))
-    assert validate(building)["ok"]
-    assert "license" in building["credits"].lower()
-    assert any(f["exits"] for f in building["floors"] if f["level"] == 0)
-    groups = {}
-    for floor in building["floors"]:
-        rooms = {r["id"]: Polygon(r["polygon"]) for r in floor["rooms"]}
-        for stair in floor["stairs"]:
-            groups.setdefault(stair["group"], set()).add(floor["id"])
-        for door in floor["doors"]:
-            assert 0.6 <= door["width"] <= 3.0
-            if "outside" not in door["connects"]:
-                for rid in door["connects"]:
-                    assert Polygon(door["rect"]).intersection(rooms[rid]).area >= 0.01, (door["id"], rid)
-    assert groups and all(len(floors) >= 2 for floors in groups.values())
+def check_public_buildings():
+    from buildings.validate import problems
+    found, ids = [], set()
+    for path in sorted((ROOT / 'data/buildings').glob('*.json')):
+        building = json.loads(path.read_text(encoding='utf-8'))
+        if building.get('version') != 'building/v0':
+            continue
+        if building['id'] != path.stem:
+            found.append(f'{path.name} id does not match file stem')
+        if building['id'] in ids:
+            found.append(f"{path.name} duplicate id {building['id']}")
+        ids.add(building['id'])
+        scenario_path = path.with_name(path.stem + '.scenario.json')
+        scenario = json.loads(scenario_path.read_text(encoding='utf-8')) if scenario_path.exists() else None
+        issues = problems(building, scenario)
+        found.extend(f'{path.name} {issue}' for issue in issues)
+        if not issues:
+            exits = sum(len(f['exits']) for f in building['floors'])
+            print(f"public {path.name}: {len(building['floors'])} floors, {exits} exits, clean")
+    assert not found, 'public buildings:\n  ' + '\n  '.join(found)
+
+
+def check_problems():
+    import copy
+    from buildings.validate import problems
+    plan = hard_plan()
+    plan['name'] = 'Synthetic test'
+    plan['credits'] = 'Synthetic test plan; license: CC0'
+    issues = problems(plan_to_building(plan))
+    assert any('R9' in s and 'cut off' in s for s in issues)
+    assert any('R9' in s and 'no door' in s for s in issues)
+    assert all(any(f'group {group}' in s for s in issues) for group in ('SA', 'SB'))
+    overrides = {'doors': {'add': [{'floor': 'F1', 'id': 'DFIX1', 'a': [10.9, 6.3],
+                                   'b': [11.9, 6.3], 'width': 1.0}]},
+                 'stairGroups': {'SA': ['SL', 'SU']}, 'exits': {'remove': ['DU']}}
+    fixed = plan_to_building(plan, overrides=overrides)
+    assert not problems(fixed), problems(fixed)
+    bad = copy.deepcopy(fixed)
+    bad['credits'] = ''
+    assert any('credits' in s for s in problems(bad))
+    bad = copy.deepcopy(fixed)
+    zone = bad['floors'][0]['exits'][0]
+    poly = Polygon(zone['polygon'])
+    x, y = poly.exterior.coords[0]
+    # Remove a small triangle from a corner, yielding a concave polygon.
+    coords = list(poly.exterior.coords)[:-1]
+    a, b = coords[1], coords[-1]
+    def toward(p):
+        length = ((p[0]-x)**2 + (p[1]-y)**2)**0.5
+        return [x + (p[0]-x)*0.1/length, y + (p[1]-y)*0.1/length]
+    zone['polygon'] = [toward(b), [x + (toward(a)[0]-x) + (toward(b)[0]-x), y + (toward(a)[1]-y) + (toward(b)[1]-y)], toward(a)] + coords[1:]
+    assert any('DX' in s and 'not convex' in s for s in problems(bad))
+    bad = copy.deepcopy(fixed)
+    zone = bad['floors'][0]['exits'][0]
+    zone['polygon'] = [[x + 50, y + 50] for x, y in zone['polygon']]
+    assert any('DX' in s and 'outside walkable' in s for s in problems(bad))
+    scenario = {'buildingId': fixed['id'], 'fire': {'floor': 'F1', 'room': 'R999', 'x': 0, 'y': 0}, 'occupants': {'total': 1}}
+    assert any('R999' in s for s in problems(fixed, scenario))
 
 
 def check_clinic():
@@ -288,8 +329,8 @@ def main() -> int:
     check_one_door()
     check_hard()
     check_overrides()
-    check_building()
-    check_building("clinic")
+    check_public_buildings()
+    check_problems()
     check_clinic()
     check_office()
     pick = ROOT / "data" / "raw" / "pick.plan.json"

@@ -100,6 +100,15 @@ ID or floors. Rerun `python -m buildings.summary` after changing any building in
 `data/buildings/`; use `python -m buildings.summary --check` to detect a stale
 index without writing it. A folder and `--out PATH` may also be supplied.
 
+## Public building validation
+
+Run `python -m buildings.validate FILE...` to list geometry, connectivity,
+door, credit and scenario problems. A neighboring `<stem>.scenario.json` is
+checked automatically. The command exits 1 if any problem is found; upper-floor
+exits are allowed. Python callers can use `problems(building, scenario=None)`.
+The buildings smoke test checks every public `building/v0` file in
+`data/buildings/` and reports all issues together.
+
 ## Vertex budget (B12)
 
 Pass `--max-vertices N` to the normalizer to try reducing walkable vertices per floor. The budget is off by default; committed buildings are not budgeted. The normalizer preserves door openings and checks topology, exit and stair zones, and area; it warns when the target cannot be met.
