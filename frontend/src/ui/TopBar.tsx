@@ -50,6 +50,14 @@ export default function TopBar({
       >
         {touring ? 'Stop demo' : 'Demo'}
       </button>
+      <button
+        onClick={(e) => {
+          useApp.getState().setShare(!useApp.getState().share)
+          e.currentTarget.blur()
+        }}
+      >
+        Share
+      </button>
       <button onClick={() => useApp.getState().setAbout(true)}>About</button>
       <label className="file">
         Open file

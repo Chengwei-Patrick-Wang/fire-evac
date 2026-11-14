@@ -2,8 +2,8 @@ import { useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
 import { useTour } from '../tour/tour'
+import { phoneReachable, shareUrl } from '../model/link'
 
-const SITE_URL = (import.meta.env.VITE_SITE_URL as string | undefined) ?? ''
 
 export function markAboutSeen() {
   try {
@@ -16,6 +16,7 @@ export function markAboutSeen() {
 export function shouldAutoOpenAbout(): boolean {
   const p = new URLSearchParams(location.search)
   if (p.has('demo') || p.has('sample')) return false
+  if (new URLSearchParams(location.hash.replace(/^#/, '')).has('b')) return false
   try {
     return !localStorage.getItem('fes.aboutSeen')
   } catch {
@@ -44,6 +45,7 @@ export default function AboutOverlay() {
   }, [about])
 
   if (!about) return null
+  const url = phoneReachable() ? shareUrl() : null
   const extra = credits && !/synthetic/i.test(credits) ? credits : null
   return (
     <div className="about-backdrop" role="dialog" aria-modal="true" aria-label="About" onClick={close}>
@@ -68,14 +70,14 @@ export default function AboutOverlay() {
           <li>Libraries: JuPedSim, three.js, React Three Fiber, Recharts</li>
         </ul>
         <p className="dim">Shortcuts: Space play/pause, W baseline ↔ what-if, 1–6 demo scenes, Esc stops the demo.</p>
-        {SITE_URL && (
+        {url && (
           <div className="qr">
             <div className="qrtile">
-              <QRCodeSVG value={SITE_URL} size={160} level="M" />
+              <QRCodeSVG value={url} size={160} level="M" />
             </div>
             <div>
               <div>Scan to scrub the replay on your phone</div>
-              <a href={SITE_URL}>{SITE_URL}</a>
+              <a href={url}>{url}</a>
             </div>
           </div>
         )}

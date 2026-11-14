@@ -173,6 +173,51 @@ try {
     await blankCheck('scene4')
     await page.evaluate(() => window.__tour.getState().stop())
   })
+  await step('deeplink', async () => {
+    await page.evaluate(() => {
+      window.__tour.getState().stop()
+      const a = window.__app
+      a.setState({ split: false, resultsTab: 'risk', explode: 0.5, topView: a.getState().topView + 1 })
+      a.setState({ layers: { ...a.getState().layers, heatmap: true, labels: false } })
+      window.__clock.setState({ playing: false })
+      window.__clock.getState().seek(42)
+    })
+    await page.waitForTimeout(2500)
+    const hash = await page.evaluate(() => location.hash)
+    if (!hash.includes('t=42')) problems.push(`deeplink: hash lacks t=42: ${hash}`)
+    const a = await page.evaluate(() => ({ pose: { p: [...window.__pose.p], t: [...window.__pose.t] }, explode: window.__app.getState().explode, heat: window.__app.getState().layers.heatmap, labels: window.__app.getState().layers.labels }))
+    await shot('deeplink-a')
+    const url = page.url().split('#')[0].split('?')[0] + '?qa' + hash
+    const p2 = await ctx.newPage()
+    p2.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[deeplink-b] ${m.text()}`)
+    })
+    p2.on('pageerror', (e) => errors.push(`[deeplink-b] ${String(e)}`))
+    try {
+      await p2.goto(url)
+      await p2.waitForFunction(() => {
+        const g = window.__app?.getState()
+        return g && g.resultsTab === 'risk' && g.activeRunKey && Math.abs(window.__clock.getState().t - 42) < 0.11
+      }, null, { timeout: 30000, polling: 250 })
+      await p2.waitForTimeout(2000)
+      const b = await p2.evaluate(() => ({ pose: { p: [...window.__pose.p], t: [...window.__pose.t] }, explode: window.__app.getState().explode, heat: window.__app.getState().layers.heatmap, labels: window.__app.getState().layers.labels }))
+      if (a.explode !== b.explode) problems.push(`deeplink: explode ${a.explode} vs ${b.explode}`)
+      if (a.heat !== b.heat || a.labels !== b.labels) problems.push('deeplink: layers differ')
+      for (const k of ['p', 't']) for (let i = 0; i < 3; i++) if (Math.abs(a.pose[k][i] - b.pose[k][i]) > 0.5) problems.push(`deeplink: pose ${k}${i} ${a.pose[k][i]} vs ${b.pose[k][i]}`)
+      await p2.screenshot({ path: join(out, 'deeplink-b.png') })
+      shots.push('deeplink-b')
+    } finally {
+      await p2.close()
+    }
+    lines.push('deeplink ok')
+  })
+  await step('share', async () => {
+    await page.locator('header.topbar button', { hasText: 'Share' }).click()
+    await page.locator('[role=dialog][aria-label="Share this view"]').waitFor({ timeout: 10000 })
+    await page.waitForTimeout(500)
+    await shot('share')
+    await page.keyboard.press('Escape')
+  })
   for (let n = 0; n < opens.length; n++) {
     await step(`open-${n + 1}`, async () => {
       await page.locator('header.topbar label.file input').setInputFiles(opens[n])
