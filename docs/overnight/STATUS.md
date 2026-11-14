@@ -1,5 +1,20 @@
 # Overnight status
 
+## Sat 17:50: D25, E36 and C23 merged; the project is called Fireproof
+
+**Name:** the project is **Fireproof** (the lead's call). It replaces "Ember", "FirePass" and "Chokepoint". E37 puts it in the app header, About box, tracer bar and page title. **Aidan:** please retitle `FirePass.pptx`.
+
+**Merged:**
+- **D25:** fire spreads room to room at an illustrative speed per material. New runs now spread by default, and doors of burning rooms close.
+- **E36:** the Ember light theme and shell: collapsible top nav, left analytics sidebar, floor strip, timeline and legend card. The tracer moved to File > "Trace a floor plan". The public site shows it now.
+- **C23:** a fire in every room of the office and clinic (311 cases: 295 fine, 16 with stuck people). Keep-out gaps under 0.4 m are skipped. Repros for the rest are in the C plan.
+
+**Running on the lead's machine:**
+- **C27:** first closes the hairline strips beside fire keep-outs, where people got stuck and counted as trapped (R201: 26 → 0; R237b: 12 → 0). Then rooms that catch fire close their doors and trap the people still inside.
+- **E37:** the grey walls-and-glass building, four floor views, the fire and smoke visibility card and agent type colors. Exit bars get readable names, and the FPS counter only shows with `?perf`.
+
+**Next:** the A11 part 2 demo rerun starts as soon as C27 is merged. Its data reaches main only after E38. Target: new demo data live around 9:45 PM.
+
 ## Sat 17:20: no merges; Aidan's deck is on main
 
 **On main:**
