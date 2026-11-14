@@ -69,6 +69,12 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Every spawned pool worker reserves OpenBLAS buffers for each logical core: 515 MB of commit against 33 MB with one
+# thread (D15, fire/README.md). The sim's results do not change, and this machine hit its commit limit with two
+# batches running, so the workers (they inherit this) get one thread unless the caller says otherwise.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # `python tools/precompute_demo.py`: the repo root is not on the path yet
     sys.path.insert(0, str(ROOT))
@@ -96,14 +102,18 @@ PRESETS = {
     # (The blocked-exit what-if used to be left out here: stair arrivals next to a blocked exit crashed the
     # sim until C13b. A fire that still fails is dropped from its pair and counted, so it stays in;
     # "--skip-variants blockedExit" leaves it out again.)
-    "office": {"occupants": 250, "fire_type": "kitchen"},
+    # a pair of thinned office runs is 2 MB: three pairs keep the demo folder under its 15 MB aim. R143 is the scenario's
+    # own room and the best what-if story (the stair door next to it), R203c the worst fire (most people trapped) and R237b
+    # the OPEN OFFICE fire the team quotes (D15); "--top 4" (the 4 highest-risk plus R143) or "--rooms" replaces them.
+    "office": {"occupants": 250, "fire_type": "kitchen", "rooms": ["R143", "R203c", "R237b"], "sweep_rooms": 8},
     # the clinic's design occupancy (D21: 3,910 m2 of walkable floor / 13.9 m2 per person, rounded to 10) and the same
-    # kitchen preset. A clinic run is 2-4 MB and minutes long, so its demo is one pair (--rooms R1AC1, the waiting
-    # room C18 measured) and a smaller batch (--max-rooms 24, --sweep-rooms 3)
-    "clinic": {"occupants": 280, "fire_type": "kitchen"},
-    # DSA1 is the stair door of the demo story; 2 rooms and the kitchen keep the static payload under its 15 MB aim;
+    # kitchen preset. A clinic run is 2-4 MB and minutes long, so its demo is one pair (R1AC1, the waiting room C18
+    # measured) and a smaller batch (24 evenly spaced rooms, sweeps on the 3 worst). The preset keys "rooms",
+    # "max_rooms" and "sweep_rooms" stand for --rooms, --max-rooms and --sweep-rooms; the command line wins.
+    "clinic": {"occupants": 280, "fire_type": "kitchen", "rooms": ["R1AC1"], "max_rooms": 24, "sweep_rooms": 3},
+    # DSA1 is the stair door of the demo story; the worst room and the kitchen keep the static payload under its 15 MB aim;
     # home_point: the kitchen baseline is the very fire of contracts/run.example.json, which sync-demo lists too
-    "example-office": {"propped_door": "DSA1", "top": 2, "home_point": True},
+    "example-office": {"propped_door": "DSA1", "top": 1, "home_point": True},
 }
 
 
@@ -683,7 +693,15 @@ def write_atomic(path: Path, content: str | bytes) -> None:
         tmp.write_text(content, encoding="utf-8", newline="\n")
     else:
         tmp.write_bytes(content)
-    os.replace(tmp, path)
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:  # Windows: a scanner, a watcher or a browser holds the target for a moment (seen once)
+            if attempt == 39:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.5)
 
 
 def run_entry(key: str, building: dict, scenario: dict, run: dict, file: str, variant: str, door: str | None) -> dict:
@@ -832,6 +850,13 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     if problem:
         fail(problem, 2)
     preset = PRESETS.get(building_id, {})
+    args = copy.copy(args)  # --all shares one command line between buildings; each gets its own defaults
+    if not args.rooms and args.top is None and preset.get("rooms"):  # --top asks for the risk ranking instead
+        args.rooms = list(preset["rooms"])
+    if args.max_rooms is None and preset.get("max_rooms") is not None:
+        args.max_rooms = preset["max_rooms"]
+    if args.sweep_rooms is None:
+        args.sweep_rooms = preset.get("sweep_rooms", SWEEP_ROOMS)
     seeds = sorted(set(args.seeds))
     workers = args.workers or default_workers()
     base = base_scenario(building, source, args, preset, seeds)
@@ -1131,7 +1156,7 @@ def parse_args(argv):
     p.add_argument("--all", action="store_true", help="every public building")
     p.add_argument("--rooms", type=lambda s: [r for r in s.split(",") if r], metavar="R1,R2",
                    help="fire rooms for the baseline and propped runs, in this order (default: the 4 highest-risk plus the first kitchen)")
-    p.add_argument("--top", type=int, metavar="N", help=f"how many highest-risk rooms get runs (default {TOP_ROOMS}, example 3)")
+    p.add_argument("--top", type=int, metavar="N", help=f"how many highest-risk rooms get runs (default {TOP_ROOMS}, example-office 1)")
     p.add_argument("--max-rooms", type=int, metavar="N", help="batch: N evenly spaced fire rooms instead of every room")
     p.add_argument("--propped-door", metavar="DOOR", help="door that is closed in the baseline and propped in the what-if")
     p.add_argument("--batch", type=Path, metavar="FILE",
@@ -1142,12 +1167,12 @@ def parse_args(argv):
     p.add_argument("--occupants", type=int, metavar="N", help="total occupants (office default 250)")
     p.add_argument("--fire-type", metavar="TYPE", help="kitchen, bedroom, battery, trash or liquid (office default kitchen)")
     p.add_argument("--thin", action="store_true", help="every 2nd agent frame, every 3rd smoke frame")
-    p.add_argument("--sweep-rooms", type=int, default=SWEEP_ROOMS, metavar="N",
-                   help=f"rooms the what-if sweep and fixes rerun (default {SWEEP_ROOMS})")
+    p.add_argument("--sweep-rooms", type=int, metavar="N",
+                   help=f"rooms the what-if sweep and fixes rerun (default {SWEEP_ROOMS}; office 8, clinic 3)")
     p.add_argument("--no-sweeps", action="store_true", help="skip the what-if sweep and the measured fixes")
     p.add_argument("--skip-variants", type=lambda s: [] if s == "none" else [v for v in s.split(",") if v], metavar="ID,ID",
-                   help="what-if variants to leave out (office default blockedExit; 'none' keeps them all)")
-    p.add_argument("--workers", type=int, metavar="N", help="processes (default: cores - 2, at most 10)")
+                   help="what-if variants to leave out, such as blockedExit (default: none left out; 'none' also means that)")
+    p.add_argument("--workers", type=int, metavar="N", help="processes (default: cores - 2, at most 10; each holds about 33 MB with the one-thread BLAS this tool sets)")
     p.add_argument("--resume", action="store_true", help="reuse the raw batch of the last run when it still fits")
     p.add_argument("--live-reports", action="store_true", help="instead of simulating: rewrite report-*.md with Gemini from the batches already in --out")
     p.add_argument("--refresh-reports", action="store_true", help="instead of simulating: write report-*.md again as template cards (no model) from the batches already in --out")
@@ -1159,7 +1184,8 @@ def parse_args(argv):
         p.error("give --building ID (or --all)")
     if args.batch and (args.all or len(args.building or []) != 1):
         p.error("--batch needs exactly one --building")
-    if (args.top is not None and args.top < 0) or (args.max_rooms is not None and args.max_rooms < 1) or args.sweep_rooms < 0:
+    if (args.top is not None and args.top < 0) or (args.max_rooms is not None and args.max_rooms < 1) or (
+            args.sweep_rooms is not None and args.sweep_rooms < 0):
         p.error("--top and --sweep-rooms cannot be negative, --max-rooms must be at least 1")
     if not args.seeds:
         p.error("--seeds needs at least one seed")
