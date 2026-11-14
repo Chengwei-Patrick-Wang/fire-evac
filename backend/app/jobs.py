@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import sys
 import threading
 import traceback
 import uuid
@@ -37,15 +38,37 @@ def _json_default(o):
     raise TypeError(f"{type(o).__name__} is not JSON serializable")
 
 
-def _worker(run_id: str, building: dict, scenario: dict) -> str:
-    """Runs in a pool process: sim, then metrics, then save. Returns the saved path."""
+def _fire_model(building: dict, scenario: dict):
+    """fire.model.FireModel(building, scenario) once D's module imports, else None (the sim's
+    own default). A module that is there but broken is not hidden: other import errors print
+    a warning, and any other exception from importing or building the model propagates."""
+    try:
+        from fire.model import FireModel
+    except ImportError as e:
+        if not (isinstance(e, ModuleNotFoundError) and e.name == "fire.model"):
+            print(f"WARNING (jobs): fire.model does not import yet: {e}", file=sys.stderr)
+        return None
+    return FireModel(building, scenario)
+
+
+def simulate(building: dict, scenario: dict) -> dict:
+    """Sim plus metrics: a run/v0 whose metrics are the sim's merged with fire.metrics.compute.
+    Not saved, and `id` is whatever the sim set: the caller names it. Used by the pool worker
+    below and by tools/precompute_demo.py (no pool, runs in this process)."""
     from fire.metrics import compute as compute_metrics  # lazy: may not have landed yet
     from sim.run import run as run_sim
 
-    run = run_sim(building, scenario)  # fire=None: the sim picks its default fire model
-    run["id"] = run_id
+    # FireModel is passed explicitly so smoke shows up without waiting for the sim's default
+    run = run_sim(building, scenario, fire=_fire_model(building, scenario))
     # compute() returns the full metrics dict (or just the extras): merge handles both
     run["metrics"] = {**(run.get("metrics") or {}), **(compute_metrics(run, building) or {})}
+    return run
+
+
+def _worker(run_id: str, building: dict, scenario: dict) -> str:
+    """Runs in a pool process: simulate, then save. Returns the saved path."""
+    run = simulate(building, scenario)
+    run["id"] = run_id
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     text = json.dumps(run, default=_json_default, separators=(",", ":"), allow_nan=False)
