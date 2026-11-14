@@ -454,3 +454,63 @@ D10 verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
 both print `fire checks OK`. Spawned and inline batches match with the new
 fields, room dose risks are present, and older hand-made records retain their
 previous output shape when dose data is absent.
+
+## What-if sweep (D11)
+
+`fire.whatif.add_whatif(building, base, batch, variants=None, rooms=None,
+workers=None, timeout_s=7200, progress=True)` returns a deep copy with optional
+`whatIf` comparisons. The CLI enables it with `--whatif`, after any `--exits`
+comparison; `--whatif-rooms N` restricts it to the N highest-risk rooms in the
+baseline (null `riskT90` counts as `maxTime`). Ignitions retain baseline order
+and seeds come from the baseline. Each variant receives a fresh copy of the
+base, merged door overrides, its explicit sprinkler setting, and a distinct id.
+Each rerun is rule-based and has its own batch timeout.
+
+The default variants are all interior stair doors propped open, the most-used
+exterior exit blocked (only for buildings with at least two exits), and
+sprinklers on (unless already on). Stair doors join a room listed in `stairs`
+or typed `stair`, excluding outside connections. Exit use is summed from
+`runs[].exitCounts`, keyed by exit id; ties prefer the wider door, then the
+lexically first exit id. The blocked override uses that exit's door id. All
+variants preserve other base door states and preserve base sprinklers except
+for the sprinkler variant.
+
+| Field | Definition |
+| --- | --- |
+| `id`, `label`, `doors`, `sprinklers` | Variant identity, display label, door overrides and explicit sprinkler setting |
+| `n` | Successful matched ignition-floor/room/seed pairs |
+| `dT90`, `dT90Min`, `dT90Max` | Mean, minimum and maximum variant-minus-baseline evacuation-time differences; null t90 counts as base maxTime |
+| `slower`, `faster` | Pair counts with evacuation-time difference strictly above +1 s or below -1 s |
+| `dTrapped` | Mean variant-minus-baseline trapped count over matched pairs |
+| `dDosed`, `dSmokeSeconds` | Mean variant-minus-baseline illustrative dose count and person-seconds in smoke; each included only if both sides of every matched pair carry that measure |
+| `why` | ASCII explanation of paired time, exposure and trapped differences |
+| Batch `runs[].exitCounts` | Per-exit evacuated counts retained from simulator metrics |
+
+Missing or failed runs drop the pair from both sides. No matched pairs gives
+`n=0`, zero time/trapped deltas, omitted exposure deltas, and an explicit
+no-data explanation. A zero censored time delta cannot establish equal
+clearance times. These are illustrative model comparisons, and the dose is
+not a prediction of injury or survival. Exposure is the useful headline for
+propped stair doors even when evacuation times barely change.
+
+A handoff: call `add_whatif` after `run_many` in the precompute; its `why` lines
+suit the report card. E handoff: optional batch `whatIf` contains these paired
+comparisons; optional `runs[].exitCounts` supports exit-use displays. No shared
+contract or frontend files changed.
+
+D11 verification: `python -m fire.smoke_test` and
+`python -m fire.checks --slow` both print `fire checks OK`. The requested
+six-room, seeds 1 and 2 CLI completed 48 simulations in 83.9 s with 12
+baseline runs, no baseline failures, and 12 matched pairs per variant:
+
+```text
+Stair doors propped open: 90% out 0 s later on average (slower in 0 of 12 fires); +427 person-seconds in smoke, +0.5 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+Exit Main entrance blocked: 90% out 54 s later on average (slower in 10 of 12 fires); +5,250 person-seconds in smoke, +23.8 people at an illustrative smoke dose of 1, -9.8 trapped per fire.
+Sprinklers on: 90% out 1 s sooner on average (slower in 0 of 12 fires); -72 person-seconds in smoke, -0.8 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+```
+
+These measured examples include the lobby routing artifact identified in the
+lead's overnight notes, pending C10. The lobby rank and the reduction in
+trapped people when blocking the main entrance must not be used as demo
+headlines; regenerate these comparisons after the routing fix. Propping
+stair doors increases exposure despite the nearly unchanged t90.

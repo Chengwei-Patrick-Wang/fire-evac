@@ -681,6 +681,99 @@ def check_exits_slow():
     print("exits: E1/E2 blocked comparisons completed with two matched runs each", flush=True)
 
 
+def check_whatif():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.whatif import stair_doors, default_variants, compare, add_whatif
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["doors"] = {"D101": "closed", "DSA1": "closed"}
+    assert set(stair_doors(building)) == {"DSA1", "DSB1", "DSA2", "DSB2"}
+
+    def record(room, seed, t90, trapped=0, dosed=1, smoke=100):
+        return {"ignition": {"floor": "F1", "room": room}, "seed": seed, "t90": t90,
+                "trapped": trapped, "dosed": dosed, "smokeSeconds": smoke,
+                "exitCounts": {"E1": 45, "E2": 35}}
+
+    baseline = [record("R101", 1, 60), record("R105", 1, None, 2), record("R105", 2, 80)]
+    variants = default_variants(building, base, baseline[:2])
+    assert variants[1]["doors"] == {"E1": "blocked"}
+    one_exit = deepcopy(building)
+    for floor in one_exit["floors"]:
+        floor["exits"] = [e for e in floor["exits"] if e["door"] == "E1"]
+    assert "blockedExit" not in {v["id"] for v in default_variants(one_exit, base, baseline)}
+    assert "sprinklers" not in {v["id"] for v in default_variants(building, {**base, "sprinklers": True}, baseline)}
+    # Count ties prefer width, then id, independent of building order.
+    tied = deepcopy(building)
+    doors = {d["id"]: d for f in tied["floors"] for d in f["doors"]}
+    doors["E2"]["width"] = doors["E1"]["width"] + 1
+    assert default_variants(tied, base, [])[1]["doors"] == {"E2": "blocked"}
+    doors["E2"]["width"] = doors["E1"]["width"]
+    assert default_variants(tied, base, [])[1]["doors"] == {"E1": "blocked"}
+    modified = [record("R101", 1, 80, 1, 3, 160), record("R105", 1, 100, 1, 2, 120)]
+    stats = compare(base, baseline, modified)
+    assert stats == {"n": 2, "dT90": (120 - base["maxTime"]) / 2,
+                     "dT90Min": 100 - base["maxTime"], "dT90Max": 20,
+                     "slower": 1, "faster": 1, "dTrapped": 0, "dDosed": 1.5, "dSmokeSeconds": 40}, stats
+    old = [{k: v for k, v in r.items() if k not in ("dosed", "smokeSeconds")} for r in modified]
+    assert "dDosed" not in compare(base, baseline, old)
+    assert "dSmokeSeconds" not in compare(base, baseline, old)
+    assert compare(base, baseline, [])["n"] == 0
+    boundary = compare(base, [record("R101", 1, 60), record("R105", 1, 60)],
+                       [record("R101", 1, 61), record("R105", 1, 59)])
+    assert boundary["slower"] == boundary["faster"] == 0
+    batch = {"runs": baseline, "rooms": [{"id": "R101", "floor": "F1", "riskT90": 60},
+                                           {"id": "R105", "floor": "F1", "riskT90": None}]}
+    original, original_base = deepcopy(batch), deepcopy(base)
+    calls = []
+
+    def rerun(b, sc, ignitions, seeds, workers, timeout, progress):
+        assert b is building and seeds == [1, 2] and workers == 1 and timeout == 12 and not progress
+        assert sc["doors"]["D101"] == "closed"
+        variant = variants[len(calls) % 3]
+        assert sc["id"] == f"{base['id']}-{variant['id']}"
+        assert sc["doors"] == {**base["doors"], **variant["doors"]}
+        assert sc["sprinklers"] == variant["sprinklers"]
+        calls.append(ignitions)
+        return {"runs": modified}
+
+    with patch("fire.whatif.run_many", side_effect=rerun):
+        result = add_whatif(building, base, batch, workers=1, timeout_s=12, progress=False)
+        subset = add_whatif(building, base, batch, rooms=1, workers=1, timeout_s=12, progress=False)
+    assert calls[:3] == [[{"floor": "F1", "room": "R101"}, {"floor": "F1", "room": "R105"}]] * 3
+    assert calls[3:] == [[{"floor": "F1", "room": "R105"}]] * 3
+    assert len(result["whatIf"]) == 3 and all(r["n"] == 2 for r in result["whatIf"])
+    assert all(r["n"] == 1 for r in subset["whatIf"])
+    assert all(r["why"].isascii() and any(c.isdigit() for c in r["why"]) for r in result["whatIf"])
+    assert batch == original and base == original_base
+    result["runs"][0]["exitCounts"]["E1"] = -1
+    assert batch == original
+    json.dumps(subset, allow_nan=False)
+
+
+def check_whatif_slow():
+    from fire.batch import run_many
+    from fire.whatif import add_whatif
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 240
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert len(batch["runs"]) == 2 and not batch["failed"]
+    assert all(sum(r["exitCounts"].values()) > 0 for r in batch["runs"])
+    result = add_whatif(building, base, batch, workers=2, timeout_s=240)
+    assert len(result["whatIf"]) == 3
+    assert all(r["n"] == 2 and all(np.isfinite(r[k]) for k in
+               ("dT90", "dT90Min", "dT90Max", "dTrapped", "dDosed", "dSmokeSeconds"))
+               for r in result["whatIf"])
+    print("what-if: three variants with two matched fires each", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

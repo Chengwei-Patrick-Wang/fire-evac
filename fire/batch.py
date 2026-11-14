@@ -62,7 +62,7 @@ def _run_one(task: dict) -> dict:
         metrics = compute(result, _BUILDING, scenario)
         return {"ok": True, "scenarioId": scenario["id"], "seed": scenario["seed"],
                 "ignition": task["ignition"], "t90": metrics["t90"], "t100": metrics["t100"],
-                "trapped": metrics["trapped"],
+                "trapped": metrics["trapped"], "exitCounts": metrics["exitCounts"],
                 "dosed": metrics["exposure"]["dosed"],
                 "smokeSeconds": metrics["exposure"]["personSecondsInSmoke"],
                 "doors": [{key: door[key] for key in ("id", "floor", "peakQueue", "waitPersonSeconds")}
@@ -235,7 +235,7 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
             "buildingId": building["id"], "base": deepcopy(base),
             "note": "Simulated rule-based batch; fire and smoke model is illustrative.",
             "runs": [{key: record[key] for key in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped",
-                                                  "dosed", "smokeSeconds") if key in record}
+                                                  "dosed", "smokeSeconds", "exitCounts") if key in record}
                      for record in records if record["ok"]],
             "failed": [{"scenarioId": record["scenarioId"], "error": record["error"]}
                        for record in records if not record["ok"]],
@@ -304,6 +304,8 @@ def main():
     parser.add_argument("--seeds", default="1,2,3")
     parser.add_argument("--workers", type=int)
     parser.add_argument("--exits", action="store_true", help="rerun worst ignition rooms with each exit blocked")
+    parser.add_argument("--whatif", action="store_true", help="run paired default what-if variants")
+    parser.add_argument("--whatif-rooms", type=int, help="compare only N highest-risk ignition rooms")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     building = json.loads(args.building.read_text(encoding="utf-8"))
@@ -313,6 +315,9 @@ def main():
     batch = run_many(building, base, _ignitions(building, base, args.rooms), seeds, args.workers)
     if args.exits:
         batch = add_exit_criticality(building, base, batch, workers=args.workers)
+    if args.whatif:
+        from fire.whatif import add_whatif
+        batch = add_whatif(building, base, batch, rooms=args.whatif_rooms, workers=args.workers)
     out = args.out if args.out is not None else Path(f"data/runs/batch-{building['id']}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(batch, separators=(",", ":")), encoding="utf-8")
@@ -325,6 +330,9 @@ def main():
         why = _exit_why(exit_result)
         if exit_result["n"] and why not in printed:
             print(why, flush=True)
+
+    for comparison in batch.get("whatIf", []):
+        print(comparison["why"], flush=True)
 
 
 if __name__ == "__main__":
