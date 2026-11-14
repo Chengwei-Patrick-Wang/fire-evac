@@ -1,5 +1,14 @@
 # Overnight status
 
+## Sat 14:55: the demo is live at https://fire-evac-sim.netlify.app
+
+- **Static site:** https://fire-evac-sim.netlify.app is public. Netlify builds it from `main` on every push, so each merge redeploys within a couple of minutes. All three buildings load. The About overlay's QR code points at this URL. Publishing gets locked at feature freeze so nothing changes during judging.
+- **Merged:**
+  - E32: what-if notes pass axe contrast.
+  - E33: in static mode the Sprinklers box is disabled and quotes the measured sprinkler what-if instead (example: "Sprinklers on: 90% out 10 s sooner…").
+- **Running (lead's machine):** D22 (trade-off wording) and E34 (trade-off badges, readable labels in the fix list and door dropdown). The C23+ writer is still working.
+- **Devpost:** use the site URL as the demo link. The repo is still private, so make it public, or add judges, before submitting the code link.
+
 ## Sat 14:30: the lead's machine takes over every remaining task
 
 The team is moving to other work, so **you can stop your runners**. The lead's machine claimed every open task on its branch ("BLOCKED: taken over by the lead's machine"), and it runs them one workstream at a time:
