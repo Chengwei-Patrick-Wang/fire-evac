@@ -41,6 +41,7 @@ class FloorGraph:
     xy: np.ndarray
     n: int
     door_nodes: dict
+    stair_nodes: dict
     snap: np.ndarray
 
 
@@ -71,6 +72,15 @@ class BuildingGraph:
             nodes[mask] = np.arange(n)
             door_nodes = {key: np.flatnonzero(shapely.contains_xy(p.buffer(1e-3), xy[:, 0], xy[:, 1]))
                           for key, p in passages.items()}
+            stair_nodes = {}
+            in_door = np.zeros(n, dtype=bool)
+            for members in door_nodes.values():
+                in_door[members] = True
+            for stair in floor.get("stairs", []):
+                inside = shapely.contains_xy(Polygon(stair["polygon"]), xy[:, 0], xy[:, 1])
+                members = np.flatnonzero(inside & ~in_door)
+                group = stair["group"]
+                stair_nodes[group] = np.union1d(stair_nodes.get(group, []), members).astype(np.int64)
             # Build four forward directions, then mirror them for eight neighbors.
             for dx, dy in ((1, 0), (0, 1), (1, 1), (-1, 1)):
                 r, c = np.nonzero(mask)
@@ -92,8 +102,26 @@ class BuildingGraph:
                 pairs = tree.query_nearest(shapely.points(centers.reshape(-1, 2)[missing]),
                                           max_distance=max(1.0, spacing), all_matches=False)
                 snap.flat[missing[pairs[0]]] = pairs[1]
-            self.floors.append(FloorGraph(spec, mask, xy, n, door_nodes, snap))
+            self.floors.append(FloorGraph(spec, mask, xy, n, door_nodes, stair_nodes, snap))
             total += n
+        # Link consecutive levels without starting or ending inside door passages.
+        levels = sorted(range(len(self.floors)), key=lambda i: building["floors"][i]["level"])
+        for lower, upper in zip(levels, levels[1:]):
+            lo, hi = self.floors[lower], self.floors[upper]
+            for group in lo.stair_nodes.keys() & hi.stair_nodes.keys():
+                low_nodes, high_nodes = lo.stair_nodes[group], hi.stair_nodes[group]
+                if not len(low_nodes) or not len(high_nodes):
+                    continue
+                for start_floor, end_floor, start_nodes, end_nodes, weight in (
+                    (lower, upper, low_nodes, high_nodes, STAIR_UP_M),
+                    (upper, lower, high_nodes, low_nodes, STAIR_DOWN_M),
+                ):
+                    a, b = self.floors[start_floor], self.floors[end_floor]
+                    nearest = [int(np.argmin(np.sum((b.xy[end_nodes] - point) ** 2, axis=1)))
+                               for point in a.xy[start_nodes]]
+                    sources.append(start_nodes + self.offset[start_floor])
+                    targets.append(end_nodes[nearest] + self.offset[end_floor])
+                    lengths.append(np.full(len(start_nodes), weight))
         # CSR lists keep the Dijkstra inner loop free of NumPy scalar overhead.
         src = np.concatenate(sources) if sources else np.array([], dtype=np.int64)
         dst = np.concatenate(targets) if targets else np.array([], dtype=np.int64)

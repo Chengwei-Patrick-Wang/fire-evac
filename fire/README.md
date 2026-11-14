@@ -26,8 +26,8 @@ predictions of a particular building fire. Times below are seconds since ignitio
 | `CELL` | 0.5 m | Default grid spacing; samples at cell centers |
 | `MAX_CELLS` | 40,000 per floor | Double the common cell size until all floors fit |
 | `CLOSED_DOOR_M` | 15 m | Extra path length on entering a closed-door region |
-| `STAIR_UP_M` | 3 m | Reserved upward stair-link distance (links added in D3) |
-| `STAIR_DOWN_M` | 30 m | Reserved downward stair-link distance (links added in D3) |
+| `STAIR_UP_M` | 3 m | Directed upward stair-link distance |
+| `STAIR_DOWN_M` | 30 m | Directed downward stair-link distance |
 | Door passage buffer | cell / 2 | Expand each door rectangle to capture grid nodes |
 | Door membership tolerance | 0.001 m | Include nodes on the buffered passage boundary |
 | Snap radius | max(1 m, cell) | Non-walkable cells can query the nearest nearby node |
@@ -53,15 +53,22 @@ Each floor exposes local node coordinates, door memberships and a row-major
 
 `path_distance` uses Dijkstra with non-negative door penalties, charging once
 when a path enters a door region, rather than for every cell inside it.
-Unreachable nodes have infinite distance. Floors remain separate until the D3
-stair links are added. `get_graph` retains at most four graphs by building object
+Unreachable nodes have infinite distance. Consecutive floors sorted by `level`
+connect through matching stair groups. Each stair node links to the nearest
+node of that group upstairs (+3 m) and downstairs (+30 m). Door-region nodes
+are excluded from both ends, so links cannot bypass a closed stair door. `get_graph` retains at most four graphs by building object
 identity; callers must treat a building as immutable after caching it.
 
-## Smoke front (D2)
+## Smoke front
 
 `FireModel(building, scenario)` implements the `NoFire` query API without changing
-the stub. This stage propagates on the ignition floor, with no door penalties or
-stair links yet. `blocked_doors()` remains empty until D3.
+the stub. Smoke propagates over all floors through stair links. Building door
+states are overridden by `scenario.doors`; `closed` and `blocked` add 15 m on
+entry, while `open` and `propped` add none. The `fireDoor` flag is ignored.
+A closed door delays smoke but never seals the passage. `blocked` stops people
+in the simulator, and behaves like `closed` for smoke. `step` rebuilds
+`blocked_doors()` from doors containing any untenable node (flame or smoke);
+the returned set is a copy.
 
 | Name | Value | Meaning |
 | --- | --- | --- |
@@ -96,7 +103,18 @@ from the repo root. It uses the headless Agg backend and writes per-floor PNGs t
 `--times 30,60,120,180 --tag example` to choose times and a filename suffix.
 The CLI prints unrounded model maxima; the image uses rounded snapshot bytes.
 
-Example verification at 60 s: F1 max density is 14.6 (kitchen R101); F2 is
-clear. R102 has max density 5.8 at this stage because D2 deliberately passes no
-door penalties. The plan's expectation that R102 stays completely clear depends
-on the closed-door delays scheduled for D3; no constants were tuned to hide it.
+## Propped stair-door what-if (D3)
+
+Compare `--tag closed --times 90,120` with
+`--doors DSA1=propped --tag propped --times 90,120` on the example files.
+The CLI accepts comma-separated `ID=state` overrides. At 90 s, F2 maximum
+density is about 3 closed versus 23 propped; the corresponding PNGs show Stair A
+filling earlier. With DSA1 and DSA2 closed, the path to F2 corridor (7.5, 8)
+is 44.83 m. Propping both reduces it to 14.83 m, with density about 18 there
+at 90 s versus zero closed. F2 has no snapshot at 60 s closed, and does have
+one with DSA1 propped. D101 becomes blocked by 200 s.
+
+Integration handoff: C can use `fire.model.FireModel(building, scenario)` with
+the same API as `NoFire`. A can replace `ToyFire` in `tools/build_examples.py`
+and regenerate examples. Smoke frames start independently on each floor when
+the front reaches it; upper floors may have no frames yet.

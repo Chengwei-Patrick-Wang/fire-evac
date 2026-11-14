@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fire.grid import get_graph
+from fire.grid import CLOSED_DOOR_M, get_graph
 from fire.presets import fire_params, hrr_kw
 
 V_BASE_MS = 0.25
@@ -44,7 +44,12 @@ class FireModel:
             polygon = room["polygon"]
         source = self.graph.node_at(fire["floor"], fire["x"], fire["y"], polygon)
         self.source_xy = self.graph.floors[floor_index].xy[source - self.graph.offset[floor_index]].copy()
-        self.dist = self.graph.path_distance(source, {})
+        states = {door["id"]: door.get("state", "open")
+                  for floor in building["floors"] for door in floor.get("doors", [])}
+        states.update(scenario.get("doors", {}))
+        penalties = {key: CLOSED_DOOR_M if state in ("closed", "blocked") else 0.0
+                     for key, state in states.items()}
+        self.dist = self.graph.path_distance(source, penalties)
         times = np.arange(0, TABLE_S + 0.25, 0.25)
         q = np.array([hrr_kw(self.params, t) for t in times])
         speed = np.clip(V_BASE_MS + V_PER_MW * q / Q_REF_KW, V_BASE_MS, V_MAX_MS)
@@ -54,6 +59,7 @@ class FireModel:
         self._density = np.zeros(self.graph.n)
         self._hold = np.zeros(self.graph.n)
         self._untenable = np.zeros(self.graph.n, dtype=bool)
+        self._blocked = set()
         self._time = 0.0
         self._update(0.0, 0.0)
 
@@ -68,6 +74,9 @@ class FireModel:
         self._hold = np.where(self._density >= UNTENABLE_D, self._hold + dt, 0.0)
         footprint = (q > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(q / Q_REF_KW))
         self._untenable = (self._hold >= UNTENABLE_HOLD_S) | footprint
+        self._blocked = {key for offset, floor in zip(self.graph.offset, self.graph.floors)
+                         for key, nodes in floor.door_nodes.items()
+                         if self._untenable[offset + nodes].any()}
 
     def step(self, t: float) -> None:
         t = float(t)
@@ -101,7 +110,7 @@ class FireModel:
         return bool(self._untenable[node]) if node >= 0 else False
 
     def blocked_doors(self) -> set[str]:
-        return set()
+        return self._blocked.copy()
 
     def snapshot(self, floor_id: str) -> dict | None:
         index = self.graph.floor_index.get(floor_id)
@@ -126,10 +135,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("building", type=Path)
     parser.add_argument("scenario", type=Path)
+    parser.add_argument("--doors", default="", help="Comma-separated ID=state overrides")
     parser.add_argument("--tag", default="")
     parser.add_argument("--times", default="30,60,120,180")
     args = parser.parse_args()
-    model = FireModel(json.loads(args.building.read_text()), json.loads(args.scenario.read_text()))
+    scenario = json.loads(args.scenario.read_text())
+    overrides = {}
+    for entry in filter(None, args.doors.split(",")):
+        key, separator, state = entry.partition("=")
+        if not separator or not key.strip() or state.strip() not in ("open", "closed", "propped", "blocked"):
+            parser.error("--doors requires ID=open|closed|propped|blocked entries")
+        overrides[key.strip()] = state.strip()
+    scenario["doors"] = {**scenario.get("doors", {}), **overrides}
+    model = FireModel(json.loads(args.building.read_text()), scenario)
     Path("debug").mkdir(exist_ok=True)
     # Keep the tag a filename component even when invoked unattended.
     tag = "_" + Path(args.tag).name if args.tag else ""

@@ -2,6 +2,7 @@
 import argparse
 import base64
 import json
+from pathlib import Path
 import time
 
 import numpy as np
@@ -173,6 +174,71 @@ def check_model():
     assert delayed.snapshot("F1") == reference.snapshot("F1")
     assert delayed.blocked_doors() == set()
 
+
+
+def check_stairs():
+    from fire.model import FireModel
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    scenario.update(sprinklers=False, doors={})
+    scenario["fire"] = {"floor": "F1", "room": "R101", "x": 8, "y": 3,
+                        "type": "kitchen", "start": 0}
+    closed = FireModel(building, scenario)
+    propped = FireModel(building, {**scenario, "doors": {"DSA1": "propped"}})
+    both = FireModel(building, {**scenario, "doors": {"DSA1": "propped", "DSA2": "propped"}})
+    corridor = closed.graph.node_at("F2", 7.5, 8)
+    assert np.isfinite(closed.dist[corridor]) and closed.dist[corridor] >= 40
+    for floor in closed.graph.floors:
+        door_nodes = set().union(*(set(nodes) for nodes in floor.door_nodes.values()))
+        assert all(not door_nodes.intersection(nodes) for nodes in floor.stair_nodes.values())
+
+    def density(model, x, y):
+        snap = model.snapshot("F2")
+        if snap is None:
+            return 0
+        col = int((x - snap["origin"][0]) // snap["cell"])
+        row = int((y - snap["origin"][1]) // snap["cell"])
+        return base64.b64decode(snap["d"])[row * snap["cols"] + col]
+
+    for model in (closed, propped, both):
+        model.step(60)
+        assert model.blocked_doors() == set()
+    assert closed.snapshot("F2") is None
+    assert propped.snapshot("F2") is not None
+    for model in (closed, propped, both):
+        model.step(90)
+    assert density(closed, 2, 8) <= 5
+    assert density(propped, 2, 8) >= 15
+    assert density(closed, 7.5, 8) <= 2
+    assert density(both, 7.5, 8) >= 10
+    closed.step(200)
+    assert "D101" in closed.blocked_doors()
+    returned = closed.blocked_doors()
+    returned.clear()
+    assert "D101" in closed.blocked_doors()
+    blocked = FireModel(building, {**scenario, "doors": {"DSA1": "blocked"}})
+    assert np.array_equal(closed.dist, blocked.dist)
+    # The same graph is reused, but overrides must never mutate its door states.
+    assert propped.dist[corridor] < closed.dist[corridor]
+    flipped_flags = json.loads(json.dumps(building))
+    for floor in flipped_flags["floors"]:
+        for door in floor["doors"]:
+            door["fireDoor"] = not door.get("fireDoor", False)
+    assert np.array_equal(FireModel(flipped_flags, scenario).dist, closed.dist)
+    # Sorting by level must not reorder the public floor indexes or query arrays.
+    reversed_building = {**building, "floors": list(reversed(building["floors"]))}
+    reversed_model = FireModel(reversed_building, scenario)
+    reversed_model.step(200)
+    for floor in building["floors"]:
+        assert reversed_model.snapshot(floor["id"]) == closed.snapshot(floor["id"])
+    # With no door penalties, direction alone adds 27 m going down versus up.
+    graph = closed.graph
+    low = graph.offset[0] + int(graph.floors[0].stair_nodes["SA"][0])
+    high = graph.offset[1] + int(graph.floors[1].stair_nodes["SA"][0])
+    assert abs(graph.path_distance(low, {})[high] - 3) < 1e-6
+    assert abs(graph.path_distance(high, {})[low] - 30) < 1e-6
 
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
