@@ -61,7 +61,9 @@ def simulate(building: dict, scenario: dict) -> dict:
     # FireModel is passed explicitly so smoke shows up without waiting for the sim's default
     run = run_sim(building, scenario, fire=_fire_model(building, scenario))
     # compute() returns the full metrics dict (or just the extras): merge handles both
-    run["metrics"] = {**(run.get("metrics") or {}), **(compute_metrics(run, building) or {})}
+    # the scenario lets fire.metrics add D10's smoke exposure and dose
+    extra = compute_metrics(run, building, scenario=scenario)
+    run["metrics"] = {**(run.get("metrics") or {}), **(extra or {})}
     return run
 
 
