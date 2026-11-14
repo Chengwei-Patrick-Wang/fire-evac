@@ -109,6 +109,8 @@ BLOCKED: The IFC extraction tasks B2 and B3 are blocked because no supplied cand
 
 ### Task B5: Overrides file and validation report (P0, target Sat 10 AM; aim for ~9:15 AM)
 
+BLOCKED: B4's hardened normalizer and hard_plan fixture are unavailable because B4 is blocked on the missing qualifying IFC input.
+
 **Files:** Create `buildings/fixups.py` (not `overrides.py`: `buildings/overrides/` is the data folder), `buildings/validate.py`; modify `buildings/normalize.py`, `buildings/smoke_test.py`, `buildings/README.md` (document the format).
 
 **Interfaces:** Consumes B4's `plan_to_building` and `hard_plan()`. Produces:
