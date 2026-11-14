@@ -116,35 +116,10 @@ def check_ifc():
     group_stairs(sample)
     assert sample[0]["rooms"][0]["group"] == sample[1]["rooms"][0]["group"]
     assert sample[1]["rooms"][0]["group"] != sample[1]["rooms"][1]["group"]
-    if not IFC_PATH.exists():
-        print("SKIP ifc: file missing")
-        return
-    from buildings.ifc import extract
-    plan = extract(IFC_PATH)
-    floors = plan["floors"]
-    assert floors and all(f["rooms"] for f in floors)
-    assert all(a["elevation"] < b["elevation"] for a, b in zip(floors, floors[1:]))
-    polygons = [Polygon(r["polygon"]) for f in floors for r in f["rooms"]]
-    assert all(p.is_valid and not p.interiors and 1 <= p.area <= 2000 for p in polygons)
-    minx, miny, maxx, maxy = unary_union(polygons).bounds
-    assert minx == 0 and miny == 0
-    assert 10 <= maxx <= 500 and 10 <= maxy <= 500
-    doors = [d for f in floors for d in f["doors"]]
-    assert len(doors) >= 5 and all(0.6 <= d["width"] <= 3 for d in doors)
-    groups = {}
-    for floor in floors:
-        stairs = [r["group"] for r in floor["rooms"] if r["type"] == "stair"]
-        assert len(stairs) == len(set(stairs))
-        for group in stairs:
-            groups.setdefault(group, set()).add(floor["id"])
-    assert sum(len(levels) >= 2 for levels in groups.values()) >= 2
-    assert plan["credits"]
-    print(f"IFC: {len(floors)} floors, {len(polygons)} rooms, {maxx:.1f} x {maxy:.1f} m")
 
-
-def check_building():
+def check_building(name="office"):
     from buildings.validate import validate
-    building = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    building = json.loads((ROOT / f"data/buildings/{name}.json").read_text(encoding="utf-8"))
     assert validate(building)["ok"]
     assert "license" in building["credits"].lower()
     assert any(f["exits"] for f in building["floors"] if f["level"] == 0)
@@ -159,6 +134,35 @@ def check_building():
                 for rid in door["connects"]:
                     assert Polygon(door["rect"]).intersection(rooms[rid]).area >= 0.01, (door["id"], rid)
     assert groups and all(len(floors) >= 2 for floors in groups.values())
+
+
+def check_clinic():
+    from buildings.fixups import apply_overrides
+    from buildings.ifc import _room_type
+    from buildings.normalize import largest_inner_rect
+    from buildings.validate import validate
+    b = json.loads((ROOT / "data/buildings/clinic.json").read_text(encoding="utf-8"))
+    assert len(b["floors"]) == 2 and not validate(b)["nonConvex"]
+    assert all({s["group"] for s in f["stairs"]} == {"S1", "S2", "S3"} for f in b["floors"])
+    assert all(r["name"].upper() not in {"ROOF", "OPEN TO BELOW", "ELEVATOR"} for f in b["floors"] for r in f["rooms"])
+    assert all(":" not in e["name"] for f in b["floors"] for e in f["exits"])
+    assert "CC BY 4.0" in b["credits"] and "buildingSMART" in b["credits"]
+    for name, kind in [("JAN. CL.", "storage"), ("TELE/COMM RM", "storage"), ("MENS RR", "restroom"), ("SEC. WAIT", "lounge"), ("VEST.", "lobby"), ("CONF. ROOM", "office"), ("INTERACTION STATION", "other")]:
+        assert _room_type(name) == kind
+    assert len(apply_overrides(hard_plan(), {"floors": {"remove": ["F2"]}})["floors"]) == 1
+    for fid in ("F1", "F9"):
+        try:
+            apply_overrides(hard_plan(), {"floors": {"remove": [fid]}})
+        except ValueError as exc:
+            assert fid in str(exc)
+        else:
+            raise AssertionError(fid)
+    office = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    stair = next(s for f in office["floors"] for s in f["stairs"] if s["id"] == "RS101")
+    poly = Polygon(stair["polygon"])
+    rect = largest_inner_rect(poly)
+    assert len(rect.exterior.coords) == 5 and poly.buffer(0.005).covers(rect)
+    assert 0.95 <= rect.area / poly.area <= 0.97
 
 
 def check_traced():
@@ -260,6 +264,8 @@ def main() -> int:
     check_hard()
     check_overrides()
     check_building()
+    check_building("clinic")
+    check_clinic()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:

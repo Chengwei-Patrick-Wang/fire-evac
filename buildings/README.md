@@ -9,6 +9,7 @@ the following format are optional:
 
 ```json
 {
+  "floors": {"remove": ["F3"]},
   "doors": {"add": [{"floor": "F1", "id": "DFIX1", "a": [1, 2], "b": [2, 2], "width": 1.0, "fireDoor": false, "state": "open"}], "remove": ["D2"]},
   "rooms": {"remove": ["R2"]},
   "exits": {"add": ["D1"], "remove": ["D3"]},
@@ -21,6 +22,17 @@ additions force a door to be exterior; exit removals keep the door but suppress
 its exit. Stair groups assign the listed rooms to the same stairwell. Unknown
 referenced IDs raise an error. The command prints a connectivity report after
 writing the building; upper-level exits are informational warnings.
+Floor removals happen first and may only remove top storeys.
+
+## Clinic
+
+`clinic` is the NIBS Medical-Dental Clinic, via buildingSMART International's
+sample files, CC BY 4.0; it was converted to 2D plans. Modeling assumptions:
+remove roof floor F3, roof spaces R2R01 and R2R02, voids R2AC1-A and R2AC1-B,
+elevator RE1, outside-access service rooms R1E17, R1E20, R1E21, R1E22, R1E24,
+R1E25 and mechanical yard R1F01, and doorless toilet R1D04. Exit DnBZWSx
+opens onto the removed roof and is suppressed. Its two floors have nine exits
+and stair groups S1, S2 and S3.
 
 Run `python -m buildings.inspect_ifc data/raw` to reproduce the per-storey counts. Downloads are local and not committed. A model is pickable when at least two storeys have spaces and it has at least two stairs (or two flights if it has no stairs). Empty roof, foundation and footing storeys do not disqualify it. Of pickable models with at least 50 spaces, the smallest file is selected.
 

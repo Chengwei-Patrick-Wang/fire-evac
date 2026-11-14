@@ -10,6 +10,15 @@ def load_overrides(path: str | Path) -> dict:
 
 def apply_overrides(plan: dict, overrides: dict) -> dict:
     plan = deepcopy(plan)
+    removed = set(overrides.get("floors", {}).get("remove", []))
+    known = {f["id"] for f in plan["floors"]}
+    if removed - known:
+        raise ValueError(f"unknown floor {sorted(removed - known)[0]}")
+    ordered = sorted(plan["floors"], key=lambda f: (f.get("elevation", 0), f.get("level", 0)))
+    for i, floor in enumerate(ordered):
+        if floor["id"] in removed and any(f["id"] not in removed for f in ordered[i + 1:]):
+            raise ValueError(f"cannot remove floor {floor['id']} below a kept floor")
+    plan["floors"] = [f for f in plan["floors"] if f["id"] not in removed]
     floors = {f["id"]: f for f in plan["floors"]}
     def remove(kind, ids):
         for item_id in ids:

@@ -23,7 +23,8 @@ import sys
 from pathlib import Path
 
 from shapely import make_valid
-from shapely.geometry import LineString, Point, Polygon
+from shapely import affinity
+from shapely.geometry import LineString, Point, Polygon, box
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
@@ -69,6 +70,27 @@ def _ring(coords) -> list[list[float]]:
 def ring_of(poly: Polygon) -> list[list[float]]:
     """Outer ring of a polygon, counter-clockwise, rounded, not repeating the first point."""
     return _ring(orient(poly, sign=1.0).exterior.coords)
+
+
+def largest_inner_rect(poly: Polygon) -> Polygon | None:
+    corners = list(poly.minimum_rotated_rectangle.exterior.coords)
+    a, b = max(zip(corners, corners[1:]), key=lambda pair: math.dist(*pair))
+    angle = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+    rotated = affinity.rotate(poly, -angle, origin=poly.centroid)
+    xs = sorted({round(x, 3) for x, _ in rotated.exterior.coords})
+    ys = sorted({round(y, 3) for _, y in rotated.exterior.coords})
+    covered = rotated.buffer(0.005)
+    best = None
+    for i, x0 in enumerate(xs):
+        for x1 in xs[i + 1:]:
+            for j, y0 in enumerate(ys):
+                for y1 in ys[j + 1:]:
+                    if best is not None and (x1-x0)*(y1-y0) <= best.area:
+                        continue
+                    candidate = box(x0, y0, x1, y1)
+                    if covered.covers(candidate):
+                        best = candidate
+    return affinity.rotate(best, angle, origin=poly.centroid) if best is not None else None
 
 
 def rings_of(poly: Polygon) -> dict:
@@ -141,8 +163,16 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
                 continue
             if room.get("group") is None:
                 _warn(f"{fid}/{room['id']}: stair room without a group")
+            zone = parts[0]
+            if zone.convex_hull.area - zone.area > 1e-6:
+                zone = largest_inner_rect(zone)
+                if zone is None:
+                    _warn(f"{fid}/{room['id']}: no inner stair rectangle")
+                    continue
+                if zone.area < 0.7 * parts[0].area:
+                    _warn(f"{fid}/{room['id']}: stair zone keeps under 70% of room")
             stairs_out.append({"id": room["id"], "group": room.get("group"), "room": room["id"],
-                               "polygon": ring_of(parts[0])})
+                               "polygon": ring_of(zone)})
 
     half = wall / 2
     room_union = unary_union([p for _, p in room_polys])
@@ -195,6 +225,10 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
             if all(candidate.intersection(shrunk[rid]).area >= 0.010001 for rid in connected):
                 break
         rect = candidate
+        missed = next ( (rid for rid in connected if rect.intersection(shrunk[rid]).area < 0.010001), None)
+        if missed:
+            _warn(f"{fid}/{door['id']}: rect does not reach {missed}; dropped")
+            continue
         if grown > 0.3 + 1e-8:
             _warn(f"{fid}/{door['id']}: door rect grew {grown:.1f} m")
         pieces.append(rect)
@@ -248,6 +282,20 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
         for rid, s in shrunk.items():
             if not s.is_empty and main.intersection(s).area < 1e-6:
                 _warn(f"{fid}/{rid}: room is not connected to the main walkable area")
+
+    if source == "ifc" and walk_polys:
+        center = unary_union(walk_polys).centroid
+        names = {}
+        rooms_by_id = {r["id"]: r for r in rooms_out}
+        doors_by_id = {d["id"]: d for d in doors_out}
+        for exit in exits_out:
+            centroid = Polygon(exit["polygon"]).centroid
+            dx, dy = centroid.x-center.x, centroid.y-center.y
+            side = ("east" if dx > 0 else "west") if abs(dx) > abs(dy) else ("north" if dy > 0 else "south")
+            inside = next(r for r in doors_by_id[exit["door"]]["connects"] if r != "outside")
+            base = f"{rooms_by_id[inside]['name'].title()} ({side})"
+            names[base] = names.get(base, 0) + 1
+            exit["name"] = base + (f" {names[base]}" if names[base] > 1 else "")
 
     return {
         "id": fid,
