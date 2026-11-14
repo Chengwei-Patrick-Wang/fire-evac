@@ -5,10 +5,12 @@ exit names, door widths and exit zones from that file, so a rebuilt office stays
 """
 import argparse
 import base64
+from collections import Counter
 import json
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 
@@ -2065,10 +2067,21 @@ def office_checks(path) -> str:
     floor, door, stair = next((f, d, r) for f in office["floors"] for d in f["doors"] for r in f["rooms"]
                               if r.get("type") == "stair" and r["id"] in d["connects"] and "outside" not in d["connects"])
     assert label(floor, door["id"]) == ("stair", f"Stair {stair.get('group', stair['id'])} door")
-    floor, door = next((f, d) for f in office["floors"] for d in f["doors"] if "outside" not in d["connects"]
-                       and not any(r.get("type") == "stair" and r["id"] in d["connects"] for r in f["rooms"]))
-    names = " to ".join(r.get("name", r["id"]) for r in floor["rooms"] if r["id"] in door["connects"])
-    assert label(floor, door["id"]) == ("door", f"Door {door['id']} ({names})")
+    # D23: a plain interior door whose two differently named rooms no other plain door of its floor joins reads
+    # `Door between <A> and <B>`, the names in floor order (the file's own, so a rebuilt office stays green).
+    for floor in office["floors"]:
+        plain = [(d, [r.get("name") or r["id"] for r in floor["rooms"] if r["id"] in d["connects"]])
+                 for d in floor["doors"] if "outside" not in d["connects"]
+                 and not any(r.get("type") == "stair" and r["id"] in d["connects"] for r in floor["rooms"])]
+        pairs = Counter(tuple(sorted(names)) for _, names in plain)
+        pick = next(((d, names) for d, names in plain if len(names) == 2 and names[0] != names[1]
+                     and pairs[tuple(sorted(names))] == 1 and all(n.isascii() and ":" not in n for n in names)), None)
+        if pick:
+            break
+    else:
+        raise AssertionError("no plain interior door with a pair of room names of its own in the office file")
+    door, names = pick
+    assert label(floor, door["id"]) == ("door", f"Door between {names[0]} and {names[1]}")
     # Widening uses the width the file declares, and the exit zone follows it.
     floor, zone = min(((f, z) for f in office["floors"] for z in f["exits"]),
                       key=lambda fz: (doors[fz[1]["door"]]["width"], fz[1]["door"]))
@@ -2125,7 +2138,7 @@ def check_labels():
         copy.write_text(json.dumps(_office_variant(office)), encoding="utf-8")
         variant_summary = office_checks(copy)
     for did, label in {"E1": "Exit Main entrance", "DSB1": "Stair SB door",
-                       "D101": "Door D101 (Kitchen to Corridor 1)"}.items():
+                       "D101": "Door between Kitchen and Corridor 1"}.items():
         assert door_label(example, "F1", did)[1] == label
     trash = deepcopy(base)
     trash["fire"]["type"] = "trash"
@@ -2170,6 +2183,225 @@ def check_labels():
                 raise AssertionError("bad override accepted")
     print(f"labels: {path.name} ({summary}) and a renamed, narrowed copy ({variant_summary}); "
           "overrides and fix budgeting checked", flush=True)
+
+
+def _names_fixture() -> dict:
+    """One floor that holds every case of D23's rule: pairs of names of their own, one pair of names joined by two
+    doors (the rooms in either order), two rooms of one name with three doors between them, a door with one known
+    room and one with none, a colon, a non-ASCII name, an unnamed room, an exit and a stair door."""
+    rooms = [{"id": rid, "type": "room", **({"name": name} if name else {})} for rid, name in (
+        ("R1", "Lab: West"), ("R2", "Hall"), ("R3", "Hall"), ("R4", None), ("R5", "Café"), ("R6", "Hall"),
+        ("R10", "Office"), ("R11", "Store"), ("R12", "Store"), ("R13", "Office"))]
+    rooms.append({"id": "S1", "name": "Stair 1", "type": "stair", "group": "S1"})
+
+    def door(ident, connects, x=0.0, y=0.0):  # the middle of the opening is (x, y)
+        return {"id": ident, "connects": connects, "a": [x, y - .5], "b": [x, y + .5], "width": 1.0, "state": "open"}
+
+    doors = [door("d1", ["R1", "R2"]), door("d7", ["R1", "R6"]),
+             door("d2", ["R2", "R3"], 10, 5), door("d3", ["R3", "R2"], 10, 1), door("d9", ["R2", "R3"], 4, 9),
+             door("d8", ["R4", "R1"]), door("d4", ["R4", "R5"]), door("d5", ["R5", "R99"]), door("d6", ["R98", "R99"]),
+             door("dx", ["R10", "R11"]), door("dy", ["R13", "R12"]),
+             door("E9", ["R2", "outside"]), door("dS", ["R3", "S1"])]
+    return {"version": "building/v0", "id": "names-fixture", "floors": [
+        {"id": "F1", "level": 0, "rooms": rooms, "doors": doors, "exits": [], "stairs": [], "walkable": []}]}
+
+
+def check_door_names():
+    """D23: a plain interior door reads `Door between <A> and <B>` in every text, never by its id."""
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.batch import aggregate, door_label, relabel, seed_ranges
+    from fire.fixes import candidate_fixes, restate, widen_door
+    from fire.headlines import all_whys, build_headlines
+
+    root = Path(__file__).resolve().parents[1]
+    example = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    office = load_office()
+    clinic_path = root / "data/buildings/clinic.json"
+    clinic = json.loads(clinic_path.read_text(encoding="utf-8")) if clinic_path.is_file() else None
+    leak = re.compile(r"Door [A-Za-z0-9_$]+ \(")  # a label of the old kind: the door's id, then its rooms
+
+    def has_door(building, floor_id, door_id):
+        return any(d["id"] == door_id for f in building["floors"] if f["id"] == floor_id for d in f["doors"])
+
+    # The pinned labels: the example's always, the office's and the clinic's when their files hold those doors.
+    assert door_label(example, "F1", "D101") == ("door", "Door between Kitchen and Corridor 1")
+    assert door_label(example, "F1", "DL1") == ("door", "Door between Lobby and Corridor 1")
+    pinned = {("F1", "D$77xwP"): "Door between CORRIDOR and SCIF OPEN OFFICE",
+              ("F1", "D$77xVs"): "Door between OPEN OFFICE (R113a) and CORRIDOR (R141)",
+              ("F1", "D$77xaz"): "Door between OPEN OFFICE (R114) and CORRIDOR (R142)",
+              ("F2", "DQnt_pi"): "Door between SECURE DOC ROOM and OPEN OFFICE"}
+    office_pinned = all(has_door(office, *key) for key in pinned)  # a rebuilt office has ids of its own
+    for key, want in pinned.items() if office_pinned else ():
+        assert door_label(office, *key) == ("door", want), (key, door_label(office, *key))
+    clinic_pinned = clinic is not None and has_door(clinic, "F1", "Dv$nmj8") and has_door(clinic, "F1", "Dv$nmZR")
+    if clinic_pinned:  # two doors join the same two rooms: told apart by the middle of the opening (x, then y)
+        both = "Door between TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1)"
+        assert door_label(clinic, "F1", "Dv$nmj8") == ("door", both + ", 1 of 2")
+        assert door_label(clinic, "F1", "Dv$nmZR") == ("door", both + ", 2 of 2")
+        assert door_label(clinic, "F1", "Dv$nnMB")[1] == "Door between CORRIDOR (R1AC3) and CORRIDOR (R1CC1)"
+    assert door_label(example, "F1", "missing") == ("door", "Door missing")  # an unknown id keeps today's label
+
+    # On every floor of the three buildings: a plain door's label is unique, ASCII, colon-free and without its own id.
+    counted = 0
+    for building in (example, office, clinic):
+        for floor in (building or {"floors": []})["floors"]:
+            rooms, seen = {r["id"]: r for r in floor["rooms"]}, {}
+            for door in floor["doors"]:
+                if "outside" in door["connects"] or any(rooms.get(c, {}).get("type") == "stair" for c in door["connects"]):
+                    continue
+                kind, text = door_label(building, floor["id"], door["id"])
+                assert kind == "door" and text.startswith("Door ") and text.isascii() and ":" not in text, text
+                assert door["id"] not in text, (building["id"], door["id"], text)
+                assert text not in seen, (building["id"], floor["id"], text, door["id"], seen[text])
+                seen[text] = door["id"]
+            counted += len(seen)
+
+    # Every branch of the rule, on a floor made for it.
+    fixture = _names_fixture()
+    want = {"d1": "Door between Lab - West (R1) and Hall (R2)", "d7": "Door between Lab - West (R1) and Hall (R6)",
+            "d9": "Door between Hall (R2) and Hall (R3), 1 of 3", "d3": "Door between Hall (R2) and Hall (R3), 2 of 3",
+            "d2": "Door between Hall (R2) and Hall (R3), 3 of 3", "d8": "Door between Lab - West and R4",
+            "d4": "Door between R4 and Caf?", "d5": "Door from Caf?", "d6": "Door d6",
+            "dx": "Door between Office (R10) and Store (R11)", "dy": "Door between Store (R12) and Office (R13)"}
+    for did, text in want.items():
+        assert door_label(fixture, "F1", did) == ("door", text), (did, door_label(fixture, "F1", did))
+    assert door_label(fixture, "F1", "E9") == ("exit", "Exit E9")
+    assert door_label(fixture, "F1", "dS") == ("stair", "Stair S1 door")
+    assert len(set(want.values())) == len(want) and all(t.isascii() and ":" not in t for t in want.values())
+
+    # widen_door names the door, not its id. An unknown id has no label, so it stays the one id in the messages.
+    widened = widen_door(example, "DL1")
+    altered = deepcopy(widened)
+    altered["floors"][0]["walkable"].append(altered["floors"][0]["walkable"][0])
+    flat = deepcopy(example)
+    kitchen_door = next(d for d in flat["floors"][0]["doors"] if d["id"] == "D101")
+    kitchen_door["b"] = list(kitchen_door["a"])  # an opening of no length
+
+    def refused(building, door_id):
+        try:
+            widen_door(building, door_id)
+        except ValueError as error:
+            return str(error)
+        raise AssertionError(f"widening {door_id} was accepted")
+
+    with patch("fire.fixes.renormalize", return_value=altered):
+        assert refused(example, "DL1") == ("widening Door between Lobby and Corridor 1 "
+                                           "changes room connections or walkable pieces")
+    assert refused(flat, "D101") == "Door between Kitchen and Corridor 1 has no opening"
+    assert refused(example, "missing") == "unknown door missing"
+    fixes, _ = candidate_fixes(example, base, {"top": [{"kind": "door", "id": "DL1", "floor": "F1"}]})
+    assert fixes[0]["label"] == "Widen Door between Lobby and Corridor 1 from 4.00 m to 4.50 m", fixes[0]["label"]
+
+    # The callers that write the label into a text: aggregate's `why` and the stability line.
+    def record(seed):
+        return {"ok": True, "scenarioId": f"hand-{seed}", "seed": seed, "ignition": {"floor": "F1", "room": "R101"},
+                "t90": 100.0, "t100": None, "trapped": 0,
+                "doors": [{"id": "D101", "floor": "F1", "peakQueue": 3, "waitPersonSeconds": 80.0}],
+                "heatmaps": [{"floor": "F1", "origin": [0, 0], "cell": 0.5, "cols": 1, "rows": 1,
+                              "d": base64.b64encode(bytes([100])).decode("ascii")}]}
+
+    top = next(item for item in aggregate(example, base, [record(1)])["top"] if item["id"] == "D101")
+    assert top["why"].startswith("Door between Kitchen and Corridor 1: 3 people queued at peak;"), top["why"]
+    stability = seed_ranges(example, base, [record(1), record(2)])["stability"]["why"]
+    assert stability == ("The top 3 weak spots hold in 2 of 2 seeds: Door between Kitchen and Corridor 1. "
+                         "Door between Kitchen and Corridor 1 ranks first in 2 of 2."), stability
+
+    # relabel: a hand-made office batch whose texts carry the old labels of three doors.
+    picks = [("F1", "D$77xwP"), ("F1", "D$77xVs"), ("F2", "DQnt_pi")] if office_pinned else [
+        (f["id"], d["id"]) for f in office["floors"] for d in f["doors"]
+        if door_label(office, f["id"], d["id"])[0] == "door"][:3]
+
+    def old(floor_id, door_id):  # the label before D23, written out here and not taken from fire.batch
+        floor = next(f for f in office["floors"] if f["id"] == floor_id)
+        door = next(d for d in floor["doors"] if d["id"] == door_id)
+        return f"Door {door_id} ({' to '.join(r.get('name', r['id']) for r in floor['rooms'] if r['id'] in door['connects'])})"
+
+    (fa, a), (fb, b), (fc, c) = picks
+    was = [old(*pick) for pick in picks]
+    now = [pinned[pick] if office_pinned else door_label(office, *pick)[1] for pick in picks]
+    batch = {
+        "version": "batch/v0", "id": "hand-made", "buildingId": office["id"],
+        "top": [{"kind": "door", "id": a, "floor": fa, "score": 61.0,
+                 "why": f"{was[0]}: 15 people queued at peak; 52 person-seconds of waiting on average across 294 fires."},
+                {"kind": "room", "id": "R203c", "floor": "F2", "score": 100.0,
+                 "why": "Fire in OPEN OFFICE (R203c): 0.2 people trapped on average; 90% out after 120 s (24 fires)."}],
+        "stability": {"seeds": [1, 2, 3], "top3": [a, b, c], "heldIn": 2, "n": 3, "stable": False,
+                      "why": f"The top 3 weak spots hold in 2 of 3 seeds: {was[0]}, {was[1]}, {was[2]}. {was[0]} ranks first in 3 of 3."},
+        "whatIf": [{"id": "blockedDoor", "label": f"{was[1]} blocked", "doors": {b: "blocked"}, "sprinklers": False,
+                    "n": 4, "dT90": 3.0, "slower": 3, "faster": 0, "dTrapped": 0.0,
+                    "why": f"{was[1]} blocked: 90% out 3 s later on average (slower in 3 of 4 fires); +0.0 trapped per fire."}],
+        "fixes": [{"id": f"widen-{a}", "kind": "widen", "door": a, "floor": fa, "n": 24, "dT90": -4.0, "faster": 15,
+                   "dTrapped": -0.1, "dSmokeSeconds": -30.0, "smokePct": -6.0, "helps": True,
+                   "label": f"Widen {was[0]} from 0.86 m to 1.36 m",
+                   "why": f"Widen {was[0]} from 0.86 m to 1.36 m: 90% out 4 s sooner on average and 6% less time in smoke "
+                          "across 24 fires (faster in 15); -0.1 trapped per fire."},
+                  {"id": f"keepClear-{c}", "kind": "keepClear", "door": c, "floor": fc, "n": 24, "dT90": -2.0, "faster": 9,
+                   "dTrapped": 0.0, "dSmokeSeconds": -10.0, "smokePct": -7.0, "helps": True,
+                   "label": f"Keep {was[2]} clear",
+                   "why": f"Keep {was[2]} clear: 90% out 2 s sooner on average and 7% less time in smoke "
+                          "across 24 fires (faster in 9); +0.0 trapped per fire."}],
+        "fixesSkipped": [{"id": f"widen-{b}", "reason": f"widening {b} changes room connections or walkable pieces"},
+                         {"id": f"widen-{c}", "reason": f"door {c} has no opening"},
+                         {"id": "widen-nowhere", "reason": "unknown door nowhere"},
+                         {"id": "sprinklers", "reason": "Sprinklers already on or preset peak does not exceed the sprinkler cap."},
+                         {"id": "widen-text", "reason": f"Widen {was[0]}: not measured."}]}
+
+    def swapped(value, pairs):
+        if isinstance(value, str):
+            for before, after in pairs:
+                value = value.replace(before, after)
+            return value
+        if isinstance(value, list):
+            return [swapped(item, pairs) for item in value]
+        if isinstance(value, dict):
+            return {key: swapped(item, pairs) for key, item in value.items()}
+        return value
+
+    def texts(value, key=None):  # every string value, with the field it sits in
+        if isinstance(value, str):
+            yield key, value
+        elif isinstance(value, dict):
+            for field, item in value.items():
+                yield from texts(item, field)
+        elif isinstance(value, list):
+            for item in value:
+                yield from texts(item, key)
+
+    snapshot = deepcopy(batch)
+    expected = swapped(batch, list(zip(was, now)))
+    expected["fixesSkipped"][0]["reason"] = f"widening {now[1]} changes room connections or walkable pieces"
+    expected["fixesSkipped"][1]["reason"] = f"{now[2]} has no opening"
+    result = relabel(office, batch)
+    assert batch == snapshot and result is not batch  # pure
+    assert result == expected  # only the texts moved: ids, numbers and every other text are as they were
+    assert relabel(office, result) == result  # and a second pass changes nothing
+    assert not any(leak.search(text) for _, text in texts(result)), [t for _, t in texts(result) if leak.search(t)]
+    shown = [text for field, text in texts(result) if field in ("why", "label", "reason")]
+    assert not any(ident in text for ident in (a, b, c) for text in shown)
+    assert result["fixesSkipped"][2]["reason"] == "unknown door nowhere"  # no door, no label to give
+    assert restate(relabel(office, batch)) == relabel(office, restate(batch))  # D22's rewrite and this one commute
+    pack = build_headlines(office, batch, generated="2026-11-14T15:00:00Z")  # the pack relabels its input itself
+    first = pack["weakSpots"][0]
+    assert first["label"] == now[0] and first["why"].startswith(now[0] + ": ")
+    assert pack["fixes"][0]["label"] == f"Widen {now[0]} from 0.86 m to 1.36 m"
+    assert not any(leak.search(text) or ident in text for text in all_whys(pack) for ident in (a, b, c))
+    assert not any(leak.search(text) for _, text in texts(pack))
+    folded = {"top": [{"why": "Door d4 (R4 to Caf?): 3 people queued."}, {"why": "Door d4 (R4 to Café): 3 people queued."}]}
+    assert [t["why"] for t in relabel(fixture, folded)["top"]] == ["Door between R4 and Caf?: 3 people queued."] * 2
+    # An old label that two floors would name differently is left alone, never guessed.
+    twin = {"version": "building/v0", "id": "twin", "floors": [
+        {"id": "F1", "rooms": [{"id": f"{n}{i}", "name": n.upper()} for i in (1, 2) for n in ("a", "b")],
+         "doors": [{"id": "dd", "connects": ["a1", "b1"]}, {"id": "dz", "connects": ["a2", "b2"]}]},
+        {"id": "F2", "rooms": [{"id": "a3", "name": "A"}, {"id": "b3", "name": "B"}],
+         "doors": [{"id": "dd", "connects": ["a3", "b3"]}]}]}
+    assert door_label(twin, "F1", "dd")[1] != door_label(twin, "F2", "dd")[1]
+    assert relabel(twin, {"top": [{"why": "Door dd (A to B): 2 people queued."}]}) == {"top": [{"why": "Door dd (A to B): 2 people queued."}]}
+    json.dumps(pack, allow_nan=False)
+    print(f"door names: {counted} plain doors in {'three buildings' if clinic else 'two buildings'}, unique per floor; "
+          f"every branch of the rule, widen messages, aggregate, relabel ({'pinned' if office_pinned else 'office file'} "
+          "doors) and the headline pack checked", flush=True)
 
 
 def check_office_slow():
