@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from concurrent.futures.process import BrokenProcessPool
 from copy import deepcopy
 import json
+import math
 import multiprocessing
 import os
 from pathlib import Path
@@ -15,6 +16,20 @@ import numpy as np
 from shapely.geometry import Polygon
 
 _BUILDING = None
+
+
+def _workers(workers):
+    return workers if workers is not None else min(61, max(1, (os.cpu_count() or 1) - 1))
+
+
+def plan_rooms(budget_s, pilot_s, seeds, workers, variants=0, contention=2.0) -> int:
+    """Estimate room count with a conservative pool-contention allowance."""
+    if (not all(math.isfinite(value) and value > 0
+                for value in (budget_s, pilot_s, workers, contention))
+            or not len(seeds) or variants < 0):
+        raise ValueError("budget, pilot, workers, contention and seeds must be positive; variants non-negative")
+    return max(1, math.floor(budget_s * workers /
+                            (pilot_s * contention * len(seeds) * (1 + variants))))
 
 
 def _init(building: dict):
@@ -53,6 +68,7 @@ def _tasks(building: dict, base: dict, ignitions: list[dict], seeds) -> list[dic
 def _run_one(task: dict) -> dict:
     """Catch errors as strings, so even unpicklable exceptions cross the pool."""
     scenario = task["scenario"]
+    started = time.perf_counter()
     try:
         from sim.run import run
         from fire.model import FireModel
@@ -60,13 +76,17 @@ def _run_one(task: dict) -> dict:
 
         result = run(_BUILDING, scenario, FireModel(_BUILDING, scenario))
         metrics = compute(result, _BUILDING, scenario)
-        return {"ok": True, "scenarioId": scenario["id"], "seed": scenario["seed"],
+        return {"ok": True, "wallS": time.perf_counter() - started,
+                "scenarioId": scenario["id"], "seed": scenario["seed"],
                 "ignition": task["ignition"], "t90": metrics["t90"], "t100": metrics["t100"],
-                "trapped": metrics["trapped"],
-                "doors": [{key: door[key] for key in ("id", "floor", "peakQueue", "waitPersonSeconds")}
+                "trapped": metrics["trapped"], "exitCounts": metrics["exitCounts"],
+                "dosed": metrics["exposure"]["dosed"],
+                "smokeSeconds": metrics["exposure"]["personSecondsInSmoke"],
+                "doors": [{key: door[key] for key in ("id", "floor", "peakQueue", "waitPersonSeconds", "smokeWait")}
                           for door in metrics["doors"]], "heatmaps": metrics["heatmaps"]}
     except Exception as error:
-        return {"ok": False, "scenarioId": scenario["id"], "error": repr(error)}
+        return {"ok": False, "wallS": time.perf_counter() - started,
+                "scenarioId": scenario["id"], "error": repr(error)}
 
 
 def _records(building, tasks, workers, timeout_s, progress):
@@ -79,8 +99,10 @@ def _records(building, tasks, workers, timeout_s, progress):
         if progress:
             sc = tasks[index]["scenario"]
             outcome = f"t90={record['t90']}" if record["ok"] else f"failed={record['error']}"
+            elapsed = time.perf_counter() - started
+            eta = elapsed / len(records) * (len(tasks) - len(records)) / 60
             print(f"[{len(records)}/{len(tasks)}] {sc['fire']['room']} seed {sc['seed']} "
-                  f"{outcome} ({time.perf_counter() - started:.1f} s)", flush=True)
+                  f"{outcome} ({elapsed:.1f} s); eta {eta:.1f} min", flush=True)
 
     def failed(index, error):
         return {"ok": False, "scenarioId": tasks[index]["scenario"]["id"], "error": error}
@@ -142,15 +164,27 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
                 if any(t is not None for t in times) else None)
         rooms.append({"id": room, "floor": floor, "riskT90": risk,
                       "riskTrapped": sum(r["trapped"] for r in runs) / len(runs), "n": len(runs)})
+        if all("dosed" in record for record in records):
+            rooms[-1]["riskDosed"] = sum(r["dosed"] for r in runs) / len(runs)
     doors = [{"id": door, "floor": floor,
               "meanWait": sum(d["waitPersonSeconds"] for d in values) / len(records),
               "peakQueue": max(d["peakQueue"] for d in values)}
              for (floor, door), values in by_door.items()]
+    for door in doors:
+        values = by_door[(door["floor"], door["id"])]
+        if all("smokeWait" in value for value in values):
+            door["meanSmokeWait"] = sum(d["smokeWait"] for d in values) / len(records)
+    max_smoke = max((d.get("meanSmokeWait", 0) for d in doors), default=0)
     max_wait = max((d["meanWait"] for d in doors), default=0)
     max_queue = max((d["peakQueue"] for d in doors), default=0)
     for door in doors:
-        door["score"] = round(100 * (0.7 * door["meanWait"] / (max_wait or 1)
-                                     + 0.3 * door["peakQueue"] / (max_queue or 1)), 1)
+        if max_smoke > 0:
+            door["score"] = round(100 * (0.5 * door["meanWait"] / (max_wait or 1)
+                                         + 0.2 * door["peakQueue"] / (max_queue or 1)
+                                         + 0.3 * door.get("meanSmokeWait", 0) / max_smoke), 1)
+        else:
+            door["score"] = round(100 * (0.7 * door["meanWait"] / (max_wait or 1)
+                                         + 0.3 * door["peakQueue"] / (max_queue or 1)), 1)
 
     heatmaps = []
     for floor, maps in by_floor.items():
@@ -184,8 +218,10 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
             kind, label = "stair", f"Stair {stair.get('group', stair['id'])} door"
         else:
             kind, label = "door", f"Door {door['id']}"
+        smoke_clause = (f", {door['meanSmokeWait']:,.0f} of them in smoke,"
+                        if door.get("meanSmokeWait", 0) >= 1 else "")
         why = (f"{label}: {door['peakQueue']} people queued at peak; "
-               f"{door['meanWait']:,.0f} person-seconds of waiting on average across {len(records)} fires.")
+               f"{door['meanWait']:,.0f} person-seconds of waiting on average{smoke_clause} across {len(records)} fires.")
         top.append({"kind": kind, "id": door["id"], "floor": door["floor"],
                     "score": door["score"], "why": why.encode("ascii", "replace").decode("ascii")})
     if rooms:
@@ -219,18 +255,24 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
     Inline execution (one worker or one task) checks the deadline between runs;
     a running inline simulation cannot be interrupted by this deadline.
     """
-    if workers is None:
-        workers = min(61, max(1, (os.cpu_count() or 1) - 1))
+    workers = _workers(workers)
     if workers < 1 or timeout_s <= 0:
         raise ValueError("workers and timeout_s must be positive")
     if ignitions is None:
         ignitions = _ignitions(building, base)
     tasks = _tasks(building, base, ignitions, sorted(set(seeds)))
+    started = time.perf_counter()
     records = _records(building, tasks, workers, timeout_s, progress)
+    wall_s = time.perf_counter() - started
+    run_times = [record["wallS"] for record in records if "wallS" in record]
     return {"version": "batch/v0", "id": f"batch-{building['id']}-{base['id']}",
             "buildingId": building["id"], "base": deepcopy(base),
             "note": "Simulated rule-based batch; fire and smoke model is illustrative.",
-            "runs": [{key: record[key] for key in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped")}
+            "timing": {"runs": len(records), "failed": sum(not r["ok"] for r in records),
+                       "workers": workers, "wallS": wall_s,
+                       "meanRunS": sum(run_times) / len(run_times) if run_times else 0.0},
+            "runs": [{key: record[key] for key in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped",
+                                                  "dosed", "smokeSeconds", "exitCounts") if key in record}
                      for record in records if record["ok"]],
             "failed": [{"scenarioId": record["scenarioId"], "error": record["error"]}
                        for record in records if not record["ok"]],
@@ -298,16 +340,48 @@ def main():
     parser.add_argument("--rooms", type=int)
     parser.add_argument("--seeds", default="1,2,3")
     parser.add_argument("--workers", type=int)
+    parser.add_argument("--budget-min", type=float, help="estimate sampled rooms from one inline pilot (not a hard deadline)")
     parser.add_argument("--exits", action="store_true", help="rerun worst ignition rooms with each exit blocked")
+    parser.add_argument("--whatif", action="store_true", help="run paired default what-if variants")
+    parser.add_argument("--whatif-rooms", type=int, help="compare only N highest-risk ignition rooms")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     building = json.loads(args.building.read_text(encoding="utf-8"))
     base = json.loads(args.scenario.read_text(encoding="utf-8"))
-    seeds = tuple(int(seed) for seed in args.seeds.split(","))
+    seeds = tuple(sorted({int(seed) for seed in args.seeds.split(",")}))
+    args.workers = _workers(args.workers)
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     started = time.perf_counter()
+    if args.budget_min is not None:
+        if not math.isfinite(args.budget_min) or args.budget_min <= 0:
+            parser.error("--budget-min must be positive and finite")
+        candidates = _ignitions(building, base, len([r for f in building["floors"] for r in f["rooms"]]))
+        if not candidates:
+            parser.error("--budget-min needs at least one eligible ignition room")
+        _init(building)
+        pilot = _run_one(_tasks(building, base, candidates[:1], seeds[:1])[0])
+        if not pilot["ok"]:
+            parser.error(f"budget pilot failed: {pilot['error']}")
+        variants = 0
+        if args.whatif:
+            from fire.whatif import default_variants
+            variants = len(default_variants(building, base, [pilot]))
+        count = plan_rooms(args.budget_min * 60, pilot["wallS"], seeds, args.workers, variants)
+        args.rooms = min(count, len(candidates), args.rooms if args.rooms is not None else len(candidates))
+        if args.rooms < 1:
+            parser.error("--budget-min needs --rooms to be positive")
+        if args.whatif:
+            args.whatif_rooms = args.rooms
+        estimate = args.rooms * len(seeds) * (1 + variants) * pilot["wallS"] * 2 / args.workers / 60
+        print(f"pilot {pilot['wallS']:.1f} s; budget {args.budget_min:g} min, {args.workers} workers, "
+              f"{len(seeds)} seeds, {variants} what-ifs -> {args.rooms} rooms (est. {estimate:.1f} min)", flush=True)
     batch = run_many(building, base, _ignitions(building, base, args.rooms), seeds, args.workers)
     if args.exits:
         batch = add_exit_criticality(building, base, batch, workers=args.workers)
+    if args.whatif:
+        from fire.whatif import add_whatif
+        batch = add_whatif(building, base, batch, rooms=args.whatif_rooms, workers=args.workers)
     out = args.out if args.out is not None else Path(f"data/runs/batch-{building['id']}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(batch, separators=(",", ":")), encoding="utf-8")
@@ -320,6 +394,9 @@ def main():
         why = _exit_why(exit_result)
         if exit_result["n"] and why not in printed:
             print(why, flush=True)
+
+    for comparison in batch.get("whatIf", []):
+        print(comparison["why"], flush=True)
 
 
 if __name__ == "__main__":
