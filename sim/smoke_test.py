@@ -8,6 +8,7 @@ runs the full example and the 300-agent performance check.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import math
 import io
@@ -381,6 +382,118 @@ def check_fire(building, scenario, clear):
           f"{len(victims)} trapped")
 
 
+def spread_building() -> dict:
+    """C27 fixture: office A (60 x 6 m) and office B (10 x 6 m) share a wall with closed door D at x = 60; B holds the
+    building's only exit, E (open, at x = 70)."""
+    from buildings.normalize import plan_to_building
+
+    def room(room_id, x0, x1):
+        return {"id": room_id, "name": f"Room {room_id}", "type": "office",
+                "polygon": [[x0, 0], [x1, 0], [x1, 6], [x0, 6]]}
+
+    def door(door_id, x, state):
+        return {"id": door_id, "a": [x, 2.5], "b": [x, 3.5], "width": 1.0, "fireDoor": False, "state": state}
+
+    return plan_to_building({
+        "version": "plan/v0", "id": "spread-fixture", "name": "Spread fixture", "source": "synthetic", "credits": "",
+        "floors": [{"id": "F1", "level": 0, "elevation": 0.0, "height": 3.0,
+                    "rooms": [room("A", 0, 60), room("B", 60, 70)],
+                    "doors": [door("D", 60, "closed"), door("E", 70, "open")]}]})
+
+
+def check_spread(building, scenario):
+    """C27: a room that catches fire closes its doors and traps the people still inside; nothing else changes."""
+    from fire.model import FireModel
+
+    fixture = spread_building()
+    base = {"version": "scenario/v0", "id": "spread-fixture", "buildingId": fixture["id"], "seed": 1,
+            "occupants": {"perRoom": {"A": 1, "B": 1}, "mix": {"typical": 1}}, "sprinklers": False, "doors": {},
+            "alarmTime": 1000, "maxTime": 200, "brain": "rules",
+            "fire": {"floor": "F1", "room": "A", "x": 2, "y": 3, "type": "trash", "start": 0}}
+
+    def fixture_run(material, spread=True):
+        spreading = deepcopy(base)
+        spreading["fire"]["material"] = material
+        return run(fixture, spreading, FireModel(fixture, spreading, spread=spread))
+
+    def dump(result):
+        return json.dumps(result, separators=(",", ":"))
+
+    # Drywall: room B ignites at 180 s. Its two doors close then, and its occupant, who never got a cue (a trash fire
+    # in A leaves B 30 m of visibility), is trapped in the burning room. The occupant of A left long before.
+    result = fixture_run("drywall")
+    ignitions = [{"room": "A", "floor": "F1", "ignite": 0.0}, {"room": "B", "floor": "F1", "ignite": 180.0}]
+    assert result["fire"]["rooms"] == ignitions and result["fire"]["material"] == "drywall"
+    who = {a["room"]: a["idx"] for a in result["agents"]}
+    events = result["events"]
+    starts = [e for e in events if e["type"] == "start"]
+    assert [(e["idx"], e["cue"]) for e in starts] == [(who["A"], "fire")]
+    exits = [e for e in events if e["type"] == "exit"]
+    assert len(exits) == 1 and exits[0]["idx"] == who["A"] and exits[0]["exit"] == "E" and exits[0]["t"] < 180
+    blocks = [e for e in events if e["type"] == "door_blocked"]
+    assert sorted((e["door"], e["t"]) for e in blocks) == [("D", 180.0), ("E", 180.0)], blocks
+    victims = [e for e in events if e["type"] == "trapped"]
+    assert len(victims) == 1 and victims[0]["idx"] == who["B"], victims
+    assert victims[0]["t"] == 180.0 and victims[0]["reason"] == "burning room", victims
+    m = result["metrics"]
+    assert (m["evacuated"], m["trapped"], m["remaining"], m["inStairs"]) == (1, 1, 0, 0), m
+
+    # Concrete: B would ignite at 300 s, after maxTime. Nothing burns but A, so the run is the smoke-only run.
+    concrete = fixture_run("concrete")
+    assert concrete["fire"]["rooms"] == ignitions[:1] and concrete["fire"]["material"] == "concrete"
+    assert not any(e["type"] in ("door_blocked", "trapped") for e in concrete["events"])
+    assert concrete["metrics"]["remaining"] == 1
+    assert dump(concrete) == dump(fixture_run("concrete", spread=False))
+
+    # The example's kitchen fire in R101: C1 ignites at 180 s, after a 170 s run. Same JSON with and without spread.
+    guard = deepcopy(scenario)
+    guard["maxTime"] = 170
+    spreading = run(building, guard, FireModel(building, guard))
+    assert dump(spreading) == dump(run(building, guard, FireModel(building, guard, spread=False)))
+    assert spreading["fire"]["rooms"] == [{"room": "R101", "floor": "F1", "ignite": 0.0}]
+    assert not any(e.get("reason") == "burning room" for e in spreading["events"])
+    print("spread: the occupant of B trapped at 180 s with D and E closed; concrete and the 170 s example "
+          "match spread off byte for byte")
+
+
+def check_spread_slow(building, scenario):
+    """C27: the full example over 400 s with drywall, then wood: D25's ignition lists, traps only inside burning rooms."""
+    from fire.model import FireModel
+
+    ten = ("R102", "L1", "R103", "R104", "R105", "R106", "R107", "R108", "SA1", "SB1")
+    pinned = {"drywall": [("F1", "R101", 0.0), ("F1", "C1", 180.0)] + [("F1", r, 360.0) for r in ten],
+              "wood": ([("F1", "R101", 0.0), ("F1", "C1", 90.0)] + [("F1", r, 180.0) for r in ten]
+                       + [("F2", "SA2", 270.0), ("F2", "SB2", 270.0), ("F2", "C2", 360.0)])}
+    rooms = {(f["id"], r["id"]): Polygon(r["polygon"]).buffer(0.01) for f in building["floors"] for r in f["rooms"]}
+    trapped = {}
+    for material, wanted in pinned.items():
+        burning = deepcopy(scenario)
+        burning.update(maxTime=400)
+        burning["fire"]["material"] = material
+        assert burning["occupants"]["total"] == 160
+        result = run(building, burning, FireModel(building, burning))
+        assert [(e["floor"], e["room"], e["ignite"]) for e in result["fire"]["rooms"]] == wanted, material
+        assert len(wanted) == {"drywall": 12, "wood": 15}[material] and result["fire"]["material"] == material
+        ignite = {(e["floor"], e["room"]): e["ignite"] for e in result["fire"]["rooms"]}
+        reasons, terminal = Counter(), Counter()
+        for event in result["events"]:
+            if event["type"] in ("exit", "trapped"):
+                terminal[event["idx"]] += 1
+            if event["type"] == "trapped":
+                reasons[event["reason"]] += 1
+            if event["type"] == "trapped" and event["reason"] == "burning room":
+                point = Point(event["x"], event["y"])
+                assert any(when <= event["t"] and rooms[key].contains(point)
+                           for key, when in ignite.items() if key[0] == event["floor"]), (material, event)
+        assert [terminal[a["idx"]] for a in result["agents"]] == [1] * len(result["agents"]), material
+        m = result["metrics"]
+        assert m["remaining"] == m["inStairs"] == 0 and m["trapped"] == sum(reasons.values()), (material, m)
+        trapped[material] = (m["trapped"], dict(reasons))
+    assert trapped["wood"][0] > trapped["drywall"][0], trapped
+    print(f"spread, 160 agents over 400 s: drywall traps {trapped['drywall'][0]} {trapped['drywall'][1]}, "
+          f"wood traps {trapped['wood'][0]} {trapped['wood'][1]}")
+
+
 def check_mobility(building, scenario, total=160, delays=(180, 60)):
     scenario = dict(scenario, maxTime=900, occupants={"total": total, "mix": {
         "typical": 0.8, "older": 0.05, "cane": 0.03, "walker": 0.02, "wheelchair": 0.1}})
@@ -482,6 +595,7 @@ def check_core(building, scenario) -> dict:
     runtime = time.perf_counter() - t0
     m = r["metrics"]
     events = r["events"]
+    assert set(r["fire"]) == {"floor", "x", "y", "hrr"}, "a model without a material writes no rooms or material"
     assert not any(e["type"] == "start" for e in events)
     check_reroutes(r)
 
@@ -759,6 +873,7 @@ def check_recording(building, scenario):
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
     recorded = run(building, sampled, ToyFire(building, sampled))
     assert recorded["frameInterval"] == 1.0
+    assert set(recorded["fire"]) == {"floor", "x", "y", "hrr"}  # ToyFire has no burning_rooms or material
     assert [f["t"] for f in recorded["frames"]] == list(range(11))
     assert recorded["smoke"]
     for smoke in recorded["smoke"]:
@@ -1094,6 +1209,7 @@ def check_blocked_arrival(slow=False):
 
 def check_scale():
     from unittest.mock import patch
+    from fire.model import FireModel
     from sim.scale import fire_scenarios, run_scale
     from sim.floors import stair_doors
     building = json.loads((ROOT / "data/buildings/office.json").read_text())
@@ -1102,7 +1218,9 @@ def check_scale():
     stair = next(s for s in floor["stairs"] if s["room"] == "RS101")
     exits = {e["id"] for e in floor["exits"] if e["door"] in stair_doors(floor, stair)}
     def checked_run(building, scenario):
-        result = run(building, scenario)
+        # C27: the trapped bound below guards the sim at demo scale against the smoke-only fire. A spreading fire
+        # traps people on purpose (the stair fire's corridors burn from 180 s and catch 6 of 300 still leaving).
+        result = run(building, scenario, FireModel(building, scenario, spread=False))
         events = result["events"]
         for event in events:
             if event["type"] == "stuck":
@@ -1586,6 +1704,7 @@ def main(argv=None) -> int:
     timed("blocked arrival", check_blocked_arrival)
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
+    timed("fast spread", check_spread, building, fast)
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
     timed("fast assistance", check_assistance, building, fast)
     timed("fast LLM", check_llm, building, fast, core)
@@ -1607,6 +1726,7 @@ def main(argv=None) -> int:
         timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)
         timed("full fire", check_fire, building, scenario, core)
+        timed("full spread", check_spread_slow, building, scenario)
         timed("300 agents", check_300, building, scenario)
         timed("full mobility", check_mobility, building, scenario)
         timed("full assistance", check_assistance, building, scenario, total=160)

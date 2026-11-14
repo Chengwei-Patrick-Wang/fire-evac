@@ -21,8 +21,13 @@ Behavior:
   to untenable trapping. A walkable strip narrower than a body that runs between
   the cut and a wall is cut out too: the router would send people through it.
 - A burning stairwell is not an escape route; its doors close to route choice.
-- Every 1 s: fire.step(t), smoke slows agents; traps record "untenable"
-  or "no route" when every escape option has closed.
+- Rooms catch fire on the fire model's schedule (D25, fire.burning_rooms): the
+  doors of a burning room close to routing, and the people still inside it are
+  trapped as "burning room", whether they are walking or waiting to start. The
+  ignition room is not one of them: it keeps its keep-out, its doors and the
+  "untenable" trap. People in a stairwell (status 2 or 3) stay unexposed.
+- Every 1 s: fire.step(t), smoke slows agents; traps record "untenable",
+  "burning room" or "no route" when every escape option has closed.
 - Mid-run blocked interior doors act only through slowdown and trapping.
   Agents in a stairwell (status 2 or 3) are not exposed to fire.
 """
@@ -509,6 +514,15 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     burning_doors.update(doors)
                     if not doors:
                         burning_groups.add(stair["group"])
+    # Rooms that catch fire after the ignition room (D25). Their doors close through fire.blocked_doors() in the 1 s
+    # tick; here, the people still inside are trapped, and a doorless stair room closes its stair group.
+    burning_fn = getattr(fire, "burning_rooms", None)
+    schedule = fire.ignition_times() if hasattr(fire, "ignition_times") else []
+    spread_origin = (schedule[0]["floor"], schedule[0]["room"]) if schedule else None
+    room_polys = {(f["id"], r["id"]): Polygon(r["polygon"]) for f in building["floors"] for r in f["rooms"]}
+    stair_by_room = {(f["id"], s["room"]): (f, s) for f in building["floors"] for s in f["stairs"]}
+    spread_seen: set = set()
+    burning_area: dict = {}
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
     cue_rng = np.random.default_rng([seed, 3])
@@ -761,6 +775,16 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         t = round(k * DT, 2)
         if k % FIRE_EVERY == 0:
             fire.step(t)
+            now = burning_fn(t) - {spread_origin} if burning_fn else set()
+            new = now - spread_seen
+            for key in sorted(new):
+                entry = stair_by_room.get(key)
+                if entry is not None and not stair_doors(*entry):
+                    closed_groups.add(entry[1]["group"])
+            for fid in sorted({key[0] for key in new}):
+                burning_area[fid] = shapely.union_all([room_polys[key] for key in sorted(now) if key[0] == fid])
+                shapely.prepare(burning_area[fid])
+            spread_seen |= new
             smoke_grids.clear()
             for fs in sims:
                 snap = fire.snapshot(fs.id)
@@ -845,6 +869,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 x, y = ag.position
                 if fire.untenable(fs.id, x, y):
                     trap(i, t, fs, (x, y), "untenable")
+                elif fs.id in burning_area and shapely.contains_xy(burning_area[fs.id], x, y):
+                    trap(i, t, fs, (x, y), "burning room")
                 elif status[i] == 0:
                     if i not in cues:
                         if (fire.hrr(t) > 0 and fs.id == ignition.get("floor")
@@ -973,6 +999,9 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     # Round only the exported events, after all dynamics and metrics used the
     # original times (especially the stair FIFO and assistance deadlines).
     fire_cfg = scenario.get("fire") or {}
+    fire_out = {"floor": fire_cfg.get("floor"), "x": fire_cfg.get("x"), "y": fire_cfg.get("y"), "hrr": hrr}
+    if isinstance(getattr(fire, "material", None), str):
+        fire_out.update(rooms=fire.ignition_times(), material=fire.material)
     return {
         "version": "run/v0",
         "id": f"{scenario.get('id', 'scenario')}-s{seed}",
@@ -985,7 +1014,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     **({"llm": True} if a["idx"] in flagged else {})} for a in agents],
         "frames": frames,
         "smoke": list(smoke.values()),
-        "fire": {"floor": fire_cfg.get("floor"), "x": fire_cfg.get("x"), "y": fire_cfg.get("y"), "hrr": hrr},
+        "fire": fire_out,
         "events": [{key: round(value, 2) + 0.0 if key in {"t", "enter", "arrive", "until", "x", "y"}
                     else value for key, value in event.items()} for event in events],
         "metrics": metrics,
