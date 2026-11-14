@@ -12,6 +12,8 @@ Behavior:
 - Each agent chooses a route using travel time and queues, and stands still
   (desired_speed 0) until alarmTime + startDelay.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
+- Mid-run blocked interior doors act only through slowdown and trapping.
+  Agents in a stairwell (status 2 or 3) are not exposed to fire.
 """
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ from shapely.geometry import Polygon
 from fire.stub import NoFire
 from sim.brain import RuleBrain, route_length, ROUTING_MODE
 from sim.profiles import PROFILES
-from sim.floors import StairNet, find_spot, reachable_zone
+from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
 DT = 0.01
 FRAME_EVERY = 50     # steps (0.5 s)
@@ -50,7 +52,7 @@ def _warn(msg: str) -> None:
     print(f"WARNING (sim): {msg}", file=sys.stderr)
 
 
-def floor_walkable(floor: dict) -> Polygon:
+def floor_walkable(floor: dict, blocked=frozenset()) -> Polygon:
     """The floor's walkable polygon (the largest piece if the normalizer left several)."""
     polys = []
     for w in floor["walkable"]:
@@ -58,6 +60,9 @@ def floor_walkable(floor: dict) -> Polygon:
         if not poly.is_valid:
             _warn(f"{floor['id']}: repairing invalid walkable polygon with buffer(0)")
             poly = poly.buffer(0)
+        for door in floor.get("doors", []):
+            if door["id"] in blocked:
+                poly = poly.difference(Polygon(door["rect"]))
         polys.extend([poly] if poly.geom_type == "Polygon" else poly.geoms)
     polys = sorted((p for p in polys if not p.is_empty and p.area > 0), key=lambda p: p.area, reverse=True)
     if not polys:
@@ -109,12 +114,12 @@ def _sample_points(region, n: int, rng: np.random.Generator, taken: list, label:
     return out
 
 
-def place_occupants(building: dict, scenario: dict, rng: np.random.Generator) -> list[dict]:
+def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, walkable=None) -> list[dict]:
     """Agents with idx 0..N-1, profile, floor, room, v0, startDelay, radius, x, y."""
     occ = scenario.get("occupants") or {}
     rooms = []  # (floor id, room, spawn region)
     for floor in building["floors"]:
-        walk = floor_walkable(floor)
+        walk = floor_walkable(floor) if walkable is None else walkable[floor["id"]]
         for room in floor["rooms"]:
             region = Polygon(room["polygon"]).intersection(walk).buffer(-WALL_CLEARANCE)
             rooms.append((floor["id"], room, region))
@@ -162,10 +167,10 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator) ->
 class _FloorSim:
     """One JuPedSim simulation for one floor, plus our jps-id -> idx map."""
 
-    def __init__(self, floor: dict, index: int, net: StairNet):
+    def __init__(self, floor: dict, index: int, net: StairNet, blocked=frozenset()):
         self.id = floor["id"]
         self.index = index
-        self.walk = floor_walkable(floor)
+        self.walk = floor_walkable(floor, blocked)
         self.sim = jps.Simulation(model=jps.CollisionFreeSpeedModel(), geometry=self.walk, dt=DT)
         self.stages: list[dict] = []
         self.jid2idx: dict[int, int] = {}
@@ -173,7 +178,8 @@ class _FloorSim:
         zones = [{"kind": "exit", "id": e["id"], "group": None,
                   "poly": Polygon(e["polygon"]), "to": None,
                   "name": e.get("name", e["id"]), "tail": 0.0,
-                  "width": widths.get(e["door"], 1.0)} for e in floor["exits"]]
+                  "door": e["door"], "width": widths.get(e["door"], 1.0)}
+                 for e in floor["exits"] if e["door"] not in blocked]
         zones += [{"kind": "stair", "id": link["stair"], "group": link["group"],
                    "poly": link["polygon"], "to": link["to"], "width": link["width"],
                    "name": link["stair"], "tail": link["tail"]}
@@ -248,10 +254,18 @@ def _t_share(exit_times: list[float], n_agents: int, share: float):
     return exit_times[need - 1] if len(exit_times) >= need else None
 
 
+def smoke_speed(v0, S):
+    return min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - S)))
+
+
 def run(building: dict, scenario: dict, fire=None) -> dict:
     """building/v0 + scenario/v0 (+ fire model) -> run/v0."""
     if fire is None:
-        fire = NoFire(building, scenario)
+        try:
+            from fire.model import FireModel
+        except ImportError:
+            FireModel = NoFire
+        fire = (FireModel if scenario.get("fire") else NoFire)(building, scenario)
     seed = int(scenario.get("seed", 0))
     rng = np.random.default_rng(seed)
     frame_every = _interval_steps(scenario, "frameInterval", FRAME_INTERVAL)
@@ -261,13 +275,15 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     brain = RuleBrain(seed)
     distances = {}
     print(f"routing: {ROUTING_MODE}")
-    net = StairNet(building, walkable={f["id"]: floor_walkable(f) for f in building["floors"]})
-    agents = place_occupants(building, scenario, rng)
+    blocked = {key for key, state in scenario.get("doors", {}).items() if state == "blocked"}
+    walkable = {f["id"]: floor_walkable(f, blocked) for f in building["floors"]}
+    net = StairNet(building, walkable=walkable, blocked=blocked)
+    agents = place_occupants(building, scenario, rng, walkable)
     net.check({a["floor"] for a in agents})
     n = len(agents)
 
     floors = building["floors"]
-    sims = [_FloorSim(f, i, net) for i, f in enumerate(floors)]
+    sims = [_FloorSim(f, i, net, blocked) for i, f in enumerate(floors)]
     by_id = {fs.id: fs for fs in sims}
 
     status = [0] * n
@@ -289,7 +305,9 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     start_order = sorted(range(n), key=lambda i: (agents[i]["startDelay"], i))
     next_start = 0
 
-    events: list[dict] = []
+    door_floors = {d["id"]: f["id"] for f in floors for d in f["doors"]}
+    events: list[dict] = [{"t": 0.0, "type": "door_blocked", "door": door,
+                           "floor": door_floors[door]} for door in sorted(blocked) if door in door_floors]
     frames: list[dict] = []
     smoke: dict[str, dict] = {}
     hrr: list[list] = []
@@ -310,9 +328,24 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
 
     queues = zone_queues(0)
 
+    def blocking_doors(fs, st):
+        if st is None:
+            return set()
+        if st["kind"] == "exit":
+            return {st["door"]} & blocked
+        closed = set()
+        for fid in (fs.id, st["to"]):
+            floor = floors[by_id[fid].index]
+            stair = next(s for s in floor["stairs"] if s["group"] == st["group"])
+            if stair_blocked(floor, stair, blocked):
+                closed.update(stair_doors(floor, stair))
+        return closed
+
     def choose(i, t, fs, pos, trigger, speed=None):
-        current = None if trigger in ("start", "arrive") else target[i]["id"]
-        stages = fs.stages
+        current = None if trigger in ("start", "arrive") else (target[i]["id"] if target[i] else None)
+        stages = [st for st in fs.stages if not blocking_doors(fs, st)]
+        if not stages:
+            return None
         if trigger == "stuck":
             stages = [st for st in stages if st["id"] != current] or stages
         options = []
@@ -334,8 +367,11 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             return target[i]
         st = next(st for st in stages if st["id"] == decision["target"])
         if current is not None and st["id"] != current:
+            reason = decision["reason"]
+            if trigger == "blocked":
+                reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
             events.append({"t": t, "type": "reroute", "idx": i, "floor": fs.id,
-                           "from": current, "to": st["id"], "reason": decision["reason"]})
+                           "from": current, "to": st["id"], "reason": reason})
         return st
 
     def enter_stair(i, t, fs, st):
@@ -356,6 +392,13 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     while True:
         t = round(k * DT, 2)
         if k % FIRE_EVERY == 0:
+            fire.step(t)
+            new_blocks = set(fire.blocked_doors()) - blocked
+            for door in sorted(new_blocks):
+                if door in door_floors:
+                    events.append({"t": t, "type": "door_blocked", "door": door,
+                                   "floor": door_floors[door]})
+            blocked.update(new_blocks)
             queues = zone_queues(t)
         while next_start < n and alarm + agents[start_order[next_start]]["startDelay"] <= t + 1e-9:
             i = start_order[next_start]
@@ -363,8 +406,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             if status[i] == 0 and i not in trapped:
                 fs, jid = where[i]
                 target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
-                fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
-                fs.sim.agent(jid).model.desired_speed = agents[i]["v0"]
+                if target[i] is not None:
+                    fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
+                    fs.sim.agent(jid).model.desired_speed = smoke_speed(
+                        agents[i]["v0"], fire.visibility(fs.id, *fs.sim.agent(jid).position))
                 status[i] = 1
 
         # One queue per destination stair; a blocked head holds all later arrivals.
@@ -375,10 +420,12 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 entry = transit[i]
                 if entry["arrive"] > t + 1e-9:
                     break
-                if "target" not in entry:
+                if entry.get("target") is None or blocking_doors(fs, entry["target"]):
                     center = entry["arrival"].centroid
                     entry["target"] = choose(i, t, fs, (center.x, center.y), "arrive")
                 st = entry["target"]
+                if st is None:
+                    break
                 if st["kind"] == "stair" and st["group"] == group:
                     queue.popleft()
                     enter_stair(i, t, fs, st)
@@ -399,7 +446,6 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 del transit[i]
 
         if k % FIRE_EVERY == 0:
-            fire.step(t)
             moving = [(fs, ag) for fs in sims for ag in fs.sim.agents()
                       if ag.id in fs.jid2idx]
             for fs, ag in sorted(moving, key=lambda item: item[0].jid2idx[item[1].id]):
@@ -420,10 +466,14 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                                        "x": round(x, 2), "y": round(y, 2)})
                     v0 = agents[i]["v0"]
                     vis = fire.visibility(fs.id, x, y)
-                    ag.model.desired_speed = min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - vis)))
-                    st = choose(i, t, fs, (x, y), "stuck" if stuck else "tick",
-                                ag.model.desired_speed)
-                    if st is not target[i]:
+                    ag.model.desired_speed = smoke_speed(v0, vis)
+                    trigger = "blocked" if blocking_doors(fs, target[i]) else ("stuck" if stuck else "tick")
+                    st = choose(i, t, fs, (x, y), trigger, ag.model.desired_speed)
+                    if st is None:
+                        fs.sim.switch_agent_journey(ag.id, fs.park_journey, fs.park_stage)
+                        ag.target = (x, y)
+                        ag.model.desired_speed = STOPPED
+                    elif st is not target[i] or ag.stage_id == fs.park_stage:
                         fs.sim.switch_agent_journey(ag.id, st["journey"], st["stage"])
                         target[i] = st
 

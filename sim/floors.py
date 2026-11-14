@@ -34,12 +34,21 @@ def find_spot(region, others, rng, gap=0.5, tries=64):
     return None
 
 
+def stair_doors(floor, stair):
+    return {d["id"] for d in floor["doors"] if stair["room"] in d["connects"]}
+
+
+def stair_blocked(floor, stair, blocked):
+    doors = stair_doors(floor, stair)
+    return bool(doors) and doors <= blocked
+
+
 class StairNet:
-    def __init__(self, building, walkable=None):
+    def __init__(self, building, walkable=None, blocked=frozenset()):
         floors = sorted(building["floors"], key=lambda f: f["level"])
-        exits = {f["id"]: [e for e in f["exits"] if walkable is None or
+        exits = {f["id"]: [e for e in f["exits"] if e["door"] not in blocked and (walkable is None or
                  reachable_zone(Polygon(e["polygon"]), walkable[f["id"]],
-                                f"{f['id']} exit {e['id']}")] for f in floors}
+                                f"{f['id']} exit {e['id']}"))] for f in floors}
         self._links = {f["id"]: [] for f in floors}
         self._reachable = {}
         self._admissions = {}
@@ -50,6 +59,9 @@ class StairNet:
                 arrivals = {s["group"]: s for s in below["stairs"]}
                 for stair in floor["stairs"]:
                     if stair["group"] not in arrivals:
+                        continue
+                    if (stair_blocked(floor, stair, blocked) or
+                        stair_blocked(below, arrivals[stair["group"]], blocked)):
                         continue
                     arrival = Polygon(arrivals[stair["group"]]["polygon"])
                     polygon = Polygon(stair["polygon"])

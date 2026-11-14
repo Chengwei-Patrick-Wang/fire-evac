@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from sim.run import run, StuckWatch, floor_walkable
+from sim.run import run, StuckWatch, floor_walkable, smoke_speed
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
 from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE
@@ -184,6 +184,80 @@ def check_reroutes(result):
     print(f"routing: {ROUTING_MODE}; reroutes {sum(counts.values())}; t90 {result['metrics']['t90']}")
 
 
+def check_fire(building, scenario, clear):
+    assert smoke_speed(1.2, 30) == 1.2
+    assert abs(smoke_speed(1.2, 1) - 0.52) < 1e-9
+    assert smoke_speed(1, 0) == 0.2
+    scenario = dict(scenario, maxTime=900)
+    blocked = dict(scenario, doors={"E1": "blocked"})
+    result = run(building, blocked, NoFire(building, blocked))
+    assert result["metrics"]["exitCounts"]["E1"] == 0
+    assert result["metrics"]["evacuated"] == clear["metrics"]["agents"]
+    assert [e for e in result["events"] if e["type"] == "door_blocked"] == [
+        {"t": 0.0, "type": "door_blocked", "door": "E1", "floor": "F1"}]
+    for door in ("DSA1", "DSA2"):
+        net = StairNet(building, blocked={door})
+        assert {s["group"] for s in net.links("F2")} == {"SB"}
+    try:
+        StairNet(building, blocked={"E1", "E2"}).check({"F1", "F2"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("blocked exits must not count as escape routes")
+
+    class BlockE1(NoFire):
+        def step(self, t):
+            self.t = t
+
+        def blocked_doors(self):
+            return {"E1"} if self.t >= 60 else set()
+
+    result = run(building, scenario, BlockE1(building, scenario))
+    assert [e for e in result["events"] if e["type"] == "door_blocked"] == [
+        {"t": 60.0, "type": "door_blocked", "door": "E1", "floor": "F1"}]
+    assert not any(e["type"] == "exit" and e["exit"] == "E1" and e["t"] > 70
+                   for e in result["events"])
+    reroutes = [e for e in result["events"] if e["type"] == "reroute" and "blocked" in e["reason"]]
+    assert reroutes and all(e["t"] == 60 for e in reroutes)
+    assert result["metrics"]["evacuated"] == clear["metrics"]["agents"]
+
+    # Loss of every option must park people safely, including agents still delayed.
+    class BlockAll(BlockE1):
+        def blocked_doors(self):
+            return {"E1", "E2", "DSA2", "DSB2"}
+
+    stranded_scenario = dict(scenario, maxTime=100, occupants={"total": 4})
+    stranded = run(building, stranded_scenario, BlockAll(building, stranded_scenario))
+    assert stranded["metrics"]["remaining"] == 4
+    assert stranded["metrics"]["evacuated"] == stranded["metrics"]["inStairs"] == 0
+    assert len([e for e in stranded["events"] if e["type"] == "door_blocked"]) == 4
+
+    class LowVisibility(NoFire):
+        def visibility(self, floor_id, x, y):
+            return 1.0
+
+    slow = run(building, scenario, LowVisibility(building, scenario))
+    assert slow["metrics"]["t90"] >= 1.2 * clear["metrics"]["t90"]
+    room = next(r for r in building["floors"][0]["rooms"] if r["id"] == "R101")
+    poly = Polygon(room["polygon"])
+
+    class TrapRoom(NoFire):
+        def step(self, t):
+            self.t = t
+
+        def untenable(self, floor_id, x, y):
+            return self.t >= 40 and floor_id == "F1" and poly.contains(Point(x, y))
+
+    trapped = run(building, scenario, TrapRoom(building, scenario))
+    victims = {e["idx"]: e["t"] for e in trapped["events"] if e["type"] == "trapped"}
+    assert victims
+    assert not any(e["type"] == "exit" and e["idx"] in victims for e in trapped["events"])
+    assert not any(idx in victims and frame["t"] >= victims[idx]
+                   for frame in trapped["frames"] for idx, *_ in frame["a"])
+    print(f"fire coupling OK: {len(reroutes)} blocked reroutes, slow t90 {slow['metrics']['t90']}, "
+          f"{len(victims)} trapped")
+
+
 def main() -> int:
     check_brain()
     check_floors()
@@ -194,7 +268,7 @@ def main() -> int:
     scenario["maxTime"] = 900
 
     t0 = time.perf_counter()
-    r = run(building, scenario)
+    r = run(building, scenario, NoFire(building, scenario))
     runtime = time.perf_counter() - t0
     m = r["metrics"]
     events = r["events"]
@@ -280,24 +354,24 @@ def main() -> int:
             for stair_zone in floor["stairs"]:
                 stair_zone["group"] = "ZZ"
     try:
-        run(broken, scenario)
+        run(broken, scenario, NoFire(broken, scenario))
     except ValueError as exc:
         assert "F2" in str(exc)
     else:
         raise AssertionError("run must reject disconnected occupied F2")
 
-    r2 = run(building, scenario)
+    r2 = run(building, scenario, NoFire(building, scenario))
     assert r2["metrics"] == m, "same seed gave different metrics"
     assert r2["events"] == events, "same seed gave different events"
 
-    short = run(building, dict(scenario, maxTime=20))
+    short = run(building, dict(scenario, maxTime=20), NoFire(building, scenario))
     assert short["metrics"]["t100"] is None, "20 s run should not reach t100"
     assert short["frames"][-1]["t"] == 20.0
 
     # Stop while stairs are occupied: transit must remain active and count once.
     first_transfer = next(e for e in events if e["type"] == "stair")
     cutoff = np.ceil(first_transfer["t"] * 2) / 2
-    midway = run(building, dict(scenario, maxTime=cutoff))
+    midway = run(building, dict(scenario, maxTime=cutoff), NoFire(building, scenario))
     mm = midway["metrics"]
     assert mm["inStairs"] > 0
     assert sum(row[4] == 3 for row in midway["frames"][-1]["a"]) == mm["inStairs"]
@@ -318,7 +392,7 @@ def main() -> int:
     room = next(room for room in upper["rooms"] if room["type"] not in
                 {"corridor", "stair", "restroom", "storage"})
     chained_scenario["occupants"] = {"perRoom": {room["id"]: 2}, "mix": {"typical": 1}}
-    chained = run(three, chained_scenario)
+    chained = run(three, chained_scenario, NoFire(three, chained_scenario))
     assert chained["metrics"]["evacuated"] == 2
     for idx in range(2):
         transfers = [e for e in chained["events"] if e["idx"] == idx and e["type"] == "stair"]
@@ -335,6 +409,7 @@ def main() -> int:
     print(f"t50 {m['t50']}  t90 {m['t90']}  t100 {m['t100']}  (t-values count exits only; "
           f"stairs transfer to lower floors)")
     print(f"runtime {runtime:.1f} s for {times[-1]:.1f} s simulated ({len(times)} frames)")
+    check_fire(building, scenario, r)
     check_300(building, scenario)
     from tools.toy_fire import ToyFire
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
