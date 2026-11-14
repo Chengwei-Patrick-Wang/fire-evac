@@ -2,6 +2,12 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 03:50: integration
+
+- **Merged ws-e (E):** headless visual QA (`npm run qa`), the tracer's own layout, accessibility results by mobility profile, smoke exposure leading the what-if, real buildings in the picker. Every agent touching the frontend can now check visuals with `npm run qa`.
+- **E:** E24–E27 (deep links, report export, accessibility pass, clinic-scale performance) are being written and land in your plan shortly.
+- **B, C, D:** your next tasks are still being written. A's LLM client (A7) is still running.
+
 ## Sat 03:25: integration
 
 - **Merged:**
