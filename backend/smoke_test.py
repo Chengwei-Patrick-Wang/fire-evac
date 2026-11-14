@@ -297,8 +297,11 @@ def check_report(client):
         assert llm.complete("ping", schema={"type": "object"}) is None
         assert llm.complete("ping", image=b"\x89PNG\r\n") is None
         md = features.report(batch, building)
-        for item in batch["top"][:3]:
-            assert item["id"] in md and item["why"] in md, (item, md)
+        spots = features._facts(batch, building)["spots"]
+        assert len(spots) == len(batch["top"][:3]), spots
+        for item, spot in zip(batch["top"][:3], spots):  # each spot under its name in words, D's numbers word for word
+            assert f"**{spot['label']}**" in md and item["why"].split(": ", 1)[1] in md, (item, md)
+        assert not features._Names(building).mentions_id(md), md  # no door id (an IFC code to a judge) anywhere
         assert "Illustrative" in md and "Template summary" in md, md
         assert features.LIMITS in md and md.rstrip().endswith("*Template summary (AI unavailable)*"), md[-300:]
         assert "panic" not in md.lower()
@@ -345,11 +348,17 @@ def check_report_run(client):
     batch, run, building = _examples()
     m = run["metrics"]
     doors = sorted((d for d in m["doors"] if d["waitPersonSeconds"] > 0), key=lambda d: -d["waitPersonSeconds"])[:3]
+    names = features._Names(building)
+
+    def label(d):  # the door in words, never its id
+        return names.label(names.door_kind(d["floor"], d["id"]), d["floor"], d["id"])[0]
+
     with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
         md = features.report(run, building)
         for d in doors:
-            why = f"Door {d['id']}: peak queue {d['peakQueue']:,.0f}; {d['waitPersonSeconds']:,.0f} person-seconds of waiting"
+            why = f"{label(d)}: peak queue {d['peakQueue']:,.0f}; {d['waitPersonSeconds']:,.0f} person-seconds of waiting"
             assert why in md, (why, md)
+        assert not names.mentions_id(md), md
         if m.get("t90") is not None:
             assert f"90% out at {m['t90']:,.0f} s" in md, md
         assert "Kitchen (R101)" in md, md  # the example fire is in the kitchen
@@ -399,7 +408,7 @@ def check_report_run(client):
         path.write_text(json.dumps(fake, separators=(",", ":")), encoding="utf-8")
         try:
             expected = features.report(fake, building)
-            assert f"Door {doors[0]['id']}: peak queue" in expected, expected
+            assert f"{label(doors[0])}: peak queue" in expected, expected
             for ref in ("smoke-report-scenario", "smoke-report-run"):
                 r = client.post("/api/report", json={"runId": ref})
                 assert r.status_code == 200 and r.json() == {"markdown": expected}, (ref, r.text[:300])
@@ -422,7 +431,9 @@ def check_report_ai(client):
     assert len(top) >= 2, "the example batch needs at least two top entries"
     first, second = top[0], top[1]
     n = len(batch["runs"])
-    template_headline = features._facts(batch, building)["headline"]
+    facts = features._facts(batch, building)
+    template_headline = facts["headline"]
+    spots, names = facts["spots"], features._Names(building)
     answers: list = []
     prompts: list = []
 
@@ -433,7 +444,7 @@ def check_report_ai(client):
     def fix_lines(md: str) -> list[str]:
         return [ln.split("**Fix:**", 1)[1].strip() for ln in md.splitlines() if "**Fix:**" in ln]
 
-    good = {"headline": f"{first['id']} is the worst spot across {n} simulated fires",
+    good = {"headline": f"{spots[0]['label']} is the worst spot across {n} simulated fires",
             "fixes": [{"id": first["id"], "fix": "Add a second stair route from the corridor so arrivals split between two doors."},
                       {"id": "NOT-A-SPOT", "fix": "Nothing."},
                       {"id": second["id"], "fix": "A wider door cuts the queue by 93.7%."}]}
@@ -455,10 +466,14 @@ def check_report_ai(client):
             expected = ["Add a second stair route from the corridor so arrivals split between two doors."]
             expected += [features.TEMPLATE_FIX.get(str(item.get("kind")), features.TEMPLATE_FIX["door"]) for item in top[1:]]
             assert fixes == expected, (fixes, expected)
-            assert "93.7" not in md and "NOT-A-SPOT" not in md and all(item["why"] in md for item in top), md
+            assert "93.7" not in md and "NOT-A-SPOT" not in md and all(s["why"] in md for s in spots), md
+            assert not names.mentions_id(md), md
             prompt, kwargs = prompts[-1]
             assert kwargs["schema"] == features.REPORT_SCHEMA and kwargs["timeout"] >= 30, kwargs
-            assert first["why"] in prompt and building["name"] in prompt and "heatmaps" not in prompt, prompt[:500]
+            assert spots[0]["why"] in prompt and building["name"] in prompt and "heatmaps" not in prompt, prompt[:500]
+            # the model gets each spot's name and the id only as the key its fix comes back under
+            assert spots[0]["label"] in prompt and not names.mentions_id(
+                "\n".join(ln for ln in prompt.splitlines() if not ln.lstrip().startswith('"id":'))), prompt[:800]
 
             answers.append({"headline": "Stair B queues 9,871 people", "fixes": [{"id": first["id"], "fix": "Widen the stair door to 1.2 m."}]})
             md, ai = features.report_card(batch, building)
@@ -469,6 +484,13 @@ def check_report_ai(client):
             md, ai = features.report_card(batch, building)
             fix = next(ln for ln in md.splitlines() if "wide wide" in ln).split("**Fix:**")[1].split()
             assert ai and len(fix) == features.FIX_WORDS and fix[-1] == "wide...", fix
+
+            # a door id in the model's headline or fix (an IFC code to a judge) is dropped like an invented number
+            answers.append({"headline": f"Door {first['id']} queues the most people",
+                            "fixes": [{"id": first["id"], "fix": f"Widen {first['id']} to 1.2 m."}]})
+            md, ai = features.report_card(batch, building)
+            assert not ai and f"**{template_headline}**" in md and "Widen" not in md, md
+            assert not names.mentions_id(md), md
 
             answers.append(["not", "an", "object"])
             md, ai = features.report_card(batch, building)

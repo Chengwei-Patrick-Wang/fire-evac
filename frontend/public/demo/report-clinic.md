@@ -6,14 +6,14 @@
 
 #### Top weak spots
 
-1. **Dv$nmdJ** · door between PROVIDER CUBICLES (R1D16) and PHYSICAL EXAM (R1C18a), F1
-   - Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES): 6 people queued at peak; 32 person-seconds of waiting on average, 17 of them in smoke, across 75 fires.
+1. **Door between PHYSICAL EXAM (R1C18a) and PROVIDER CUBICLES (R1D16)** · F1
+   - Door between PHYSICAL EXAM (R1C18a) and PROVIDER CUBICLES (R1D16): 6 people queued at peak; 32 person-seconds of waiting on average, 17 of them in smoke, across 75 fires.
    - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
-2. **Dv$nmXk** · door between PHYSICAL EXAM (R1C18a) and CHIEF AERO MED. (R1C17), F1
-   - Door Dv$nmXk (CHIEF AERO MED. to PHYSICAL EXAM): 6 people queued at peak; 32 person-seconds of waiting on average, 17 of them in smoke, across 75 fires.
+2. **Door between CHIEF AERO MED. (R1C17) and PHYSICAL EXAM (R1C18a)** · F1
+   - Door between CHIEF AERO MED. (R1C17) and PHYSICAL EXAM (R1C18a): 6 people queued at peak; 32 person-seconds of waiting on average, 17 of them in smoke, across 75 fires.
    - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
-3. **DIf2sGN** · door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1), F2
-   - Door DIf2sGN (DENTAL WAITING to CORRIDOR): 3 people queued at peak; 39 person-seconds of waiting on average across 75 fires.
+3. **Door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1)** · F2
+   - Door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1): 3 people queued at peak; 39 person-seconds of waiting on average across 75 fires.
    - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
 
 Queues mark where the building runs short of capacity, not how people behave.
