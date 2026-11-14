@@ -6,13 +6,13 @@
 
 #### Top weak spots
 
-1. **DL1** · door between Lobby (L1) and Corridor 1 (C1), F1
-   - Door DL1 (Lobby to Corridor 1): 23 people queued at peak; 110 person-seconds of waiting on average, 93 of them in smoke, across 54 fires.
+1. **Door between Lobby (L1) and Corridor 1 (C1)** · F1
+   - Door between Lobby (L1) and Corridor 1 (C1): 23 people queued at peak; 110 person-seconds of waiting on average, 93 of them in smoke, across 54 fires.
    - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
-2. **L1** · fires starting in Lobby (L1), F1
+2. **Fires starting in Lobby (L1)** · F1
    - Fire in Lobby (L1): 15.7 people trapped on average; 90% out after 264 s (3 fires).
    - **Fix:** Fires starting here hurt the evacuation most: check detection and alarm coverage, and whether nearby rooms need a second way out.
-3. **E2** · East stair exit, exit from Stair B (SB1) to outside, F1
+3. **Exit East stair exit** · from Stair B (SB1) to outside, F1
    - Exit East stair exit: 13 people queued at peak; 96 person-seconds of waiting on average, 5 of them in smoke, across 54 fires.
    - **Fix:** Spread the load: make the other exits as easy to find and reach as this one (signs, lighting, clear routes), or widen this exit.
 

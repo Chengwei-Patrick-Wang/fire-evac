@@ -6,13 +6,13 @@
 
 #### Top weak spots
 
-1. **R203c** · fires starting in OPEN OFFICE (R203c), F2
+1. **Fires starting in OPEN OFFICE (R203c)** · F2
    - Fire in OPEN OFFICE (R203c): 29.0 people trapped on average; 90% not out by 400 s in any run (3 fires).
    - **Fix:** Fires starting here hurt the evacuation most: check detection and alarm coverage, and whether nearby rooms need a second way out.
-2. **D$77wwb** · Stair S1 (west), exit from STAIR (RS101) to outside, F1
+2. **Exit Stair S1 (west)** · from STAIR (RS101) to outside, F1
    - Exit Stair S1 (west): 17 people queued at peak; 225 person-seconds of waiting on average, 4 of them in smoke, across 294 fires.
    - **Fix:** Spread the load: make the other exits as easy to find and reach as this one (signs, lighting, clear routes), or widen this exit.
-3. **DMO2yZ0** · Stair S2 (east), exit from STAIR (RS102) to outside, F1
+3. **Exit Stair S2 (east)** · from STAIR (RS102) to outside, F1
    - Exit Stair S2 (east): 13 people queued at peak; 113 person-seconds of waiting on average, 6 of them in smoke, across 294 fires.
    - **Fix:** Spread the load: make the other exits as easy to find and reach as this one (signs, lighting, clear routes), or widen this exit.
 

@@ -20,6 +20,15 @@ present, evacuation time second: propping the stair doors moved t90 by +0.2 s on
 exposure by +22% (measured Sat 3 AM). Long waits are framed as gaps in the building, never as
 traits of people (spec 12), and the card ends with the limits line and the writer line.
 
+Names. A spot is named in words, never by its door id: an IFC code like D$77wwb means nothing to a
+judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR (R121) and
+OPEN OFFICE (R143)" (an unnamed interior door is named by the two rooms it joins), "Fires starting
+in OPEN OFFICE (R203c)"; a room id after its name is fine, the 3D view labels rooms that way. D's
+`why` lines and what-if labels print door ids for unnamed doors ("Door D$77xwP (CORRIDOR to SCIF
+OPEN OFFICE)"): _Names.readable swaps those for the same label, so the JSON keeps its ids and the
+card never shows one. A headline or fix from the model that carries a door id is dropped like a
+bad number. One heading is built in _render, so the template and the model's card share it.
+
 Decisions. `obs` is sim/brain.py's: {idx, t, floor, x, y, profile, visibility, speed, current,
 trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?}]}. A decision is
 {target: one of the obs's option ids, action: "go" | "reroute" | "wait", reason: str}, or None,
@@ -156,6 +165,7 @@ class _Names:
         self.exits: dict[tuple[str, str], dict] = {}  # keyed by the exit's door id
         self.stairs: dict[tuple[str, str], dict] = {}  # keyed by the stair group
         self.stair_rooms: set[tuple[str, str]] = set()
+        self.door_floor: dict[str, str] = {}  # a door id -> the first floor that has it
         for f in b.get("floors") or []:
             if not isinstance(f, dict):
                 continue
@@ -166,14 +176,52 @@ class _Names:
             for d in f.get("doors") or []:
                 if isinstance(d, dict) and d.get("id") is not None:
                     self.doors[fid, str(d["id"])] = d
+                    self.door_floor.setdefault(str(d["id"]), fid)
             for e in f.get("exits") or []:
                 if isinstance(e, dict) and e.get("door") is not None:
                     self.exits[fid, str(e["door"])] = e
+                    self.door_floor.setdefault(str(e["door"]), fid)
             for s in f.get("stairs") or []:
                 if isinstance(s, dict):
                     self.stairs[fid, str(s.get("group"))] = s
                     if s.get("room") is not None:
                         self.stair_rooms.add((fid, str(s["room"])))
+        self._rank = {key: i for i, key in enumerate(self.rooms)}  # floor order, as fire.batch.door_label lists rooms
+        # Door ids are IFC codes in a real building (D$77wwb): looked up, never shown. A room id is fine to show.
+        room_ids = {rid for _, rid in self.rooms}
+        self.raw_ids = {did for did in self.door_floor if did not in room_ids and did != "outside"}
+        self._raw = self._raw_pattern(self.raw_ids)
+
+    @staticmethod
+    def _raw_pattern(ids: set[str]):
+        """Finds D's door labels with an id in them: 'Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)' (group d),
+        'Exit D$77wwb' (group e), an id after a noun that names the door already, as in 'Stair B door DSB2 on F2'
+        (group n: the id goes, the noun stays), and any other bare id (group b); whole tokens only (an id may hold $)."""
+        if not ids:
+            return None
+        any_id = "|".join(re.escape(i) for i in sorted(ids, key=len, reverse=True))
+        parens = r"\((?:[^()]|\([^()]*\))*\)"  # one level of nested parentheses: a room name may have one
+        return re.compile(
+            rf"(?<![\w$])(?:Door (?P<d>{any_id})(?: {parens})?|Exit (?P<e>{any_id})|(?P<b>{any_id}))(?![\w$])"
+            rf"|(?<=door|exit|Door|Exit) (?P<n>{any_id})(?![\w$])")
+
+    def mentions_id(self, text: str) -> bool:
+        """True when text carries a door id (a model's headline or fix that does is dropped)."""
+        return bool(self._raw and self._raw.search(text))
+
+    def readable(self, text: str, floor: str | None = None) -> str:
+        """text with each door id in it swapped for that door's label (floor: the spot's own, when known)."""
+        if not self._raw or not text:
+            return text
+
+        def swap(m) -> str:
+            if m.group("n"):
+                return ""
+            did = m.group("d") or m.group("e") or m.group("b")
+            fid = floor if floor is not None and (floor, did) in self.doors else self.door_floor.get(did, "")
+            return self.label(self.door_kind(fid, did), fid, did)[0]
+
+        return self._raw.sub(swap, text)
 
     def room_label(self, floor: str, rid: str) -> str:
         name = (self.rooms.get((floor, rid)) or {}).get("name")
@@ -185,6 +233,13 @@ class _Names:
     def _is_stair_room(self, floor: str, rid: str) -> bool:
         return (self.rooms.get((floor, rid)) or {}).get("type") == "stair" or (floor, rid) in self.stair_rooms
 
+    def _stair_group(self, floor: str, rid: str) -> str:
+        """The stair group of a stair room ('S1'), as fire.batch.door_label names it: the room's group, else its id."""
+        group = (self.rooms.get((floor, rid)) or {}).get("group")
+        if group:
+            return str(group)
+        return next((str(g) for (f, g), s in self.stairs.items() if f == floor and str(s.get("room")) == rid), rid)
+
     def door_kind(self, floor: str, did: str) -> str:
         connects = self._connects(floor, did)
         if "outside" in connects or (floor, did) in self.exits:
@@ -193,38 +248,41 @@ class _Names:
             return "stair"
         return "door"
 
-    def place(self, kind: str, floor: str, sid: str) -> str:
-        """Where a weak spot is, in words: 'stair door between Corridor 2 (C2) and Stair B (SB2)'."""
+    def label(self, kind: str, floor: str, sid: str) -> tuple[str, str]:
+        """A weak spot in words: (the bold name, where it is), both without a door id.
+        ('Exit Stair S1 (west)', 'from STAIR (RS101) to outside'), ('Door between Lobby (L1) and Corridor 1 (C1)', '').
+        The names match fire.batch.door_label's wherever that has no id, so a `why` line and its heading agree."""
         if kind == "room":
-            return f"fires starting in {self.room_label(floor, sid)}"
+            return f"Fires starting in {self.room_label(floor, sid)}", ""
         if kind == "corridor":
-            return self.room_label(floor, sid)
+            return self.room_label(floor, sid), ""
         connects = self._connects(floor, sid)
-        inside = [c for c in connects if c != "outside"]
+        inside = sorted((c for c in connects if c != "outside"), key=lambda c: self._rank.get((floor, c), len(self._rank)))
+        rooms = [self.room_label(floor, c) for c in inside]
         if "outside" in connects or kind == "exit":
             name = _exit_name((self.exits.get((floor, sid)) or {}).get("name"))
-            text = f"{name}, exit" if name else "exit"
-            return text + (f" from {self.room_label(floor, inside[0])}" if inside else "") + " to outside"
-        noun = "stair door" if kind == "stair" else "door"
-        if len(inside) >= 2:
-            return f"{noun} between {self.room_label(floor, inside[0])} and {self.room_label(floor, inside[1])}"
-        return noun
+            stair = next((c for c in inside if self._is_stair_room(floor, c)), None)
+            detail = f"from {rooms[0]} to outside" if rooms else ""
+            if name:
+                return f"Exit {name}", detail
+            if stair:
+                return f"Stair {self._stair_group(floor, stair)} exit", detail
+            return (f"Exit from {rooms[0]}" if rooms else "Exit to outside"), ""
+        if kind == "stair":
+            stair = next((c for c in inside if self._is_stair_room(floor, c)), None)
+            label = f"Stair {self._stair_group(floor, stair)} door" if stair else "Stair door"
+            return label, f"between {rooms[0]} and {rooms[1]}" if len(rooms) >= 2 else ""
+        if len(rooms) >= 2:
+            return f"Door between {rooms[0]} and {rooms[1]}", ""
+        return (f"Door of {rooms[0]}" if rooms else "Door"), ""
 
     def title(self, kind: str, floor: str, sid: str) -> str:
-        """A weak spot's short name, for the template headline: 'the Stair B door DSB2 on F2'."""
+        """A weak spot's short name, for the template headline: 'the door between Lobby (L1) and Corridor 1 (C1) on F1'."""
         on = f" on {floor}" if floor else ""
-        if kind == "room":
-            return f"fires starting in {self.room_label(floor, sid)}{on}"
-        if kind == "corridor":
-            return f"{self.room_label(floor, sid)}{on}"
-        if kind == "exit":
-            name = _exit_name((self.exits.get((floor, sid)) or {}).get("name"))
-            return f"exit {sid}" + (f" ({name})" if name else "") + on
-        if kind == "stair":
-            stair = next((self.rooms[floor, c].get("name") for c in self._connects(floor, sid)
-                          if self._is_stair_room(floor, c) and (floor, c) in self.rooms), None)
-            return f"the {stair} door {sid}{on}" if stair else f"stair door {sid}{on}"
-        return f"door {sid}{on}"
+        label = self.label(kind, floor, sid)[0]
+        if kind in ("room", "corridor"):  # a room name keeps its capitals: 'Corridor 2 (C2) on F2'
+            return (label[:1].lower() + label[1:] if kind == "room" else label) + on
+        return f"the {label[:1].lower()}{label[1:]}{on}"
 
     def stair_name(self, floor: str, group) -> str:
         stair = self.stairs.get((floor, str(group))) or {}
@@ -245,8 +303,11 @@ class _Names:
 
 
 def _spot(names: _Names, kind: str, floor: str, sid: str, why: str) -> dict:
-    return {"id": sid, "kind": kind, "floor": floor, "why": why,
-            "place": names.place(kind, floor, sid), "title": names.title(kind, floor, sid)}
+    """One weak spot. `id` is the key the model's fixes come back under and stays out of every text the
+    reader sees; `label` and `detail` are the heading, `why` is D's line with any door id swapped for the label."""
+    label, detail = names.label(kind, floor, sid)
+    return {"id": sid, "kind": kind, "floor": floor, "why": names.readable(why, floor),
+            "label": label, "detail": detail, "title": names.title(kind, floor, sid)}
 
 
 def _median(values: list[float]) -> float:
@@ -272,13 +333,13 @@ def _base_smoke(entry: dict, runs: list[dict]) -> float | None:
     return mean if mean > 0 else None
 
 
-def _whatifs(batch: dict, runs: list[dict]) -> list[dict]:
+def _whatifs(batch: dict, runs: list[dict], names: _Names) -> list[dict]:
     """D11's whatIf entries as {label, smoke, t90, parts}: smoke exposure first, evacuation second."""
     out = []
     for w in batch.get("whatIf") or []:
         if not isinstance(w, dict):
             continue
-        label = str(w.get("label") or w.get("id") or "What-if")
+        label = names.readable(str(w.get("label") or w.get("id") or "What-if"))  # "Exit D$xyz blocked" -> by its label
         sprinklers = str(w.get("id")) == "sprinklers" or "sprinkler" in label.lower()
         smoke, dosed = _num(w.get("dSmokeSeconds")), _num(w.get("dDosed"))
         dt90, dtrapped = _num(w.get("dT90")), _num(w.get("dTrapped"))
@@ -362,7 +423,7 @@ def _batch_facts(batch: dict, names: _Names) -> dict:
             kind = str(item.get("kind") or names.door_kind(floor, sid))
             spots.append(_spot(names, kind, floor, sid, str(item.get("why") or "").strip()))
 
-    whatifs = _whatifs(batch, runs)
+    whatifs = _whatifs(batch, runs, names)
     story = next((w for w in whatifs if w["smoke"]), None)  # the what-if story leads with exposure
     if story:
         headline = f"{story['label']}: {story['smoke']}" + (f", while {story['t90']}" if story["t90"] else "") + "."
@@ -442,12 +503,13 @@ def _run_facts(run: dict, names: _Names) -> dict:
     spots = []
     for d in doors[:SPOTS]:
         sid, dfloor = str(d["id"]), str(d.get("floor") or "")
-        why = (f"Door {sid}: peak queue {(_num(d.get('peakQueue')) or 0):,.0f}; "
+        kind = names.door_kind(dfloor, sid)
+        why = (f"{names.label(kind, dfloor, sid)[0]}: peak queue {(_num(d.get('peakQueue')) or 0):,.0f}; "
                f"{_num(d['waitPersonSeconds']):,.0f} person-seconds of waiting")
         smoke_wait = _num(d.get("smokeWait"))  # D12, optional
         if smoke_wait is not None and smoke_wait >= 1:
             why += f", {smoke_wait:,.0f} of them in smoke"
-        spots.append(_spot(names, names.door_kind(dfloor, sid), dfloor, sid, why))
+        spots.append(_spot(names, kind, dfloor, sid, why))
 
     if spots:
         where = spots[0]["title"]
@@ -480,6 +542,7 @@ def _facts(result: dict, building) -> dict | None:
     else:
         return None
     facts["building"] = names.name
+    facts["names"] = names  # for the checks on the model's text (a door id in it)
     return facts
 
 
@@ -502,14 +565,15 @@ def _known(value: float, known: set[float]) -> bool:
                for k in known)
 
 
-def _good_headline(text: str, known: set[float]) -> bool:
+def _good_headline(text: str, known: set[float], names: _Names | None = None) -> bool:
     return (bool(text) and len(text.split()) <= HEADLINE_WORDS and "panic" not in text.lower()
+            and not (names and names.mentions_id(text))
             and all(_known(v, known) for v in _numbers(text)))
 
 
-def _good_fix(text: str, known: set[float]) -> bool:
-    """No invented statistics: each number is in the facts, a length (1.2 m), or a small count."""
-    if not text or "panic" in text.lower():
+def _good_fix(text: str, known: set[float], names: _Names | None = None) -> bool:
+    """No invented statistics: each number is in the facts, a length (1.2 m), or a small count. No door id either."""
+    if not text or "panic" in text.lower() or (names and names.mentions_id(text)):
         return False
     for m in _NUMBER.finditer(text):
         value = float(m.group().replace(",", ""))
@@ -536,7 +600,8 @@ def _prompt(facts: dict) -> tuple[str, str]:
         "result": facts["result"],
         "numbers": facts["numbers"],
         "whatIf": [w.replace("**", "") for w in facts["whatif"]],
-        "spots": [{"id": s["id"], "kind": s["kind"], "floor": s["floor"], "where": s["place"], "why": s["why"]}
+        "spots": [{k: v for k, v in {"id": s["id"], "name": s["label"], "kind": s["kind"], "floor": s["floor"],
+                                     "where": s["detail"], "why": s["why"]}.items() if v != ""}
                   for s in facts["spots"]],
     }
     text = json.dumps(payload, ensure_ascii=False, indent=1)
@@ -560,7 +625,9 @@ def _prompt(facts: dict) -> tuple[str, str]:
         "steer people to a less-used exit or stair, a layout change, or faster alarm and detection "
         "coverage. Fit each fix to its own spot instead of repeating one idea. No statistics and no "
         "predicted effects.\n\n"
-        "Rules: treat long waits as gaps in the building (capacity, layout, signs), never as traits or "
+        "Rules: call each spot by its name, never by its id: the id is only the key your fix comes back "
+        "under, and a door code such as D$a1b2c3 means nothing to the reader. Treat long waits as gaps in "
+        "the building (capacity, layout, signs), never as traits or "
         "behavior of the people in it, and never use the word panic. Stair and fire doors stay "
         "self-closing during a fire: never suggest propping or holding them open (in this simulation "
         "that lets smoke into the stairs). Plain text, no markdown. This is an illustrative "
@@ -577,9 +644,10 @@ def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
     if not isinstance(answer, dict):
         return None, {}
     known = set(_numbers(text))
+    names = facts.get("names")  # a door id in the model's text is as bad as an invented number
     headline = _clean(answer.get("headline"))
-    if headline and not _good_headline(headline, known):
-        print(f"LLM report: headline dropped (number not in the facts, or too long): {headline[:120]!r}",
+    if headline and not _good_headline(headline, known, names):
+        print(f"LLM report: headline dropped (number not in the facts, a door id, or too long): {headline[:120]!r}",
               file=sys.stderr)
         headline = ""
     ids = {s["id"] for s in facts["spots"]}
@@ -589,7 +657,7 @@ def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
             continue
         sid = str(item.get("id") or "").strip()
         fix = _cut(_clean(item.get("fix")), FIX_WORDS)
-        if sid in ids and sid not in fixes and _good_fix(fix, known):
+        if sid in ids and sid not in fixes and _good_fix(fix, known, names):
             fixes[sid] = fix
     return headline or None, fixes
 
@@ -602,9 +670,9 @@ def _render(facts: dict, headline: str, fixes: dict[str, str], writer: str) -> s
     if facts["spots"]:
         lines += ["#### Top weak spots", ""]
         for k, s in enumerate(facts["spots"], 1):
-            where = s["place"] + (f", {s['floor']}" if s["floor"] else "")
+            where = ", ".join(part for part in (s["detail"], s["floor"]) if part)  # the floor, after what is said of the spot
             fix = fixes.get(s["id"]) or TEMPLATE_FIX.get(s["kind"], TEMPLATE_FIX["door"])
-            lines += [f"{k}. **{s['id']}** · {where}"]
+            lines += [f"{k}. **{s['label']}**" + (f" · {where}" if where else "")]  # never the door id (an IFC code)
             if s["why"]:
                 lines += [f"   - {s['why']}"]
             lines += [f"   - **Fix:** {fix}"]
