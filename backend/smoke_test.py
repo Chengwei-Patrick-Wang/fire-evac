@@ -1048,8 +1048,29 @@ def check_trace(client):
           f"propose 503 offline, 413, 415, 422, stubbed model, tidy_floor {'checked' if tidy_floor else 'not on this branch yet'}")
 
 
+def post_run(client, scenario: dict) -> str:
+    r = client.post("/api/runs", json=scenario)
+    assert r.status_code == 200, r.text
+    return r.json()["runId"]
+
+
+def wait_run(client, run_id: str, timeout: float = POLL_TIMEOUT) -> dict:
+    """GET /api/runs/ID until the job is done: the run/v0 itself (no status key), or {"status": "error", ...}."""
+    t0 = time.time()
+    while True:
+        r = client.get(f"/api/runs/{run_id}")
+        assert r.status_code == 200, r.text
+        out = r.json()
+        if out.get("status") != "running":
+            return out
+        assert time.time() - t0 < timeout, f"run not done after {timeout} s"
+        time.sleep(1)
+
+
 def check_run(client) -> str:
-    """A real run: example scenario, maxTime 60. Returns the summary line."""
+    """A real run: example scenario, maxTime 60. Returns the summary line. Two twins (A11) go in beside it and run in
+    the pool at the same time: the same scenario with fire.material "wood", whose run says so, and with "steel", which
+    the fire model refuses, so its job ends in an error that names the valid materials."""
     from backend.app import jobs
 
     assert client.get("/api/runs/doesnotexist").status_code == 404
@@ -1059,20 +1080,12 @@ def check_run(client) -> str:
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 60
     t0 = time.time()
-    r = client.post("/api/runs", json=scenario)
-    assert r.status_code == 200, r.text
-    run_id = r.json()["runId"]
-    while True:
-        r = client.get(f"/api/runs/{run_id}")
-        assert r.status_code == 200, r.text
-        run = r.json()
-        status = run.get("status")
-        if status == "error":
-            raise AssertionError(f"run failed: {run.get('error')}\n{run.get('traceback', '')}")
-        if status != "running":
-            break  # no status key: this is the run/v0 itself
-        assert time.time() - t0 < POLL_TIMEOUT, f"run not done after {POLL_TIMEOUT} s"
-        time.sleep(1)
+    run_id = post_run(client, scenario)
+    wood_id = post_run(client, dict(scenario, fire=dict(scenario["fire"], material="wood")))
+    steel_id = post_run(client, dict(scenario, fire=dict(scenario["fire"], material="steel")))
+    run = wait_run(client, run_id)
+    if run.get("status") == "error":
+        raise AssertionError(f"run failed: {run.get('error')}\n{run.get('traceback', '')}")
     elapsed = time.time() - t0
 
     assert run["id"] == run_id and run["version"].startswith("run/"), run.get("version")
@@ -1081,6 +1094,14 @@ def check_run(client) -> str:
     assert doors, "metrics.doors is empty"
     saved_run = ROOT / "data" / "runs" / f"{run_id}.json"
     assert saved_run.is_file(), f"{saved_run} was not written"
+    assert run["fire"]["material"] == scenario["fire"]["material"] == "drywall", run["fire"]  # the example's own material
+
+    twin = wait_run(client, wood_id)
+    assert twin.get("status") != "error", f"wood run failed: {twin.get('error')}\n{twin.get('traceback', '')}"
+    assert twin["fire"]["material"] == "wood" and twin["fire"]["rooms"][0]["room"] == scenario["fire"]["room"], twin["fire"]
+    (ROOT / "data" / "runs" / f"{wood_id}.json").unlink(missing_ok=True)  # the twin's file is test noise
+    refused = wait_run(client, steel_id)
+    assert refused.get("status") == "error" and "concrete, drywall, wood" in refused.get("error", ""), refused
 
     # after a "restart" (no futures in memory) the run is read back from disk
     jobs._futures.clear()
@@ -1092,7 +1113,7 @@ def check_run(client) -> str:
         f"OK  run {run_id}: {len(run['frames'])} frames, {len(doors)} doors, "
         f"evacuated {m.get('evacuated')}/{m.get('agents')}, trapped {m.get('trapped')}, "
         f"t90 {m.get('t90')}, t100 {m.get('t100')}, {saved_run.stat().st_size / 1e6:.1f} MB, "
-        f"{elapsed:.1f} s through the API"
+        f"{elapsed:.1f} s through the API; twins: wood run says wood, steel refused ({refused['error'].split(':', 1)[0]})"
     )
 
 
