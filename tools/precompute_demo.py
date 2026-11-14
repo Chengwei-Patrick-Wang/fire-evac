@@ -5,6 +5,7 @@
     python tools/precompute_demo.py --building office --batch data/runs/batch-office.json
                                                           D's finished batch instead of a batch of our own
     python tools/precompute_demo.py --live-reports        new report cards with Gemini, no simulation
+    python tools/precompute_demo.py --refresh-reports     the template cards again (its wording changed), no simulation
 
 Per building it makes
     1. one batch (fire.batch.run_many): a fire in every room that is not a corridor or a stair
@@ -1065,24 +1066,31 @@ def is_placeholder(path: Path) -> bool:
 # ----------------------------------------------------------------------------- live report cards
 
 
-def live_reports(args, demo: Path) -> int:
-    """Rewrite report-*.md with Gemini from the batches already in the demo folder: no simulation. A card
-    only replaces the file when the model wrote it; a template (quota, busy, no key) leaves the old one."""
-    if os.environ.get("LLM_PROVIDER", "").strip().lower() == "off":
-        del os.environ["LLM_PROVIDER"]  # a shell that exports off must not win here; .env decides again
-    from backend.llm import client  # loads .env: after the line above, so its LLM_PROVIDER counts
+def live_reports(args, demo: Path, live: bool = True) -> int:
+    """Rewrite report-*.md from the batches already in the demo folder: no simulation. live=True asks Gemini and a card
+    only replaces the file when the model wrote it (a template, from quota, busy or no key, leaves the old one);
+    live=False (--refresh-reports) writes the template card again, with no model call, for when its wording changed."""
+    if live:
+        if os.environ.get("LLM_PROVIDER", "").strip().lower() == "off":
+            del os.environ["LLM_PROVIDER"]  # a shell that exports off must not win here; .env decides again
+    else:
+        os.environ["LLM_PROVIDER"] = "off"
+    from backend.llm import client  # loads .env: after the lines above, so its LLM_PROVIDER counts
     from backend.llm.features import report_card
 
     provider = client.provider()
-    if provider == "off":
+    if live and provider == "off":
         fail("LLM_PROVIDER is off in .env; set it to gemini (or claude) for --live-reports")
     index = load_index(demo)
     wanted = set(args.building or [])
     entries = [b for b in index["batches"] if not wanted or b["buildingId"] in wanted]
     if not entries:
         fail("no batch in the demo index" + (f" for {', '.join(sorted(wanted))}" if wanted else ""))
-    say(f"live report cards with {provider} ({len(entries)} batch{'es' if len(entries) != 1 else ''}); "
-        "the free tier allows 20 requests a day per model")
+    if live:
+        say(f"live report cards with {provider} ({len(entries)} batch{'es' if len(entries) != 1 else ''}); "
+            "the free tier allows 20 requests a day per model")
+    else:
+        say(f"template report cards, no model call ({len(entries)} batch{'es' if len(entries) != 1 else ''})")
     changed = 0
     for entry in entries:
         building_entry = next((b for b in index["buildings"] if b["id"] == entry["buildingId"]), None)
@@ -1097,7 +1105,7 @@ def live_reports(args, demo: Path) -> int:
         markdown, ai = report_card(batch, building, allow_llm=True)
         name = entry.get("report") or f"report-{safe_name(entry['buildingId'])}.md"
         path = demo / name
-        if not ai and path.is_file():
+        if live and not ai and path.is_file():
             say(f"  {name}: the model gave nothing usable (quota, busy or no key); kept the card as it was")
             continue
         check_private({name: markdown}, [entry["buildingId"]])
@@ -1105,7 +1113,7 @@ def live_reports(args, demo: Path) -> int:
         entry["report"] = name
         changed += 1
         headline = next((ln.strip("* ") for ln in markdown.splitlines() if ln.startswith("**")), "")
-        say(f"  {name}: {'written by ' + provider if ai else 'template (no model answer, no earlier card)'}")
+        say(f"  {name}: {'written by ' + provider if ai else 'template' + (' (no model answer, no earlier card)' if live else '')}")
         say(f"    {headline}")
     if changed:
         write_atomic(demo / "index.json", to_text(index, indent=2))
@@ -1142,9 +1150,12 @@ def parse_args(argv):
     p.add_argument("--workers", type=int, metavar="N", help="processes (default: cores - 2, at most 10)")
     p.add_argument("--resume", action="store_true", help="reuse the raw batch of the last run when it still fits")
     p.add_argument("--live-reports", action="store_true", help="instead of simulating: rewrite report-*.md with Gemini from the batches already in --out")
+    p.add_argument("--refresh-reports", action="store_true", help="instead of simulating: write report-*.md again as template cards (no model) from the batches already in --out")
     p.add_argument("--out", type=Path, default=DEMO_DIR, metavar="DIR", help="output folder (default frontend/public/demo)")
     args = p.parse_args(argv)
-    if not args.live_reports and not args.building and not args.all:
+    if args.live_reports and args.refresh_reports:
+        p.error("--live-reports and --refresh-reports are separate modes")
+    if not args.live_reports and not args.refresh_reports and not args.building and not args.all:
         p.error("give --building ID (or --all)")
     if args.batch and (args.all or len(args.building or []) != 1):
         p.error("--batch needs exactly one --building")
@@ -1161,8 +1172,8 @@ def main(argv=None) -> int:
             stream.reconfigure(errors="replace")
     args = parse_args(argv)
     demo = args.out.resolve()
-    if args.live_reports:
-        return live_reports(args, demo)
+    if args.live_reports or args.refresh_reports:
+        return live_reports(args, demo, live=args.live_reports)
     os.environ["LLM_PROVIDER"] = "off"  # the template card; the sim's rule agents never ask a model anyway
 
     ids = public_building_ids() if args.all else list(dict.fromkeys(args.building))
