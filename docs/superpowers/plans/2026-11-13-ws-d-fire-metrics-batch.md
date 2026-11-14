@@ -249,6 +249,7 @@ D13 completed: smoke test and slow checks both printed `fire checks OK`. The bud
 - [x] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): measured suggested fixes"` (no attribution lines). Handoff in the README for A (the report card shows `fixes[].why` verbatim as the measured fixes; Gemini may phrase around them, never change the numbers) and E (optional batch `fixes` and `fixesSkipped`).
 
 ### Task D15 (P0 · Sat 7 AM): Real office demo batch: readable labels, design occupancy, budgeted what-ifs and fixes
+BLOCKED: taken over by the lead's machine at 08:05; skip
 
 
 **Files:** Modify `fire/batch.py`, `fire/whatif.py`, `fire/fixes.py`, `fire/checks.py`, `fire/README.md`; produce `data/runs/batch-office.json` (gitignored: the lead regenerates it with the command recorded here).
