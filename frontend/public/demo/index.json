@@ -135,9 +135,9 @@
       "metrics": {
         "t50": 95.29,
         "t90": 120.73,
-        "t100": 199.79,
-        "evacuated": 160,
-        "trapped": 0
+        "t100": null,
+        "evacuated": 159,
+        "trapped": 1
       }
     },
     {

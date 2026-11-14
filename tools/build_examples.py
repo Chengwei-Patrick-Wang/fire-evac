@@ -35,8 +35,9 @@ SEEDS = (1, 2, 3)
 
 # D25's wood schedule for the example kitchen fire in R101 (plan 2026-11-14-ember-ui-fire-spread, task D25, "The example"):
 # R101 at 0 s, the corridor C1 at 90 s, the ten rooms off C1 (the F1 offices, lobby, lounge and both stairwells) at
-# 180 s, then the F2 stairwells at 270 s and its corridor C2 at 360 s. The example run ends at 200 s, so the first
-# twelve ignite inside the replay.
+# 180 s, then the F2 stairwells at 270 s and its corridor C2 at 360 s. The example run now ends at 180 s (with drywall
+# the corridor C1 ignites then, and the one person still in it is trapped, which ends the run), so the first twelve
+# ignite inside the replay.
 SPREAD_FIXTURE_ROOMS = [
     {"room": "R101", "floor": "F1", "ignite": 0.0},
     {"room": "C1", "floor": "F1", "ignite": 90.0},

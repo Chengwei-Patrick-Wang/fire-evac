@@ -322,7 +322,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
 - [x] **Step 5: Commit Part 1:** `git add contracts tools/build_examples.py frontend/src/data/types.ts docs/superpowers/specs/2026-11-13-fire-evac-sim-design.md docs/superpowers/plans/2026-11-13-ws-a-integration.md && git commit -m "feat(contracts): optional fire.material and fire.rooms, with a spread fixture for the frontend"` (no attribution lines). Merge to `main` right away, and give E the file and the type names.
 
 **Part 2 (Sat 8 PM, after D25 and C27 merge):**
-- [ ] **Step 6: Backend.** `fire.material` already passes through (see Interfaces). In `backend/smoke_test.py`, the real-run check gets two twins:
+- [x] **Step 6: Backend.** `fire.material` already passes through (see Interfaces). In `backend/smoke_test.py`, the real-run check gets two twins:
   - one with `fire.material: "wood"`, whose run has `fire.material == "wood"`;
   - one with `"steel"`, whose job ends in `{"status": "error"}` naming `concrete, drywall, wood`.
 - [x] **Step 7: Material pair.**
@@ -338,7 +338,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - `backend/smoke_test.py`:
     - a hand-made example batch (base material `wood`, runs for R101 and L1) gives `Fire spread at illustrative wood speeds: 14.0 other rooms per fire on average by 400 s, at most 14 rooms (fire in Kitchen (R101))`;
     - a drywall run with rooms at 0, 180 and 360 s gives `Fire spread at illustrative drywall speeds: 2 other rooms by 360 s`.
-- [ ] **Step 9: Regenerate.** Run `python tools/build_examples.py`: `contracts/run.example.json` now carries C27's `fire.rooms` (D25's 12-room drywall list) and `"material": "drywall"`. Then delete `contracts/run.spread.fixture.json` and its writer; from here E builds on real files.
+- [x] **Step 9: Regenerate.** Run `python tools/build_examples.py`: `contracts/run.example.json` now carries C27's `fire.rooms` (D25's 12-room drywall list) and `"material": "drywall"`. Then delete `contracts/run.spread.fixture.json` and its writer; from here E builds on real files.
 - [ ] **Step 10: Rerun the demo.** In the background: `OPENBLAS_NUM_THREADS=1 python tools/precompute_demo.py --all --thin > debug/a11-precompute.log 2>&1`.
   - Don't pass `--resume`, except to continue this same rerun.
   - It ends `OK: <n> runs, 3 batches, <x> MB`; seven of the runs are the office's.
