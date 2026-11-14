@@ -1,5 +1,14 @@
 # Overnight status
 
+## Sat 17:20: no merges; Aidan's deck is on main
+
+**On main:**
+- **Aidan uploaded `FirePass.pptx` (6 slides) and `Architecture.png` to the repo root** through GitHub's web page. They're accurate to the app. The deck names the project "FirePass", while the Ember redesign (E36) puts "Ember" in the header, so the team needs to pick one name for the app, Devpost, slides and video.
+
+**Running on the lead's machine:** D25 (fire spread), E36 (Ember shell) and C23 (every-room sweep). No branch has new commits yet.
+
+**Tracer check (17:10, lead's laptop):** load trace, Export to 3D, and a run in the traced building all work. The Gemini first pass proposed 12 rooms that line up with the example plan in about 30 s. Doors and stair groups stay manual. The public site has no backend, so the AI pass and Export are off there.
+
 ## Sat 16:50: A11 part 1 merged; D25, E36 and C23 running
 
 **Merged:**
