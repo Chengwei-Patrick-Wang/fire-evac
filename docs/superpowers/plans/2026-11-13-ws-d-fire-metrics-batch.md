@@ -145,11 +145,11 @@
 
 **Interfaces:** Consumes `FireModel`, `run.agents[].room`, `run.events` (`exit`, `stair` with `t`, `idx`). Produces `fire.model.aset_by_room(building: dict, scenario: dict, t_max: float) -> dict[str, float | None]`; `compute(run, building, scenario)` adds `rooms: [{id, rset, aset, margin}]` (omitted when `scenario` is None).
 
-- [ ] `aset_by_room`: a fresh `FireModel` stepped each 1 s to `t_max`; a room's ASET = first t when any node inside its polygon (same floor) is smoke-untenable (the d ≥ 90 for 30 s rule; the flame footprint is excluded, or the fire room would score 1 s); `None` if never. Keep the footprint and smoke masks separate in `FireModel`; README rows for both definitions.
-- [ ] `rset` per room = latest time among its agents (`agents[].room`) of their `exit` event, or their `stair` event in v0 runs; `None` if any never got out; `margin = aset − rset`, `None` if either is `None`; rooms without agents are omitted; a negative margin flags the room. In `batch._run_one` call `compute(run, B, sc)`.
-- [ ] `check_margins()` on the example building and kitchen scenario: R101 `aset` is 150–200 s (about 170); a hand-made run whose last R101 agent exits at 60 s gives `margin > 100`, at 400 s `margin < 0`; a room that never becomes untenable has `aset is None` and `margin is None`.
-- [ ] Verify: `python -m fire.smoke_test` prints `fire checks OK`.
-- [ ] Commit `feat(fire): RSET/ASET margins`; push; tell A (pass `scenario` to `compute` in the jobs) and E (`aset` and `margin` can be null).
+- [x] `aset_by_room`: a fresh `FireModel` stepped each 1 s to `t_max`; a room's ASET = first t when any node inside its polygon (same floor) is smoke-untenable (the d ≥ 90 for 30 s rule; the flame footprint is excluded, or the fire room would score 1 s); `None` if never. Keep the footprint and smoke masks separate in `FireModel`; README rows for both definitions.
+- [x] `rset` per room = latest time among its agents (`agents[].room`) of their `exit` event, or their `stair` event in v0 runs; `None` if any never got out; `margin = aset − rset`, `None` if either is `None`; rooms without agents are omitted; a negative margin flags the room. In `batch._run_one` call `compute(run, B, sc)`.
+- [x] `check_margins()` on the example building and kitchen scenario: R101 `aset` is 150–200 s (about 170); a hand-made run whose last R101 agent exits at 60 s gives `margin > 100`, at 400 s `margin < 0`; a room that never becomes untenable has `aset is None` and `margin is None`.
+- [x] Verify: `python -m fire.smoke_test` prints `fire checks OK`.
+- [x] Commit `feat(fire): RSET/ASET margins`; syncing deferred to the overnight runner (no push in this session). A/E handoff recorded in `fire/README.md`: A should pass `scenario` to `compute` in jobs; E should allow null `rset`, `aset`, and `margin`. Verification passed: package smoke test and slow coupled/spawned-batch checks; R101 smoke ASET = 169 s, with positive, negative, and null margin cases checked.
 
 ### Task D9: Exit criticality (P2 · only if done before the Sun 2 AM freeze)
 

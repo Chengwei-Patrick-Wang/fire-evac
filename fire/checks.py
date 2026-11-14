@@ -342,6 +342,54 @@ def check_metrics():
     assert heatmap["cell"] > 0.5 and not any(base64.b64decode(heatmap["d"]))
 
 
+def check_margins():
+    from fire.metrics import compute
+    from fire.model import FireModel, aset_by_room
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    available = aset_by_room(building, scenario, scenario["maxTime"])
+    assert 150 <= available["R101"] <= 200, available
+    assert available["R102"] is None, available
+    assert aset_by_room(building, scenario, 1)["R101"] is None  # exclude flame footprint
+    model = FireModel(building, scenario)
+    model.step(1)
+    assert model._footprint.any() and not model._smoke_untenable.any()
+    assert np.array_equal(model._untenable, model._footprint | model._smoke_untenable)
+    delayed = {**scenario, "fire": {**scenario["fire"], "start": 20}}
+    assert aset_by_room(building, delayed, 220)["R101"] == available["R101"] + 20
+
+    run = {"agents": [{"idx": 0, "room": "R101"}, {"idx": 1, "room": "R101"},
+                      {"idx": 2, "room": "R102"}],
+           "frames": [], "events": [{"type": "exit", "idx": 0, "t": 40},
+                                     {"type": "exit", "idx": 1, "t": 60},
+                                     {"type": "exit", "idx": 2, "t": 50}],
+           "metrics": {"t90": 60, "custom": "preserved"}}
+    def measured():
+        result = compute(run, building, scenario)
+        assert result["t90"] == 60 and result["custom"] == "preserved"
+        json.dumps(result, allow_nan=False)
+        return {room["id"]: room for room in result["rooms"]}
+
+    rooms = measured()
+    assert set(rooms) == {"R101", "R102"}  # omit unoccupied rooms
+    assert rooms["R101"]["rset"] == 60 and rooms["R101"]["margin"] > 100
+    assert rooms["R102"]["aset"] is None and rooms["R102"]["margin"] is None
+    run["events"][1]["t"] = 400
+    assert measured()["R101"]["margin"] < 0
+    run["events"][1]["type"] = "stair"  # v0 stair-sink fallback
+    assert measured()["R101"]["rset"] == 400
+    run["events"].append({"type": "exit", "idx": 1, "t": 410})
+    assert measured()["R101"]["rset"] == 410  # full exit supersedes stair entry
+    run["events"] = [event for event in run["events"] if event["idx"] != 1]
+    rooms = measured()
+    assert rooms["R101"]["rset"] is None and rooms["R101"]["margin"] is None
+    assert "rooms" not in compute(run, building)
+    assert "rooms" not in run["metrics"]
+    print(f"margins: R101 smoke ASET={available['R101']:g} s; positive/negative/null margins OK")
+
+
 def check_coupled_slow():
     # Import only for --slow: the ordinary model checks do not need JuPedSim.
     from sim.run import run

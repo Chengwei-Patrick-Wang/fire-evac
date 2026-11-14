@@ -52,8 +52,7 @@ def _stack(frames: list):
 def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
     """Copy sim metrics and add every door's queues/flow and per-floor heatmaps.
 
-    The optional scenario is reserved for room margins; it does not alter these
-    replay-derived metrics.
+    With a scenario, add smoke-only room ASET and observed clearance margins.
     """
     dt = float(run.get("frameInterval", 0.5))
     frames = run.get("frames") or []
@@ -121,7 +120,29 @@ def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
         d = np.rint(counts * (100.0 / peak)).astype(np.uint8) if peak else np.zeros(cols * rows, dtype=np.uint8)
         heatmaps.append({"floor": floor["id"], **spec,
                          "d": base64.b64encode(d.tobytes()).decode("ascii")})
-    return {**(run.get("metrics") or {}), "doors": doors, "heatmaps": heatmaps}
+    result = {**(run.get("metrics") or {}), "doors": doors, "heatmaps": heatmaps}
+    if scenario is not None:
+        from fire.model import aset_by_room
+
+        aset = aset_by_room(building, scenario, float(scenario["maxTime"]))
+        exits, stairs = {}, {}
+        for event in run.get("events", []):
+            if event.get("idx") is not None and event.get("type") in ("exit", "stair"):
+                times_by_agent = exits if event["type"] == "exit" else stairs
+                idx = event["idx"]
+                times_by_agent[idx] = max(times_by_agent.get(idx, 0.0), float(event["t"]))
+        occupants = {}
+        for agent in run.get("agents", []):
+            occupants.setdefault(agent["room"], []).append(agent["idx"])
+        rooms = []
+        for room, indexes in occupants.items():
+            clearance = [exits.get(idx, stairs.get(idx)) for idx in indexes]
+            rset = max(clearance) if all(t is not None for t in clearance) else None
+            available = aset.get(room)
+            margin = available - rset if available is not None and rset is not None else None
+            rooms.append({"id": room, "rset": rset, "aset": available, "margin": margin})
+        result["rooms"] = rooms
+    return result
 
 
 def main(argv=None) -> int:

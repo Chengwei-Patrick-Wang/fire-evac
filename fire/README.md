@@ -162,8 +162,8 @@ test pass; smoke frames have interval 2 s and heat release is nondecreasing.
 ## Replay metrics (D5)
 
 `compute(run, building, scenario=None)` returns a copy of the simulator metrics,
-keeping all existing and unknown keys, plus `doors` and `heatmaps`. The optional
-scenario is reserved for room margins. Run
+keeping all existing and unknown keys, plus `doors` and `heatmaps`. Passing a
+scenario also adds `rooms` with clearance and smoke margins (D8 below). Run
 `python -m fire.metrics data/runs/ws-d-coupled.json contracts/building.example.json`
 to print five doors ranked by waiting, including flow in distinct people/minute.
 
@@ -312,3 +312,43 @@ ignition room with 38.0 people trapped on average. All t90 values are null with
 the current scaffold's upper-floor stair sinks; rankings retain this limitation
 and report that 90% evacuation was not reached by 400 s. C's stair transfers
 will change those results. Git syncing remains the overnight runner's job.
+
+## Room RSET/ASET margins (D8)
+
+`fire.model.aset_by_room(building, scenario, t_max)` creates a fresh model and
+samples every whole simulation second through `t_max`. For each room it finds
+the first second when any graph node inside the room polygon on that floor is
+smoke-untenable. Rooms with no qualifying nodes or no threshold crossing in the
+horizon return `None`. This uses unrounded model density, not snapshot bytes.
+
+| Quantity | Definition |
+| --- | --- |
+| Smoke untenability / room ASET | Density at least 90 continuously for 30 s; flame footprint alone does not count |
+| Agent untenability / blocked doors | Smoke untenability OR the growing flame footprint; existing coupling is preserved |
+| Room RSET | Latest exit time among agents spawned in the room; use an agent's stair event when no exit is recorded in v0 runs |
+| Room margin | ASET minus RSET, in seconds; negative values flag the room |
+
+`compute(run, building, scenario)` adds `rooms: [{id, rset, aset, margin}]`,
+omitting rooms without agents. If any occupant has neither an exit nor a stair
+event, RSET is null. Exit events supersede stair entries for agents with both.
+ASET is evaluated through `scenario.maxTime` even if the replay ends sooner;
+it and the margin are null if the room never becomes smoke-untenable within
+that horizon. A missing RSET also gives a null margin. Without a scenario,
+`compute` keeps the existing replay-only behavior.
+
+These illustrative margins describe clearance of an origin room's occupants,
+with the v0 stair-sink approximation where applicable. A positive margin does
+not account for heat, toxic gas, or hazards encountered along the evacuation
+route. The flame footprint still traps agents immediately; excluding it from
+ASET prevents the fire room's smoke timeline from becoming 1 s by definition.
+
+A handoff: pass the scenario to `compute(run, building, scenario)` in jobs to
+enable room margins. The batch worker now passes it explicitly. E handoff:
+`rset`, `aset`, and `margin` can be null; a negative numeric margin flags a room.
+No shared contracts or frontend files were edited.
+
+D8 verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
+passed. The kitchen scenario gives R101 smoke ASET 169 s and R102 null through
+400 s. Checks cover early/late clearance, a missing occupant, stair fallback,
+exit precedence, delayed ignition, and flame exclusion. Spawned and inline
+batches still match; coupled metrics retain the D4 results.

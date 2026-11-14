@@ -59,7 +59,7 @@ def _run_one(task: dict) -> dict:
         from fire.metrics import compute
 
         result = run(_BUILDING, scenario, FireModel(_BUILDING, scenario))
-        metrics = compute(result, _BUILDING)
+        metrics = compute(result, _BUILDING, scenario)
         return {"ok": True, "scenarioId": scenario["id"], "seed": scenario["seed"],
                 "ignition": task["ignition"], "t90": metrics["t90"], "t100": metrics["t100"],
                 "trapped": metrics["trapped"],
