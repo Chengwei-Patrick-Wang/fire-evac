@@ -1,0 +1,31 @@
+.app {
+  display: grid;
+  height: 100vh;
+  grid-template-columns: 300px 1fr 380px;
+  grid-template-rows: 44px 1fr 64px 24px;
+  grid-template-areas:
+    'top top top'
+    'left center right'
+    'bottom bottom bottom'
+    'credits credits credits';
+  background: #0b1220;
+  color: #e2e8f0;
+  font: 14px system-ui, sans-serif;
+}
+.topbar { grid-area: top; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: #111a2e; border-bottom: 1px solid #1e293b; overflow: hidden; }
+.left { grid-area: left; padding: 12px; overflow: auto; border-right: 1px solid #1e293b; }
+.right { grid-area: right; padding: 12px; overflow: auto; border-left: 1px solid #1e293b; }
+.center { grid-area: center; position: relative; overflow: hidden; }
+.bottom { grid-area: bottom; padding: 8px 12px; background: #111a2e; border-top: 1px solid #1e293b; }
+.credits { grid-area: credits; padding: 2px 12px; font-size: 11px; color: #94a3b8; }
+.pad { padding: 24px; }
+.dim { color: #94a3b8; }
+.tabs { display: flex; gap: 4px; }
+.tabs button, .file { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.tabs button.on { background: #2563eb; border-color: #3b82f6; }
+.file input { display: none; }
+select { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 4px; }
+.mode { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+.notice { color: #fbbf24; font-size: 12px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spinner { width: 16px; height: 16px; border: 2px solid #334155; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

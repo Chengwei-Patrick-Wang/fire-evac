@@ -1,0 +1,26 @@
+{
+ "version": "scenario/v0",
+ "id": "example-kitchen-fire",
+ "buildingId": "example-office",
+ "seed": 1,
+ "occupants": {
+  "total": 160,
+  "mix": {
+   "typical": 0.85,
+   "older": 0.1,
+   "visitor": 0.05
+  }
+ },
+ "fire": {
+  "floor": "F1",
+  "room": "R101",
+  "x": 8.0,
+  "y": 3.0,
+  "type": "kitchen",
+  "start": 0
+ },
+ "sprinklers": false,
+ "doors": {},
+ "alarmTime": 30,
+ "maxTime": 400
+}
