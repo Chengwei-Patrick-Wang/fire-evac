@@ -17,6 +17,7 @@ from shapely.geometry.polygon import orient
 from shapely.ops import split, unary_union
 
 from buildings.inspect_ifc import storey_of
+from buildings.door_widths import clear_width, leaves
 
 LOG = logging.getLogger(__name__)
 SETTINGS = ifcopenshell.geom.settings()
@@ -135,6 +136,18 @@ def group_stairs(floors):
             room["group"] = f"S{i}"
 
 
+def _door_name(ifc_name: str) -> str:
+    family = ifc_name.split(":", 1)[0].lower()
+    kinds = [("toilet partition", "Toilet stall door"), ("chain link", "Chain-link gate"),
+             ("dbl glass", "Double glass door"), ("sgl glass", "Glass door"),
+             ("double", "Double door"), ("single", "Single door")]
+    name = next((label for key, label in kinds if key in family), "Door")
+    for suffix in ("exterior", "rated"):
+        if suffix in ifc_name.lower():
+            name += ", " + suffix
+    return name
+
+
 def _door(element, scale):
     geom = footprint(element)
     if geom is None:
@@ -152,14 +165,20 @@ def _door(element, scale):
     n = np.array([-u[1], u[0]])
     center = np.array([rect.centroid.x, rect.centroid.y])
     given = getattr(element, "OverallWidth", None)
-    width = given * scale if given is not None and 0.5 <= given * scale <= 4 else length
+    overall = given * scale if given is not None and 0.5 <= given * scale <= 4 else length
+    door_type = ifcopenshell.util.element.get_type(element)
+    operation = getattr(element, "OperationType", None) or getattr(door_type, "OperationType", None)
+    psets = ifcopenshell.util.element.get_psets(element)
+    thickness = psets.get("PSet_Revit_Type_Dimensions", {}).get("Thickness")
+    width = clear_width(overall, operation, thickness * scale if thickness is not None else None)
     a, b = center - u * width / 2, center + u * width / 2
     ring = [center + su * u * width / 2 + sn * n * depth / 2
             for su, sn in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
-    rating = ifcopenshell.util.element.get_psets(element).get("Pset_DoorCommon", {}).get("FireRating")
+    rating = psets.get("Pset_DoorCommon", {}).get("FireRating")
     fire = bool(rating and str(rating).strip())
-    return {"id": "D" + element.GlobalId[-6:], "name": element.Name or "",
+    return {"id": "D" + element.GlobalId[-6:], "name": _door_name(element.Name or ""), "ifcName": element.Name or "",
             "a": a.tolist(), "b": b.tolist(), "width": round(width, 2),
+            "overallWidth": round(overall, 3), "leaves": leaves(operation),
             "rect": [p.tolist() for p in ring], "fireDoor": fire,
             "state": "closed" if fire else "open"}
 

@@ -4,7 +4,7 @@
  "buildingId": "office",
  "seed": 1,
  "occupants": {
-  "total": 120,
+  "total": 250,
   "mix": {
    "typical": 0.85,
    "older": 0.1,
@@ -20,7 +20,7 @@
   "room": "R143",
   "x": 9.5375,
   "y": 31.2565,
-  "type": "trash",
+  "type": "kitchen",
   "start": 0
  }
 }

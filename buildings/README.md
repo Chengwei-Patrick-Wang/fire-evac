@@ -100,8 +100,111 @@ ID or floors. Rerun `python -m buildings.summary` after changing any building in
 `data/buildings/`; use `python -m buildings.summary --check` to detect a stale
 index without writing it. A folder and `--out PATH` may also be supplied.
 
+## Public building validation
+
+Run `python -m buildings.validate FILE...` to list geometry, connectivity,
+door, credit and scenario problems. A neighboring `<stem>.scenario.json` is
+checked automatically. The command exits 1 if any problem is found; upper-floor
+exits are allowed. Python callers can use `problems(building, scenario=None)`.
+The buildings smoke test checks every public `building/v0` file in
+`data/buildings/` and reports all issues together.
+
 ## Vertex budget (B12)
 
 Pass `--max-vertices N` to the normalizer to try reducing walkable vertices per floor. The budget is off by default; committed buildings are not budgeted. The normalizer preserves door openings and checks topology, exit and stair zones, and area; it warns when the target cannot be met.
 
 On the office with a 600-vertex per-floor target, the baseline had 1,173 vertices and ran in 12.3 and 12.7 seconds. The budgeted build had 1,077 vertices (F1: 715 to 619; F2: 458 unchanged) and ran in 10.5 and 10.7 seconds. Both evacuated 119 of 120, with t90 117.57 seconds; F1 could not reach the requested budget. Times are illustrative and machine-dependent.
+
+For the office demo scenario, run `python -m buildings.make_scenario data/buildings/office.json data/buildings/office.scenario.json --total 250 --fire-type kitchen`. IFC doors preserve their original IFC Name in `ifcName` and use a readable `name`.
+
+## Door clear width (B16)
+
+IFC OverallWidth measures the leaf width. For a door open at 90 degrees, clear width subtracts one leaf thickness for SINGLE_SWING and DOUBLE_SWING operations, or two for DOUBLE_DOOR operations. Thickness comes from PSet_Revit_Type_Dimensions.Thickness, defaulting to 0.05 m; unknown operations subtract nothing. The measurement follows ADA and ICC A117.1 404.2.3 (open leaf face to stop). The cut is the shortest midpoint-containing walkable section at three offsets across the wall. Exterior cuts can include exit stubs.
+
+The 0.864 m flow gate evacuated 200/200 at 0.932 persons/s (last exit 214.32 s). The earlier office run evacuated 249/250 at t90 132.3 s; the rebuilt office evacuated 249/250 at t90 133.28 s. The rebuilt clinic evacuated 120/120 at t90 123.81 s.
+
+Baseline report (metres):
+
+```text
+data\buildings\office.json:
+overall width cut count
+0.81 0.81 1.86 3
+0.81 0.81 2.80 1
+0.81 0.81 2.81 1
+0.91 0.91 0.92 22
+0.91 0.91 0.93 46
+0.91 0.91 0.94 15
+0.91 0.91 0.95 1
+0.91 0.91 1.97 1
+0.91 0.91 2.01 1
+0.91 0.91 2.02 1
+0.91 0.91 2.03 1
+0.92 0.92 0.92 1
+0.92 0.92 0.93 2
+1.00 1.00 1.01 1
+1.00 1.00 1.02 1
+1.83 1.83 1.84 1
+1.83 1.83 1.85 4
+1.83 1.83 1.86 1
+interior cut - width: median 0.020 m, maximum 0.029 m
+data\buildings\clinic.json:
+overall width cut count
+0.90 0.90 1.95 4
+0.91 0.91 0.92 92
+0.91 0.91 0.93 97
+0.91 0.91 0.94 19
+0.91 0.91 1.92 9
+0.91 0.91 1.93 2
+0.92 0.92 0.92 2
+0.92 0.92 1.92 1
+1.00 1.00 1.01 1
+1.22 1.22 1.23 2
+1.73 1.73 1.74 1
+1.80 1.80 1.81 2
+1.83 1.83 1.84 2
+1.83 1.83 1.85 1
+1.83 1.83 1.86 1
+interior cut - width: median 0.016 m, maximum 1.024 m
+```
+
+Rebuilt report (metres):
+
+```text
+data\buildings\office.json:
+overall width cut count
+0.81 0.79 1.84 1
+0.81 0.79 1.85 2
+0.81 0.79 2.78 1
+0.81 0.79 2.79 1
+0.92 0.86 0.86 1
+0.92 0.86 0.87 24
+0.92 0.86 0.88 50
+0.92 0.86 0.89 11
+0.92 0.86 0.90 1
+0.92 0.89 1.96 1
+0.92 0.89 2.00 2
+0.92 0.89 2.02 1
+1.00 1.00 1.01 1
+1.00 1.00 1.02 1
+1.83 1.73 1.74 3
+1.83 1.73 1.75 2
+1.83 1.73 1.76 1
+interior cut - width: median 0.019 m, maximum 0.029 m
+data\buildings\clinic.json:
+overall width cut count
+0.90 0.85 1.93 4
+0.92 0.86 0.87 102
+0.92 0.86 0.88 100
+0.92 0.86 0.89 8
+0.92 0.86 1.86 1
+0.92 0.86 1.87 9
+0.92 0.86 1.88 2
+1.00 0.95 0.96 1
+1.22 1.17 1.18 2
+1.73 1.63 1.64 1
+1.80 1.70 1.71 2
+1.83 1.73 1.73 1
+1.83 1.73 1.74 2
+1.83 1.73 1.75 1
+interior cut - width: median 0.016 m, maximum 1.023 m
+```

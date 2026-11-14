@@ -310,7 +310,9 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
             dx, dy = centroid.x-center.x, centroid.y-center.y
             side = ("east" if dx > 0 else "west") if abs(dx) > abs(dy) else ("north" if dy > 0 else "south")
             inside = next(r for r in doors_by_id[exit["door"]]["connects"] if r != "outside")
-            base = f"{rooms_by_id[inside]['name'].title()} ({side})"
+            room = rooms_by_id[inside]
+            label = f"Stair {room['group']}" if room.get("type") == "stair" and room.get("group") else room["name"].title()
+            base = f"{label} ({side})"
             names[base] = names.get(base, 0) + 1
             exit["name"] = base + (f" {names[base]}" if names[base] > 1 else "")
 
