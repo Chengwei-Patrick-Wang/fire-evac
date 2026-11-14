@@ -160,7 +160,14 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
         side_neg = neg[0] if neg else None
         side_pos = pos[0] if pos else None
         if side_neg and side_neg == side_pos:
-            side_pos = next((rid for rid in pos if rid != side_neg), None)
+            other_pos = next((rid for rid in pos if rid != side_neg), None)
+            other_neg = next((rid for rid in neg if rid != side_pos), None)
+            if other_pos:
+                side_pos = other_pos
+            elif other_neg:
+                side_neg = other_neg
+            else:
+                side_pos = None
         if not side_neg and not side_pos:
             _warn(f"{fid}/{door['id']}: no room on either side of the door")
             continue

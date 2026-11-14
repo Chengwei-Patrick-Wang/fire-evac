@@ -161,6 +161,36 @@ def check_building():
     assert groups and all(len(floors) >= 2 for floors in groups.values())
 
 
+def check_traced():
+    from shapely import make_valid
+    from buildings.validate import validate
+
+    def room(rid, polygon):
+        return {"id": rid, "type": "office", "polygon": polygon}
+
+    def door(did, x, y):
+        return {"id": did, "a": [x, y], "b": [x, y + 1], "width": 1}
+
+    plan = {"id": "sloppy-trace", "source": "trace", "floors": [{
+        "id": "F1", "rooms": [
+            room("A", [[0, 0], [4, 0], [4, 4], [4, 4], [0, 4]]),
+            room("B", [[4.15, 0], [8.15, 0], [8.15, 4], [4.15, 4]]),
+            room("C", [[8.05, 0], [12.15, 0], [12.15, 4], [8.05, 4]]),
+            room("bow", [[12, 0], [16, 4], [12, 4], [16, 0]]),
+        ], "doors": [door("AB", 3.7, 1), door("BC", 8.1, 1),
+                     door("bottom", 12.05, 0.2), door("top", 12.05, 2.8)]}]}
+    floor = plan_to_building(plan)["floors"][0]
+    assert validate({"floors": [floor]})["disconnected"] == []
+    rooms = {r["id"]: make_valid(Polygon(r["polygon"])) for r in floor["rooms"]}
+    interior = [d for d in floor["doors"] if "outside" not in d["connects"]]
+    assert {d["id"] for d in interior} == {"AB", "BC", "bottom", "top"}
+    for d in interior:
+        for rid in d["connects"]:
+            assert Polygon(d["rect"]).intersection(rooms[rid]).area >= 0.01, (d["id"], rid)
+    walkable = unary_union([Polygon(p["outer"], p["holes"]) for p in floor["walkable"]])
+    assert walkable.intersection(rooms["bow"]).area > 1
+
+
 def check_one_door():
     fixture = ROOT / "buildings/fixtures/one_door.plan.json"
     plan = json.loads(fixture.read_text(encoding="utf-8-sig"))
@@ -225,6 +255,7 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_traced()
     check_one_door()
     check_hard()
     check_overrides()
