@@ -1,5 +1,51 @@
 # Overnight status
 
+## Sat 08:05: Morning summary (read this first)
+
+**On `main`, by workstream (every check passes):**
+- **A (lead):**
+  - Done: the API with routers and the `tools/check_all.py` merge gate; the tracer page with a Gemini first pass (it walks a model chain when one model is out of quota); batch endpoints; the Gemini client, report card (`/api/report`) and `decide`/`decide_batch`. API runs carry smoke exposure.
+  - Running: A5, the demo precompute (rerun).
+  - Open: A6 (Devpost, video, slides), A9 (UMass trace; needs a decision), A10 (personas and the all-LLM showcase; limited by the Gemini quota).
+- **B (Jaya), plan complete:** IFC import, normalizer hardening, overrides and validation, the building index, AI room tidy, tracer showcase assets, and every public building validated. The **NIBS office** has readable exit names, the 250-occupant kitchen scenario and clear door widths. The **NIBS clinic** is CC BY 4.0: cite BSI (2020) and list changes.
+- **C (Althan), plan complete:**
+  - stair transfer between floors;
+  - exit choice that weighs queues, visible smoke and unfamiliar exits;
+  - the fire keep-out, early start on fire and smoke cues, and waiting beside the stair flow with per-profile metrics;
+  - the LLM brain and the all-LLM crowd mode;
+  - the robustness sweep and the clinic at 300 agents;
+  - flow and walking-speed-in-smoke validation (`data/calibration.json`), seed ranges, smaller run files.
+- **D (Aidan):**
+  - Done: the smoke-front fire model, metrics, the batch runner, ranking and risk map, RSET/ASET, exit criticality, smoke exposure, the paired what-if sweep, fire-aware chokepoints, measured suggested fixes, seed ranges with top-3 stability, batch timing.
+  - The runner went quiet at 04:24. The lead took over D14b (merged) and **D15, the office demo batch, now running**.
+  - Open: D17–D21 (sensitivity, headline pack, refresh after C14, run cache, clinic batch).
+- **E (Donovan), plan complete:** the full app:
+  - 3D replay with smoke, heatmap and queue rings; dashboard; live runs; risk map and weak spots; what-if split screen; report card; credibility panel;
+  - guided demo mode, About with QR and phone layout, agent's-eye view, deep links, printable report and PNG export;
+  - accessibility pass and results, measured fixes, honest ranges, headline pack, clinic-scale performance, headless visual QA (`npm run qa`).
+
+**Demo buildings:** the synthetic example (2 floors), the NIBS office (2 floors, 99 rooms), the NIBS clinic (2 floors, 252 rooms).
+
+**Overnight findings:**
+- Propping the stair doors barely changes evacuation time but raises smoke exposure by about 22%, so the what-if leads with exposure.
+- Fixed sim bugs:
+  - people routed through flames;
+  - wheelchair waits blocking a stair;
+  - stair-arrival crashes;
+  - a keep-out slot in the clinic;
+  - a doorless clinic stair people walked down while it burned.
+
+**Decisions waiting for the lead:**
+1. **Gemini billing.** The free tier allows 20 requests per day per model (it resets around 3 AM ET). Enable billing for daytime testing and the live demo, or rely on precomputed reports.
+2. **The public Netlify deploy** of the static demo. A5 prepares it; nothing is published without the lead's OK.
+3. **Devpost, video and slides (A6).** Credits: NIBS Common BIM Files (ERDC-CERL), buildingSMART (clinic, CC BY 4.0), JuPedSim, three.js / React Three Fiber.
+4. **The UMass Student Union trace (A9):** yes or no. Its results stay private either way.
+
+**10 AM sync focus:**
+- Run the guided demo end to end on the office: judge's fire → propped stair door → risk map → measured fixes.
+- Review the report card text and pick the hero building.
+- Split the rest of the day: Devpost and video, demo rehearsal, D17–D21, polish.
+
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
 ## Sat 06:50: integration
