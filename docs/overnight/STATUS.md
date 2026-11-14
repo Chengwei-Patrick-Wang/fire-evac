@@ -1,5 +1,20 @@
 # Overnight status
 
+## Sat 15:50: D23, E34, E35 merged; the Ember redesign is approved
+
+**Merged:**
+- **D23:** readable names for unnamed interior doors, such as "Door between CORRIDOR and SCIF OPEN OFFICE".
+- **E34:** trade-off badges on measured fixes, and readable labels in the fix list, door picker and tour.
+- **E35:** in live mode, a failed or timed-out run loads the nearest precomputed fire, with a note.
+
+**Approved design** (`docs/superpowers/specs/2026-11-14-ember-ui-fire-spread-design.md`, based on `docs/design/ember-ui.md`):
+- **UI:** the Ember UI, with a light theme, collapsible top nav, left analytics, bottom floor strip and timeline, and a grey walls-only building.
+- **Floor views:** stacked, single, side by side and ghost.
+- **Visibility and colors:** fire and smoke visibility controls; agents colored by status or type.
+- **Simulated fire spread,** room to room, at concrete/drywall/wood speeds, labeled illustrative.
+
+The lead's machine is writing the plan now. It runs D25 (spread model), C27 (sim coupling), A11 (formats and the demo rerun) and E36 to E38 (UI) tonight. The precompute reruns around 9 to 11 PM, and the freeze is at 2 AM.
+
 ## Sat 15:20: D22 merged; C23 to C26 queued
 
 - **Merged:** ws-d **D22**. A measured fix that costs something now reads as a trade-off and names the fires behind the cost. For example: "Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner…, but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)." Five demo fixes become trade-offs; they show on the site after the precompute rerun.
