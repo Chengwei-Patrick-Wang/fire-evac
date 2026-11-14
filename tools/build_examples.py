@@ -28,6 +28,15 @@ SEEDS = (1, 2, 3)
 
 
 def load_fire_model():
+    try:  # D's real smoke-front model, once it lands on main
+        from fire.model import FireModel
+        return FireModel, "FireModel (fire/model.py)"
+    except Exception:  # noqa: BLE001 - fall back to the placeholder below
+        pass
+    return _load_placeholder_fire_model()
+
+
+def _load_placeholder_fire_model():
     try:
         from tools.toy_fire import ToyFire
         return ToyFire, "ToyFire (tools/toy_fire.py)"
