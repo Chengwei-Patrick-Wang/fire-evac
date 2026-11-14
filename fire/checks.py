@@ -1176,6 +1176,138 @@ def check_office_slow():
     print("office: 250 occupants, two kitchen fires, readable weak spots", flush=True)
 
 
+def check_smoke_scale():
+    from fire.model import FireModel
+    from fire.metrics import exposure
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    reference = FireModel(building, base)
+    unit = FireModel(building, {**base, "smokeScale": {"speed": 1, "density": 1}})
+    assert np.array_equal(reference.arrival, unit.arrival)
+    reference.step(120)
+    unit.step(120)
+    assert np.array_equal(reference._density, unit._density)
+    cases = [({}, 93, {"D101"}), ({"speed": 0.5}, 130, None),
+             ({"speed": 1.5}, 81, None), ({"density": 0.5}, 108, set()),
+             ({"density": 1.5}, 88, {"D101", "D102", "D105", "D106", "DL1"})]
+    for scale, expected, blocked in cases:
+        scenario = {**base, "smokeScale": scale}
+        result = exposure({"frames": []}, building, scenario)
+        smoke_at = next(s["smokeAt"] for s in result["stairs"]
+                        if s["floor"] == "F1" and s["group"] == "SA")
+        assert abs(smoke_at - expected) <= 3, (scale, smoke_at)
+        model = FireModel(building, scenario)
+        model.step(300)
+        if blocked is not None:
+            assert model.blocked_doors() == blocked, (scale, model.blocked_doors())
+        if scale == {"density": 0.5}:
+            assert abs(float(model._density[:model.graph.floors[0].n].max()) - 50) <= 0.1
+    for knob in ("speed", "density"):
+        for invalid in (0, -1, float("nan"), float("inf"), None, "bad"):
+            try:
+                FireModel(building, {**base, "smokeScale": {knob: invalid}})
+            except ValueError:
+                pass
+            else:
+                raise AssertionError((knob, invalid))
+
+
+def check_sensitivity():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.sensitivity import sensitivity, VARIANTS, main
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["smokeScale"] = {"density": 9}
+    original = deepcopy(base)
+    ignitions = [{"floor": "F1", "room": "R101"}]
+    calls = []
+
+    def fake(b, scenario, fires, seeds, workers, timeout, progress):
+        calls.append(deepcopy(scenario))
+        assert b is building and fires == ignitions and seeds == [1, 2]
+        assert workers == 2 and timeout == 123 and progress is False
+        variant = len(calls) > 1
+        ids = ["E1", "D101", "D104"] if not variant else ["D101", "E1", "D105"]
+        runs = [{"seed": seed, "ignition": ignitions[0], "t90": None if seed == 2 else 100,
+                 "trapped": int(variant), "dosed": 2 * int(variant),
+                 "smokeSeconds": 150 if variant else 100} for seed in seeds]
+        return {"top": [{"kind": "door", "id": key} for key in ids], "runs": runs}
+
+    with patch("fire.sensitivity.run_many", side_effect=fake):
+        result = sensitivity(building, base, ignitions, (2, 1), 2, 123, False)
+    assert len(calls) == 5 and "smokeScale" not in calls[0]
+    for scenario, (knob, factor), variant in zip(calls[1:], VARIANTS, result["variants"]):
+        assert scenario["smokeScale"] == {knob: factor}
+        assert scenario["id"] == f"{base['id']}-{knob}{factor:g}"
+        assert variant["topOverlap"] == 2 and variant["sameFirst"] is False
+        assert variant["smokePct"] == 50 and variant["n"] == 2
+        assert variant["dSmokeSeconds"] == 50 and variant["dDosed"] == 2
+        assert variant["dTrapped"] == 1 and variant["dT90"] == 0
+        assert variant["why"].isascii() and "50% more" in variant["why"]
+    assert result["reference"]["meanT90"] == (100 + base["maxTime"]) / 2
+    assert result["why"].isascii() and "0 of 4" in result["why"]
+    assert base == original
+    json.dumps(result, allow_nan=False)
+    # Missing optional exposure, a zero baseline, and missing matches remain JSON-safe.
+    with patch("fire.sensitivity.run_many", return_value={"top": [], "runs": [
+            {"seed": 1, "ignition": ignitions[0], "t90": 100, "trapped": 0}]}):
+        empty_top = sensitivity(building, base, ignitions, progress=False)
+    assert all(v["smokePct"] is None and not v["sameFirst"] for v in empty_top["variants"])
+    json.dumps(empty_top, allow_nan=False)
+    # Only matched reference exposure enters the percent denominator.
+    paired = [
+        {"top": [{"kind": "exit", "id": "E1"}], "runs": [
+            {"seed": 1, "ignition": ignitions[0], "t90": 100, "trapped": 0, "smokeSeconds": 100},
+            {"seed": 2, "ignition": ignitions[0], "t90": 100, "trapped": 0, "smokeSeconds": 900}]},
+        {"top": [{"kind": "exit", "id": "E1"}], "runs": [
+            {"seed": 1, "ignition": ignitions[0], "t90": 102, "trapped": 0, "smokeSeconds": 150}]}]
+    with patch("fire.sensitivity.run_many", side_effect=[paired[0]] + [paired[1]] * 4):
+        partial = sensitivity(building, base, ignitions, seeds=(1, 2), progress=False)
+    assert all(v["n"] == 1 and v["smokePct"] == 50 and v["sameFirst"]
+               for v in partial["variants"])
+    assert "4 of 4" in partial["why"]
+    for run in paired[0]["runs"]:
+        run["smokeSeconds"] = 0
+    with patch("fire.sensitivity.run_many", side_effect=[paired[0]] + [paired[1]] * 4):
+        zero = sensitivity(building, base, ignitions, seeds=(1, 2), progress=False)
+    assert all(v["smokePct"] is None for v in zero["variants"])
+    with patch("fire.sensitivity.run_many", side_effect=[paired[0]] + [{"top": [], "runs": []}] * 4):
+        unmatched = sensitivity(building, base, ignitions, progress=False)
+    assert all(v["n"] == 0 and "0 pairs" in v["why"] for v in unmatched["variants"])
+    json.dumps(unmatched, allow_nan=False)
+    # CLI selects the riskiest room and preserves the batch's base.
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        batch_path = Path(directory) / "batch.json"
+        out = Path(directory) / "out.json"
+        batch_path.write_text(json.dumps({"buildingId": building["id"], "base": base,
+            "rooms": [{"floor": "F1", "id": "R105", "riskT90": 10},
+                      {"floor": "F1", "id": "R101", "riskT90": None}]}))
+        with patch("fire.sensitivity.sensitivity", return_value=result) as mocked:
+            main([str(root / "contracts/building.example.json"), str(batch_path),
+                  "--rooms", "1", "--out", str(out)])
+        assert mocked.call_args.args[2] == ignitions
+        assert mocked.call_args.args[1] == base
+        assert json.loads(out.read_text()) == result
+
+
+def check_sensitivity_slow():
+    from fire.sensitivity import sensitivity
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["occupants"]["total"] = 60
+    base["maxTime"] = 240
+    result = sensitivity(building, base, [{"floor": "F1", "room": r} for r in ("R101", "R105")],
+                         seeds=(1,), workers=2, timeout_s=600)
+    assert len(result["variants"]) == 4
+    assert all(v["n"] == 2 for v in result["variants"]), result
+    json.dumps(result, allow_nan=False)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

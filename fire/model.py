@@ -29,6 +29,18 @@ class FireModel:
     def __init__(self, building: dict, scenario: dict):
         self.building = building
         self.scenario = scenario
+        scale = scenario.get("smokeScale", {})
+        if not isinstance(scale, dict):
+            raise ValueError("smokeScale must be an object")
+        factors = {}
+        for knob in ("speed", "density"):
+            try:
+                factors[knob] = float(scale.get(knob, 1.0))
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"smokeScale.{knob} must be positive and finite") from error
+            if not math.isfinite(factors[knob]) or factors[knob] <= 0:
+                raise ValueError(f"smokeScale.{knob} must be positive and finite")
+        self.density_scale = factors["density"]
         fire = scenario["fire"]
         self.start = float(fire.get("start", 0))
         self.params = fire_params(fire, scenario.get("sprinklers", False))
@@ -53,7 +65,7 @@ class FireModel:
         self.dist = self.graph.path_distance(source, penalties)
         times = np.arange(0, TABLE_S + 0.25, 0.25)
         q = np.array([hrr_kw(self.params, t) for t in times])
-        speed = np.clip(V_BASE_MS + V_PER_MW * q / Q_REF_KW, V_BASE_MS, V_MAX_MS)
+        speed = np.clip(V_BASE_MS + V_PER_MW * q / Q_REF_KW, V_BASE_MS, V_MAX_MS) * factors["speed"]
         reach = np.r_[0.0, np.cumsum((speed[:-1] + speed[1:]) * 0.125)]
         self.arrival = np.interp(self.dist, reach, times, right=np.inf)
         self._attenuation = np.exp(-self.dist / DECAY_M)
@@ -71,7 +83,7 @@ class FireModel:
         q = self.hrr(t)
         age = np.maximum(0.0, t - self.start - self.arrival)
         self._density = np.clip(100 * min(1.0, q / Q_REF_KW) * self.params["smokeFactor"]
-                                * self._attenuation * (-np.expm1(-age / RISE_S)), 0, 100)
+                                * self._attenuation * (-np.expm1(-age / RISE_S)) * self.density_scale, 0, 100)
         self._hold = np.where(self._density >= UNTENABLE_D, self._hold + dt, 0.0)
         self._footprint = (q > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(q / Q_REF_KW))
         self._smoke_untenable = self._hold >= UNTENABLE_HOLD_S

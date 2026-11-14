@@ -35,6 +35,8 @@ predictions of a particular building fire. Times below are seconds since ignitio
 | Door membership tolerance | 0.001 m | Include nodes on the buffered passage boundary |
 | Snap radius | max(1 m, cell) | Non-walkable cells can query the nearest nearby node |
 | Graph cache capacity | 4 buildings | Bound retained graph/building objects |
+| `smokeScale.speed` | 1.0 by default | Positive finite scenario multiplier on the clipped front speed, before integration |
+| `smokeScale.density` | 1.0 by default | Positive finite scenario multiplier on density, before clipping to 0-100 |
 
 `fire_params` accepts case-insensitive preset/growth names and normalizes spaces
 and underscores to hyphens. `hrr_kw` gives zero before ignition, then
@@ -827,3 +829,109 @@ This is not the blocked-stair simulator failure recorded under D15.
 Handoff for B/A: inspect the narrow IFC room fragment before using this
 batch as a complete office survey. No geometry or grid-resolution changes
 are included in the ranges task.
+
+
+## Smoke-model sensitivity (D17)
+
+Illustrative: one-at-a-time -50%/+50% changes to the smoke model's front speed
+and density. Not a calibration, a confidence interval or a compliance result.
+The optional scenario object `smokeScale` accepts `speed` and `density` factors;
+omitted factors are 1.0. The default and explicit unit factors give bit-identical
+arrival tables and densities. Factors must be positive and finite; they travel
+in each worker's scenario so fresh spawned processes apply the same settings.
+Heat release, flame footprint, geometry and crowd seeds remain fixed.
+
+`fire.sensitivity.sensitivity` reruns the reference with `smokeScale` removed,
+then four variants on exactly the same ignition rooms and seeds. `top3` contains
+only door, stair and exit ids. `topOverlap` counts ids shared with the reference,
+ignoring order; `sameFirst` compares their first ids (false for empty rankings).
+If fewer than three weak spots queue, text uses the reference's actual count.
+`compare` pairs only successful runs with the same floor, room and seed.
+`smokePct` divides the mean paired smoke-person-seconds delta by the mean
+reference smoke-person-seconds over those same pairs; it is null for absent or
+zero reference exposure. Failed/unmatched runs are excluded, so `n` should be
+checked against rooms times seeds. No matched runs produce an explicit warning
+in the variant's `why`. Missing t90 counts as `base.maxTime` both in comparisons
+and in the reference mean; absent exposure/dose means are null.
+
+The CLI selects the batch's highest-risk rooms (null riskT90 counts as maxTime)
+and uses its saved base, with rule-based agents. Example invocation:
+
+```sh
+LLM_PROVIDER=off python -m fire.sensitivity data/buildings/office.json data/runs/batch-office.json --rooms 6 --seeds 1
+```
+
+Handoff for E: show `note` and the overall and per-variant `why` lines verbatim
+in the credibility panel. These are sensitivity observations, not uncertainty
+bounds or validation. Handoff for A: copy the generated
+`data/runs/sensitivity-office.json` next to the office batch in precompute;
+regenerate it after simulator routing or office scenario changes.
+
+Measured on macOS 14.5 arm64, 8 logical cores, 7 workers, using the command
+above. Because the office batch was missing, first regenerated it with D15's
+recorded command (D15's checklist/status is left for the lead to reconcile):
+
+```sh
+LLM_PROVIDER=off python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 30 --whatif --fixes --out data/runs/batch-office.json > debug/office-batch-d17.log 2>&1
+```
+
+```text
+pilot 6.4 s; budget 30 min, 7 workers, 3 seeds, 3 what-ifs, 3 fixes -> 46 rooms (est. 29.5 min)
+runtime 1764.8 s
+wrote data/runs/batch-office.json (138 runs, 0 failed)
+```
+
+All three what-ifs and all five fixes (including two derived comparisons)
+have 138 matched pairs. The previous blocked-exit stair-arrival failure did
+not recur in this command. Both generated outputs stay gitignored.
+The final sensitivity sweep used six highest-risk ignition rooms, seed 1,
+and completed all 30 runs (six reference plus four sets of six):
+
+`ignitions`: F2/R237b, F1/R109, F1/R140a, F1/R139, F1/R128, F1/R117.
+
+Reference summary:
+
+```json
+{
+  "top3": [
+    "D$77wwb",
+    "DQnt_pi",
+    "DMO2yZ0"
+  ],
+  "meanT90": 134.445,
+  "meanSmokeSeconds": 781.5,
+  "meanDosed": 3.5
+}
+```
+
+Illustrative measured results (verbatim):
+
+```text
+Smoke spreads 50% slower: the top 3 weak spots keep 3 of 3 places and the same top spot; 53% less time in smoke; 90% out 0 s sooner; -1.0 trapped per fire (6 fires).
+Smoke spreads 50% faster: the top 3 weak spots keep 3 of 3 places and the same top spot; 31% more time in smoke; 90% out 0 s sooner; -1.0 trapped per fire (6 fires).
+Smoke 50% thinner: the top 3 weak spots keep 3 of 3 places and a different top spot; 3% more time in smoke; 90% out 0 s sooner; -3.2 trapped per fire (6 fires).
+Smoke 50% thicker: the top 3 weak spots keep 3 of 3 places and the same top spot; 2% more time in smoke; 90% out 0 s sooner; +0.3 trapped per fire (6 fires).
+With smoke 50% slower, faster, thinner or thicker, the top weak spot stays first in 3 of 4 cases and the top 3 keep at least 3 of 3 places.
+```
+
+The three weak-spot ids stayed in the top three in every case; the first
+rank changed for thinner smoke. Exposure changed from 53% less to 31% more;
+this is a local sensitivity observation for these six fires and one seed.
+It does not establish reliability across buildings or ignition locations.
+Time in smoke counts exposure above a threshold, so thinner smoke need not
+reduce person-seconds: people may remain mobile and exposed longer instead
+of becoming trapped. These numbers do not imply that a larger fire is safer.
+
+An additional local check used D16's saved office ranges batch
+(`debug/batch-office-ranges.json`) as input and wrote
+`debug/sensitivity-office-ranges.json`; its different six highest-risk rooms
+kept the first spot in 4/4 cases and at least 2/3 top-three places. Use the
+final `data/runs/sensitivity-office.json` above for the handoff.
+
+Verification: `LLM_PROVIDER=off python -m fire.smoke_test` and
+`LLM_PROVIDER=off python -m fire.checks --slow` both printed `fire checks OK`.
+The fast checks cover default equivalence, measured stair arrival/density and
+blocked-door outcomes, invalid factors, worker scenario propagation, matched
+exposure denominators, empty rankings/pairs, zero exposure, JSON safety and
+CLI room selection. The slow sensitivity check completed four variants with
+two matched fires each in spawned workers.
