@@ -1039,6 +1039,45 @@ def check_calibration(slow=False):
               f"{points[-1]['simulated']:.2f} m/s")
 
 
+def check_seeds(building, scenario, slow=False):
+    from unittest.mock import patch
+    from sim.seeds import run_seeds, summarize, seed_range
+
+    rows = [{"seed": i, "t50": value, "t90": None, "t100": value if i != 2 else None,
+             "evacuated": i, "trapped": 0} for i, value in enumerate((1.111, 3.333, 5.555))]
+    summary = summarize(rows)
+    assert summary["t50"] == {"min": 1.11, "median": 3.33, "max": 5.55, "missing": 0}
+    assert summary["t100"] == {"min": 1.11, "median": 2.22, "max": 3.33, "missing": 1}
+    assert summary["t90"] == {"min": None, "median": None, "max": None, "missing": 3}
+    assert summarize([])["t90"]["min"] is None
+    small = fast_scenario(scenario, total=12)
+    small.pop("fire", None)
+    original = deepcopy(small)
+    repeated = run_seeds(building, small, [1, 1, 2])
+    assert small == original
+    clean = [{k: v for k, v in row.items() if k != "wallS"} for row in repeated]
+    assert clean[0] == clean[1]
+    assert any(clean[0][key] != clean[2][key] for key in ("t50", "t90", "t100"))
+    base_scenario = dict(small, seed=1)
+    base = run(building, base_scenario)
+    with patch("sim.seeds._one", side_effect=AssertionError("base rerun")):
+        assert seed_range(building, base_scenario, n=1, base=base) == summarize(repeated[:1])
+    # Never mix an LLM base into a rule-only range, even with no live provider.
+    with patch("sim.seeds.run_seeds", return_value=repeated[:1]) as runner:
+        seed_range(building, dict(base_scenario, brain="llm"), n=1, base=base)
+        assert runner.call_args.args[2] == [1]
+    if slow:
+        full = dict(scenario, maxTime=900)
+        spread = seed_range(building, full, n=5, workers=2)
+        for key in ("t50", "t90", "t100", "evacuated", "trapped"):
+            stats = spread[key]
+            assert stats["min"] is None or stats["min"] <= stats["median"] <= stats["max"]
+        sequential = seed_range(building, base_scenario, n=3)
+        assert sequential == seed_range(building, base_scenario, n=3, workers=2)
+        assert sequential == seed_range(building, base_scenario, n=3, workers=2, base=base)
+        print(f"seed range: full example t90 {spread['t90']}; worker and base reuse parity OK")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1060,6 +1099,7 @@ def main(argv=None) -> int:
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
+    timed("fast seeds", check_seeds, building, fast)
     core = timed("fast core", check_core, building, fast)
     timed("exit choice", check_exit_choice, building, fast)
     timed("fast cues", check_cues, building, fast)
@@ -1075,6 +1115,7 @@ def main(argv=None) -> int:
     timed("recording", check_recording, building, fast)
 
     if args.slow:
+        timed("full seeds", check_seeds, building, scenario, slow=True)
         timed("full calibration", check_calibration, slow=True)
         timed("office blocked arrival", check_blocked_arrival, slow=True)
         timed("office scale", check_scale)

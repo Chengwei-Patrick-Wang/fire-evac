@@ -862,16 +862,35 @@ def main(argv: list[str]) -> int:
     parser.add_argument("scenario")
     parser.add_argument("out")
     parser.add_argument("--agents", type=int)
+    parser.add_argument("--seeds", type=int, help="run N seeds with rule-based agents")
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args(argv)
     if args.agents is not None and args.agents < 0:
         parser.error("--agents must be nonnegative")
+    if args.seeds is not None and args.seeds < 1:
+        parser.error("--seeds must be positive")
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     building = json.loads(Path(args.building).read_text(encoding="utf-8"))
     scenario = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
     if args.agents is not None:
         scenario.setdefault("occupants", {}).pop("perRoom", None)
         scenario["occupants"]["total"] = args.agents
     t0 = time.perf_counter()
+    if args.seeds is not None:
+        scenario["brain"] = "rules"
     result = run(building, scenario)
+    if args.seeds is not None:
+        from sim.seeds import seed_range
+        result["metrics"]["seedRange"] = seed_range(
+            building, scenario, args.seeds, args.workers, base=result)
+        summary = result["metrics"]["seedRange"]["t90"]
+        current = result["metrics"]["t90"]
+        current_text = f"{current:.1f} s" if current is not None else "not reached"
+        range_text = (f"{summary['min']:.1f}–{summary['max']:.1f} s, median {summary['median']:.1f}"
+                      if summary["min"] is not None else "not reached in any seed")
+        print(f"t90 {current_text} (seed {result['seed']}); {args.seeds} seeds: {range_text}"
+              + (f" ({summary['missing']} missing)" if summary["missing"] else ""))
     elapsed = time.perf_counter() - t0
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
