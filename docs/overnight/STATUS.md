@@ -1,5 +1,20 @@
 # Overnight status
 
+## Sat 18:50: E37, C27 and most of A11 part 2 merged; the demo rerun is running
+
+**Merged:**
+- **E37:** the app is now called **Fireproof**. It has the walls-and-glass building with light slabs and orange stair cores, and four floor views: stacked, single, side by side and ghost. Also: a fire and smoke visibility card, people colored by status or type, readable exit names, and the FPS counter shown only with `?perf`.
+- **C27, with C23's hairline fix:** a room that catches fire closes its doors and traps anyone still inside, and runs list each room's ignition time.
+  - Office R143 over 400 s: wood burns 37 rooms and traps 23 people in burning rooms; drywall burns 21 and traps none there.
+  - The hairline fix removed people wrongly stuck in sub-body strips beside keep-outs: demo R237b goes from 12 trapped to 0, and R203c from 31 to 16.
+- **A11 part 2, steps 6 to 9:** the wood-vs-drywall pair in the precompute, fire-spread sentences in the report cards, and backend checks for `fire.material`. The examples were regenerated with `fire.rooms`.
+
+**Running on the lead's machine:**
+- **E38:** the fire spreading on screen and the material dropdown.
+- **The A11 demo rerun:** all three buildings, started 18:50, about 2 hours. Its data reaches main only after E38.
+
+**Known issue, for C later:** after the hairline fix, three clinic rooms (R1B12, R2C11, R2D12) get no fire keep-out, which brings the clinic's no-cut count from 7 to 10. None is a demo room.
+
 ## Sat 17:50: D25, E36 and C23 merged; the project is called Fireproof
 
 **Name:** the project is **Fireproof** (the lead's call). It replaces "Ember", "FirePass" and "Chokepoint". E37 puts it in the app header, About box, tracer bar and page title. **Aidan:** please retitle `FirePass.pptx`.
