@@ -102,11 +102,12 @@ PRESETS = {
     # (The blocked-exit what-if used to be left out here: stair arrivals next to a blocked exit crashed the
     # sim until C13b. A fire that still fails is dropped from its pair and counted, so it stays in;
     # "--skip-variants blockedExit" leaves it out again.)
-    "office": {"occupants": 250, "fire_type": "kitchen"},
+    "office": {"occupants": 250, "fire_type": "kitchen", "sweep_rooms": 8},
     # the clinic's design occupancy (D21: 3,910 m2 of walkable floor / 13.9 m2 per person, rounded to 10) and the same
-    # kitchen preset. A clinic run is 2-4 MB and minutes long, so its demo is one pair (--rooms R1AC1, the waiting
-    # room C18 measured) and a smaller batch (--max-rooms 24, --sweep-rooms 3)
-    "clinic": {"occupants": 280, "fire_type": "kitchen"},
+    # kitchen preset. A clinic run is 2-4 MB and minutes long, so its demo is one pair (R1AC1, the waiting room C18
+    # measured) and a smaller batch (24 evenly spaced rooms, sweeps on the 3 worst). The preset keys "rooms",
+    # "max_rooms" and "sweep_rooms" stand for --rooms, --max-rooms and --sweep-rooms; the command line wins.
+    "clinic": {"occupants": 280, "fire_type": "kitchen", "rooms": ["R1AC1"], "max_rooms": 24, "sweep_rooms": 3},
     # DSA1 is the stair door of the demo story; 2 rooms and the kitchen keep the static payload under its 15 MB aim;
     # home_point: the kitchen baseline is the very fire of contracts/run.example.json, which sync-demo lists too
     "example-office": {"propped_door": "DSA1", "top": 2, "home_point": True},
@@ -838,6 +839,13 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     if problem:
         fail(problem, 2)
     preset = PRESETS.get(building_id, {})
+    args = copy.copy(args)  # --all shares one command line between buildings; each gets its own defaults
+    if not args.rooms and preset.get("rooms"):
+        args.rooms = list(preset["rooms"])
+    if args.max_rooms is None and preset.get("max_rooms") is not None:
+        args.max_rooms = preset["max_rooms"]
+    if args.sweep_rooms is None:
+        args.sweep_rooms = preset.get("sweep_rooms", SWEEP_ROOMS)
     seeds = sorted(set(args.seeds))
     workers = args.workers or default_workers()
     base = base_scenario(building, source, args, preset, seeds)
@@ -1148,8 +1156,8 @@ def parse_args(argv):
     p.add_argument("--occupants", type=int, metavar="N", help="total occupants (office default 250)")
     p.add_argument("--fire-type", metavar="TYPE", help="kitchen, bedroom, battery, trash or liquid (office default kitchen)")
     p.add_argument("--thin", action="store_true", help="every 2nd agent frame, every 3rd smoke frame")
-    p.add_argument("--sweep-rooms", type=int, default=SWEEP_ROOMS, metavar="N",
-                   help=f"rooms the what-if sweep and fixes rerun (default {SWEEP_ROOMS})")
+    p.add_argument("--sweep-rooms", type=int, metavar="N",
+                   help=f"rooms the what-if sweep and fixes rerun (default {SWEEP_ROOMS}; office 8, clinic 3)")
     p.add_argument("--no-sweeps", action="store_true", help="skip the what-if sweep and the measured fixes")
     p.add_argument("--skip-variants", type=lambda s: [] if s == "none" else [v for v in s.split(",") if v], metavar="ID,ID",
                    help="what-if variants to leave out, such as blockedExit (default: none left out; 'none' also means that)")
@@ -1165,7 +1173,8 @@ def parse_args(argv):
         p.error("give --building ID (or --all)")
     if args.batch and (args.all or len(args.building or []) != 1):
         p.error("--batch needs exactly one --building")
-    if (args.top is not None and args.top < 0) or (args.max_rooms is not None and args.max_rooms < 1) or args.sweep_rooms < 0:
+    if (args.top is not None and args.top < 0) or (args.max_rooms is not None and args.max_rooms < 1) or (
+            args.sweep_rooms is not None and args.sweep_rooms < 0):
         p.error("--top and --sweep-rooms cannot be negative, --max-rooms must be at least 1")
     if not args.seeds:
         p.error("--seeds needs at least one seed")
