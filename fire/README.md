@@ -1089,10 +1089,11 @@ by 5% of the 1,895 evacuees); `exit_shift` on the two saved batches gives `Exit 
   per fire), a 9 s swing on a 12-fire sample. Exit use is nearly unchanged (East stair exit 838 -> 829 people, Main
   entrance 1,057 -> 1,062 over the 12 baseline fires).
 
-### Measured: the office (Sat 10:33-12:30, lead's laptop), stopped at 12:30
+### Measured: the office (Sat 10:33-12:50, lead's laptop)
 
-Same machine and 6 workers. Started at 10:33 (log `debug/refresh-office.log`) and continued twice with `--resume`
-(`debug/refresh-office-resume.log`, `debug/refresh-office-resume2.log`):
+Same machine, 6 workers until 12:30 and 12 for the last stretch, once A's precompute had finished. Started at 10:33
+(log `debug/refresh-office.log`) and continued three times with `--resume` (`debug/refresh-office-resume.log`,
+`-resume2.log` and `-resume3.log`):
 
 ```text
 $ LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m fire.refresh data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --rooms 12 --seeds 1,2,3 --workers 6
@@ -1100,27 +1101,34 @@ C14 smoke-aware exit choice: yes; C13b stair arrivals: yes
 refresh plan: 12 rooms x 3 seeds = 36 fires per side; up to 6 paired reruns of each -> about 504 runs on 6 workers
 ```
 
-The run did not finish. At 12:30 it was stopped (the 12:30 rule) and `fire.refresh.publish`, the function the CLI calls at
-the end, wrote the files from the checkpoints, comparing only what both sides had finished:
+The last continuation (the same command with `--workers 12 --resume`, 12:38 to 12:50, 695 s, no failed run) measured the
+C14-off side's fixes, which the earlier invocations had not reached, and wrote the files. What it printed:
 
 ```text
-renamed data/runs/batch-office.json to data/runs/batch-office.prev.json
-renamed data/runs/headlines-office.json to data/runs/headlines-office.prev.json
+resuming from data/runs/batch-office.partial.json, data/runs/batch-office-c14off.partial.json
+renamed data/runs/batch-office.json to data/runs/batch-office.prev2.json
+renamed data/runs/headlines-office.json to data/runs/headlines-office.prev2.json
+renamed data/runs/batch-office-c14off.json to data/runs/batch-office-c14off.prev.json
+renamed data/runs/headlines-office-c14off.json to data/runs/headlines-office-c14off.prev.json
 previous pack: Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
 C14 terms off: Stair doors propped open: +49% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
 C14 terms on:  Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
-2 of 11 compared numbers changed:
+4 of 29 compared numbers changed:
 Top 3 weak spots: OPEN OFFICE (R237b), Exit Stair S1 (west), Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE) -> OPEN OFFICE (R237b), Exit Stair S1 (west), Exit Stair S2 (east) with C14's exit-choice terms on.
 Exit Stair S1 (west) blocked, smoke exposure: +60% -> +55% with C14's exit-choice terms on (same 36 fires).
-wrote data/runs/batch-office-c14off.json (36 runs, 0 failed) and data/runs/headlines-office-c14off.json (4732 bytes)
-wrote data/runs/batch-office.json (36 runs, 0 failed) and data/runs/headlines-office.json (7927 bytes)
+Widen Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE) from 0.86 m to 1.36 m: measured only with C14's exit-choice terms off.
+Widen Exit Stair S2 (east) from 0.86 m to 1.36 m: measured only with C14's exit-choice terms on.
+wrote data/runs/batch-office-c14off.json (36 runs, 0 failed) and data/runs/headlines-office-c14off.json (7125 bytes)
+wrote data/runs/batch-office.json (36 runs, 0 failed) and data/runs/headlines-office.json (8821 bytes)
+runtime 695.3 s
 ```
 
 The exit-use line (`exit_shift`, not in `changes` because it did not change): `Exit use across the baseline fires: Exit
 Entry (south) 976 -> 1224 people, Exit Open Office (west) 1410 -> 1313.`
 
-**What finished.** The current side is complete: baseline, 3 what-ifs and 5 fixes, 36 fires each, none failed. The C14-off
-side has its baseline and 3 what-ifs (36 fires each, none failed); its fixes were not measured, so no fix line is compared.
+**What finished.** Both sides are complete: baseline, 3 what-ifs and 5 fixes, 36 fires each, none failed. The `.prev.json`
+files of the current side (`batch-office.prev.json`, `headlines-office.prev.json`) are D15's batch and D18's pack; the
+`.prev2.json` pair and the C14-off `.prev.json` pair are the files written at 12:30, before the C14-off fixes were measured.
 
 **What happened to the run** (the reasons `retries`, `--resume` and the sprinkler reuse exist):
 
@@ -1130,12 +1138,10 @@ side has its baseline and 3 what-ifs (36 fires each, none failed); its fixes wer
   stage (36 runs, no failure) and went on.
 - 11:52: resumed once more to use the sprinkler reuse for the fixes stage (the current side's fixes finished 12:07, 13 minutes).
 - 12:07-12:30: the C14-off fixes stage started at 12:07:43, but Windows logged a standby from 12:14:37 to 12:29:30
-  (Kernel-Power 506 and 507), and at 12:30 its second widened-door stage had 6 of 36 runs. Nothing of that stage was kept
-  (a fixes stage is saved only when it ends).
-- To finish: run the same command with `--resume`. The checkpoints `data/runs/batch-office.partial.json` and
-  `data/runs/batch-office-c14off.partial.json` were kept, so only the C14-off fixes run (two widened-door reruns of 36 fires,
-  about 15 minutes at the pace of 12:00-12:08; the sprinkler fix is reused). It then writes all four files again and
-  renames the present ones to `.prev2.json`. The pack's `changes` then also covers the fixes.
+  (Kernel-Power 506 and 507), and at 12:30 its second widened-door stage had 6 of 36 runs. The run was stopped there (the
+  12:30 rule) and the files were written from the checkpoints, with no C14-off fixes (a fixes stage is saved only when it ends).
+- 12:38-12:50: with the laptop free, `--resume --workers 12` measured the C14-off fixes (two widened-door reruns of 36 fires; the
+  sprinkler fix is reused) and rewrote all four files.
 
 **Reading the numbers.**
 
@@ -1143,17 +1149,26 @@ side has its baseline and 3 what-ifs (36 fires each, none failed); its fixes wer
   on, and 90% out is 0 s later either way (+0.11 s and +0.05 s). The percent goes from +49% to +54%, 4.9 points and so just
   under the 5-point line, because C14 lowers the baseline: the mean person-seconds in smoke per fire falls from 309 to 281
   (-9%), since people steer away from stairs they can see filling with smoke.
-- **The third weak spot changes.** With the terms off it is Door DQnt_pi (the SECURE DOC ROOM's only door, 29 waiting
-  person-seconds, all in smoke); with them on it is Exit Stair S2 (east), whose waiting rises from 72 to 114
-  person-seconds per fire (score 31.4 to 44.8) while DQnt_pi stays near its score (44.3 to 43.9) and drops to 4th. The
-  R237b fire and Stair S1's exit keep ranks 1 and 2. The seed-stability lines of the two packs differ as well.
+- **The third weak spot changes, and the fix list follows it.** With the terms off it is Door DQnt_pi (the SECURE DOC ROOM's
+  only door, 29 waiting person-seconds, all in smoke); with them on it is Exit Stair S2 (east), whose waiting rises from 72
+  to 114 person-seconds per fire (score 31.4 to 44.8) while DQnt_pi stays near its score (44.3 to 43.9) and drops to 4th. The
+  R237b fire and Stair S1's exit keep ranks 1 and 2. The seed-stability lines of the two packs differ as well. Widening
+  follows each side's own `top`, so the second widened door differs, and these are the two "measured only" entries: with
+  the terms off, Door DQnt_pi (0 s sooner, 3% less time in smoke, -0.2 trapped per fire, faster in 11 of 36); with them on,
+  Exit Stair S2 (east) (1 s sooner, 3% more time in smoke, +0.1 trapped per fire, faster in 20 of 36).
+- **The measured fixes that both sides have hardly move**, each under the thresholds (5 points of smoke, 5 s, 0.5
+  trapped), so none is in `changes`: keeping Stair S1's exit clear is 15 s sooner and 38% less time in smoke with the terms
+  off and 13 s and 35% with them on; widening that exit (0.86 m to 1.36 m) is 2 s sooner with 8% and then 6% less time in
+  smoke (faster in 26 and then 23 of 36); self-closers on the stair doors 33% and then 35% less time in smoke; sprinklers
+  -1.3 and then -1.2 trapped per fire (and 45% and then 47% more time in smoke, the accounting caveat of D15). All five fixes
+  help on both sides.
 - **Blocking Stair S1's exit** is the one what-if line that moves: 15 s later with the terms off and 13 s with them on,
   +187 person-seconds in smoke (+60%) against +154 (+55%).
 - **Exit use** shifts toward the south entry: Exit Entry (south) 976 -> 1,224 people and Exit Open Office (west) 1,410 ->
   1,313 across the 36 baseline fires. The largest move, 248 people, is 2.8% of the 8,954 evacuees (the line is 5%), and the stair
   exits hardly move (S1 2,749 -> 2,709, S2 2,512 -> 2,517). People trapped: 50 -> 46 over the 36 fires; mean 90% out
-  136.4 -> 136.6 s. Sprinklers are unchanged by C14 (-1.3 and -1.2 trapped per fire).
-- **D15's batch is the current side.** The new current batch agrees with D15's `batch-office.prev.json` on all 36
+  136.4 -> 136.6 s.
+- **D15's batch is the current side.** The current batch agrees with D15's `batch-office.prev.json` on all 36
   runs, all 3 what-ifs and all 5 fixes to the last digit (the sprinkler fix included, which was reused from its what-if
   this time and rerun in D15: the reuse checks out). D15 ran Sat 08:12, after C14 (04:21) and C13b (04:26), so D15's and
   D18's lines are not marked "(before C14)": they already include C14. The new pack adds the percent at the source, so the derived fixes
