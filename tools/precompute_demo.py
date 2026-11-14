@@ -69,6 +69,12 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Every spawned pool worker reserves OpenBLAS buffers for each logical core: 515 MB of commit against 33 MB with one
+# thread (D15, fire/README.md). The sim's results do not change, and this machine hit its commit limit with two
+# batches running, so the workers (they inherit this) get one thread unless the caller says otherwise.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # `python tools/precompute_demo.py`: the repo root is not on the path yet
     sys.path.insert(0, str(ROOT))
@@ -1131,7 +1137,7 @@ def parse_args(argv):
     p.add_argument("--all", action="store_true", help="every public building")
     p.add_argument("--rooms", type=lambda s: [r for r in s.split(",") if r], metavar="R1,R2",
                    help="fire rooms for the baseline and propped runs, in this order (default: the 4 highest-risk plus the first kitchen)")
-    p.add_argument("--top", type=int, metavar="N", help=f"how many highest-risk rooms get runs (default {TOP_ROOMS}, example 3)")
+    p.add_argument("--top", type=int, metavar="N", help=f"how many highest-risk rooms get runs (default {TOP_ROOMS}, example-office 2)")
     p.add_argument("--max-rooms", type=int, metavar="N", help="batch: N evenly spaced fire rooms instead of every room")
     p.add_argument("--propped-door", metavar="DOOR", help="door that is closed in the baseline and propped in the what-if")
     p.add_argument("--batch", type=Path, metavar="FILE",
@@ -1146,8 +1152,8 @@ def parse_args(argv):
                    help=f"rooms the what-if sweep and fixes rerun (default {SWEEP_ROOMS})")
     p.add_argument("--no-sweeps", action="store_true", help="skip the what-if sweep and the measured fixes")
     p.add_argument("--skip-variants", type=lambda s: [] if s == "none" else [v for v in s.split(",") if v], metavar="ID,ID",
-                   help="what-if variants to leave out (office default blockedExit; 'none' keeps them all)")
-    p.add_argument("--workers", type=int, metavar="N", help="processes (default: cores - 2, at most 10)")
+                   help="what-if variants to leave out, such as blockedExit (default: none left out; 'none' also means that)")
+    p.add_argument("--workers", type=int, metavar="N", help="processes (default: cores - 2, at most 10; each holds about 33 MB with the one-thread BLAS this tool sets)")
     p.add_argument("--resume", action="store_true", help="reuse the raw batch of the last run when it still fits")
     p.add_argument("--live-reports", action="store_true", help="instead of simulating: rewrite report-*.md with Gemini from the batches already in --out")
     p.add_argument("--refresh-reports", action="store_true", help="instead of simulating: write report-*.md again as template cards (no model) from the batches already in --out")
