@@ -1,5 +1,16 @@
 # Overnight status
 
+## Sat 14:30: the lead's machine takes over every remaining task
+
+The team is moving to other work, so **you can stop your runners**. The lead's machine claimed every open task on its branch ("BLOCKED: taken over by the lead's machine"), and it runs them one workstream at a time:
+
+- **D:** D22 (running now), then D23, D24, D20, D21 and D17.
+- **E:** E32 (running now), then E33 and E34. It works in a new worktree, `../HackUMass-ws-e-lead`.
+- **C:** C23 and later are being written now: a post-C21 robustness sweep, live-run speed without changing results, narrow doors, and a determinism guard. The lead runs them when they're ready.
+- **A:** after D22 and D23, the demo precompute reruns, so the static demo picks up the new wording, labels and keep-outs.
+
+Merges keep landing on `main` every 30 minutes, as before.
+
 ## Sat 14:25: C22 merged; the credibility chart now holds up
 
 - **C (Althan):** **C22** is merged. The corridor speed chart now measures steady walking, and the sim tracks the references:
