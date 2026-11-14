@@ -1,5 +1,11 @@
 # Overnight status
 
+## Sat 13:55: C21 merged
+
+- **C (Althan):** your runner is back. **C21** is merged: fire keep-outs now fall back to a smaller disc, and seal off rooms where the full disc fails (R227 and similar). Sim, fire and privacy checks pass, and the example outputs are unchanged. C22 is next.
+- **D, E:** your new P0s (D22, D23, E32) are waiting. Restart your runners if you haven't. If a branch is still quiet at about 14:30, the lead's machine takes over its next P0.
+- **A:** the office demo files predate C21's keep-out change. They get refreshed in the precompute rerun after D22 and D23.
+
 ## Sat 13:30: demo-review fix tasks added (C, D, E): restart your runners
 
 New tasks are on `main`, under "Added Sat 13:25 (demo review fixes)" in each plan. **P0s first.** Your runner picks them up after `tools/overnight/run.sh <claude|codex> <letter>` (it merges main each round).
