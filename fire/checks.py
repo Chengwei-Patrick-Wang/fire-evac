@@ -369,6 +369,70 @@ def check_coupled_slow():
     print(f"wrote {out.relative_to(root)}", flush=True)
 
 
+def check_batch_setup():
+    from copy import deepcopy
+    from fire.batch import _ignitions, _tasks, _init, _run_one, run_many
+
+    building = fixture_building()
+    base = {"id": "batch-check", "seed": 7, "brain": "llm",
+            "fire": {"type": "bedroom", "growth": "slow", "start": 12}}
+    original = deepcopy(base)
+    ignitions = _ignitions(building, base)
+    tasks = _tasks(building, base, ignitions, (1, 3))
+    assert len(tasks) == 4 and base == original
+    for task in tasks:
+        scenario = task["scenario"]
+        room = next(r for r in building["floors"][0]["rooms"] if r["id"] == task["ignition"]["room"])
+        assert shapely.Polygon(room["polygon"]).contains(shapely.Point(scenario["fire"]["x"], scenario["fire"]["y"]))
+        assert scenario["brain"] == "rules"
+        assert all(scenario["fire"][key] == base["fire"][key] for key in ("type", "growth", "start"))
+    large = deepcopy(building)
+    large["floors"][0]["rooms"] = [{"id": f"R{i}", "type": "office", "polygon": room["polygon"]}
+                                       for i in range(60)]
+    selected = _ignitions(large, base)
+    assert len(selected) == 40 and selected == _ignitions(large, base)
+    assert [int(i["room"][1:]) for i in selected] == sorted(int(i["room"][1:]) for i in selected)
+    assert len(_ignitions(large, base, 4)) == 4
+    large["floors"][0]["rooms"][0]["type"] = "corridor"
+    large["floors"][0]["rooms"][1]["type"] = "stair"
+    assert len(_ignitions(large, base, 100)) == 58
+    empty = run_many(building, base, [], progress=False)
+    assert empty["runs"] == empty["failed"] == [] and empty["base"] == base
+    empty["base"]["fire"]["type"] = "trash"
+    assert base == original
+    # Bad worker input is returned as JSON data, never as an exception object.
+    _init(building)
+    error = _run_one({"scenario": {"id": "invalid"}, "ignition": {}})
+    assert error["ok"] is False and error["scenarioId"] == "invalid" and isinstance(error["error"], str)
+    json.dumps(error)
+
+
+def check_batch_pool_slow():
+    from copy import deepcopy
+    from fire.batch import run_many
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 120
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    original = deepcopy(base)
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    started = time.perf_counter()
+    parallel = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert len(parallel["runs"]) == 2 and parallel["failed"] == [], parallel["failed"]
+    assert time.perf_counter() - started < 240
+    serial = run_many(building, base, ignitions, seeds=(1,), workers=1)
+    assert parallel["runs"] == serial["runs"], (parallel["runs"], serial["runs"])
+    assert base == original
+    # Kill a spawned batch before any simulation can finish; don't hang shutdown.
+    started = time.perf_counter()
+    expired = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=0.001, progress=False)
+    assert expired["runs"] == [] and len(expired["failed"]) == 2
+    assert time.perf_counter() - started < 10
+    print("batch: 2 spawned runs match inline runs; timeout records both failures", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

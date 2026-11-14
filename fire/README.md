@@ -205,3 +205,55 @@ A/E integration handoff: `doors[].flow` is now numeric people/minute and
 share smoke grid headers. No contract fields were renamed or removed.
 D5 verification: `python -m fire.smoke_test` prints `fire checks OK`; the coupled
 run CLI prints five rows, led by D104 (peak 3, wait 55.5, flow 10.00/min).
+
+## Batch runner (D6)
+
+`fire.batch.run_many(building, base, ignitions=None, seeds=(1, 2, 3),
+workers=None, timeout_s=7200, progress=True)` runs rule-based scenarios with
+explicit `FireModel` instances. The default ignitions are non-corridor,
+non-stair rooms in building order; above 50 eligible rooms, it samples 40 using
+`base.seed` and restores building order. The CLI's `--rooms N` samples up to N
+eligible rooms with the same seed. Each fire uses a polygon representative
+point inside its room. Only location, scenario id, seed and brain are changed;
+the base preset, growth, start and other settings are preserved.
+
+Run from the repository root:
+
+```sh
+python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 4 --seeds 1 --workers 2 --out debug/batch-test.json
+```
+
+Default output is `data/runs/batch-<buildingId>.json`; parent folders are created.
+For UMass-derived buildings, explicitly use `--out data/private/<name>.json`.
+The output is batch/v0 with a copied scenario object in `base`, compact `runs`,
+and optional `failed: [{scenarioId, error}]`. Ranking fields (`rooms`, `doors`,
+`heatmaps`, `top`) are empty until D7. Workers retain compact door measurements
+and heatmaps internally for that aggregation, without transferring full replays.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| Room sampling threshold | 50 | Above this many eligible rooms, sample |
+| Default sampled rooms | 40 | Number selected above the threshold |
+| Seeds | 1, 2, 3 | Run each ignition once per distinct seed, sorted numerically |
+| Workers | min(61, max(1, CPU count - 1)) | Spawned processes; unknown CPU count uses 1 |
+| Batch timeout | 7200 s | Wall-clock deadline for the spawned pool |
+
+The building is initialized once per worker, and tasks carry only scenario and
+ignition data. Spawn context and a guarded CLI support Windows and macOS.
+Simulation imports stay inside the worker so importing batch setup does not
+require JuPedSim. Worker exceptions become strings. A pool timeout or broken
+worker preserves finished results, cancels pending work, terminates children,
+and records unfinished scenarios in `failed`. Results follow ignition order,
+then seed order, irrespective of process completion order. Progress lines show
+the completed count and elapsed batch seconds and flush immediately.
+
+One worker or one task runs inline. In that mode the deadline is checked between
+runs; it cannot interrupt an active simulation. Use at least two tasks and two
+workers when a hard timeout is needed. Callers retain the usual spawn guard when
+launching pools from their own scripts.
+
+D6 verification: `python -m fire.checks --slow` passed, including two 60-person,
+120 s simulations on R101/R105 in a spawned pool, identical inline results, and
+a timeout that records both failures promptly. `python -m fire.smoke_test`
+also passed. The four-room CLI check wrote `debug/batch-test.json` with four
+runs and no failures. Git syncing is left to the overnight runner.
