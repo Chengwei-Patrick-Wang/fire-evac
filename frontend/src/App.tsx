@@ -97,6 +97,11 @@ async function openFile(f: File) {
       const key = `file-${o.data.id}-${Date.now().toString(36)}`
       const lr: Omit<LoadedRun, 'index'> = { key, label: o.data.id, run: o.data, doors: {} }
       useApp.getState().addRun(lr)
+    } else if (o.kind === 'batch') {
+      const s = useApp.getState()
+      if (!s.building || s.building.id !== o.data.buildingId)
+        s.setNotice(`Batch is for building ${o.data.buildingId}; loaded building is ${s.building?.id ?? 'none'}`)
+      else useApp.setState({ batch: o.data })
     } else {
       s_notice(`${o.kind} file loaded (not used yet)`)
     }

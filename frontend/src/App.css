@@ -52,3 +52,14 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .scenario button.run { background: #f97316; color: #0b1220; font-weight: 600; }
 .scenario button:disabled { opacity: 0.6; cursor: default; }
 .scenario .err { color: #f87171; }
+.stamp { background: #7f1d1d; color: #fecaca; font-weight: 700; font-size: 12px; padding: 4px 8px; border-radius: 4px; margin: 6px 0; text-align: center; }
+.risklegend .ramp { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #22c55e, #eab308, #ef4444); }
+.risklegend .row { display: flex; justify-content: space-between; font-size: 11px; }
+.risklegend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; }
+.weak button, .weak select { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+.weak .check { display: block; margin: 6px 0; }
+.weak .err { color: #fca5a5; }
+.spots { padding-left: 0; list-style: none; }
+.spots li { padding: 6px; margin-bottom: 6px; border: 1px solid #1e293b; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.spots li:hover { background: #1e293b; }
+.badge { background: #334155; border-radius: 3px; padding: 0 4px; font-size: 10px; text-transform: uppercase; }

@@ -9,6 +9,7 @@ export default function Toolbar3D() {
   const fire = useApp((s) => s.layers.fire)
   const heatmap = useApp((s) => s.layers.heatmap)
   const queues = useApp((s) => s.layers.queues)
+  const risk = useApp((s) => s.layers.risk)
   if (!building) return null
   const set = useApp.setState
   const isOn = (id: string) => !visible || visible.includes(id)
@@ -41,6 +42,7 @@ export default function Toolbar3D() {
         ['fire', 'Fire', fire],
         ['heatmap', 'Heatmap', heatmap],
         ['queues', 'Queues', queues],
+        ['risk', 'Risk map', risk],
       ] as const).map(([k, name, val]) => (
         <label key={k}>
           <input

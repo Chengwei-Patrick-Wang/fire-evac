@@ -1,10 +1,10 @@
 import { create } from 'zustand'
-import type { Batch, Building, BuildingInfo, DoorState, Run, Scenario } from '../data/types'
+import type { Batch, Building, BuildingInfo, DoorState, Run, Scenario, Vec2 } from '../data/types'
 import type { Mode } from '../data/loader'
 import { buildRunIndex } from '../replay/runIndex'
 import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
-import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startRun } from '../data/loader'
+import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
 
 export interface LoadedRun {
@@ -29,6 +29,12 @@ export interface Layers {
   risk: boolean
 }
 
+export interface Focus {
+  floorId: string
+  pos: Vec2
+  nonce: number
+}
+
 interface AppState {
   mode: Mode
   view: View
@@ -50,6 +56,14 @@ interface AppState {
   running: string | null
   runError: string | null
   runNote: string | null
+  riskMetric: 'riskT90' | 'riskTrapped'
+  crowding: boolean
+  selectedRoom: string | null
+  focus: Focus | null
+  batchRunning: string | null
+  batchError: string | null
+  flyTo: (floorId: string, pos: Vec2) => void
+  runBatch: () => Promise<void>
   setDraft: (d: Scenario | null) => void
   patchDraft: (p: Partial<Scenario>) => void
   setPlacing: (b: boolean) => void
@@ -85,6 +99,29 @@ export const useApp = create<AppState>((set) => ({
   running: null,
   runError: null,
   runNote: null,
+  riskMetric: 'riskT90',
+  crowding: false,
+  selectedRoom: null,
+  focus: null,
+  batchRunning: null,
+  batchError: null,
+  flyTo: (floorId, pos) => set((s) => ({ visibleFloors: [floorId], focus: { floorId, pos, nonce: (s.focus?.nonce ?? 0) + 1 } })),
+  runBatch: async () => {
+    const st = useApp.getState()
+    const b = st.building
+    if (!b || !st.draft || st.batchRunning) return
+    set({ batchRunning: 'Running batch…', batchError: null })
+    try {
+      const base: Scenario = { ...st.draft, buildingId: b.id, occupants: { ...st.draft.occupants, mix: normalizeMix(st.draft.occupants.mix) } }
+      const batch = await startBatch(base, (el) => set({ batchRunning: `Running batch… ${el} s` }))
+      if (batch.buildingId !== b.id) throw new ApiError(`Batch is for building ${batch.buildingId}, not ${b.id}`)
+      set({ batch })
+    } catch (e) {
+      set({ batchError: e instanceof Error ? e.message : String(e) })
+    } finally {
+      set({ batchRunning: null })
+    }
+  },
   setDraft: (draft) => set({ draft }),
   patchDraft: (p) => set((s) => (s.draft ? { draft: { ...s.draft, ...p } } : {})),
   setPlacing: (placing) => set({ placing }),
@@ -134,7 +171,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set({ building, draft: null, runNote: null, runError: null, visibleFloors: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] }),
+  setBuilding: (building) => set({ building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, selectedRoom: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] }),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

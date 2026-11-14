@@ -3,7 +3,12 @@ import EvacCurve from '../dashboard/EvacCurve'
 import ExitBars from '../dashboard/ExitBars'
 import RunStats from '../dashboard/RunStats'
 
-const TABS = [{ id: 'results', label: 'Results' }]
+import WeakSpots from '../dashboard/WeakSpots'
+
+const TABS = [
+  { id: 'results', label: 'Results' },
+  { id: 'risk', label: 'Risk map' },
+]
 
 export default function ResultsPanel() {
   const [tab, setTab] = useState<string>('results')
@@ -26,6 +31,7 @@ export default function ResultsPanel() {
           <RunStats />
         </>
       )}
+      {tab === 'risk' && <WeakSpots />}
       <p className="dim foot">Illustrative fire model. Not a compliance tool. One seed is one possible night.</p>
     </div>
   )

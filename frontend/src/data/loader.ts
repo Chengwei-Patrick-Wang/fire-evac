@@ -134,8 +134,22 @@ export async function loadBatch(buildingId: string): Promise<Batch | null> {
   return assertVersion<Batch>(await fetchJson(DEMO + entry.file, {}, 30000), 'batch/v0')
 }
 
-export async function startBatch(_base: Scenario): Promise<Batch> {
-  throw new ApiError('not implemented')
+export async function startBatch(base: Scenario, onTick?: (elapsedS: number) => void, maxS = 1800): Promise<Batch> {
+  const r = await fetchJson<{ batchId: string }>(
+    `${API}/batch`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base }) },
+    60000,
+  )
+  const t0 = Date.now()
+  for (;;) {
+    const b = await fetchJson<Batch | Pending>(`${API}/batch/${encodeURIComponent(r.batchId)}`, {}, 60000)
+    if (!isPending(b)) return assertVersion<Batch>(b, 'batch/v0')
+    if (b.status === 'error') throw new ApiError(b.error ?? 'Batch failed')
+    const el = (Date.now() - t0) / 1000
+    if (el > maxS) throw new ApiError(`Batch did not finish within ${maxS} s`)
+    onTick?.(Math.round(el))
+    await new Promise((res) => setTimeout(res, 2000))
+  }
 }
 export async function fetchReport(_ref: { runId: string } | { batchId: string }): Promise<string> {
   throw new ApiError('not implemented')
