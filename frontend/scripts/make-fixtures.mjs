@@ -119,4 +119,21 @@ const clone = (o) => JSON.parse(JSON.stringify(o))
   run.metrics.assist = { waiting: chosen.length, meanWait: 180, maxWait: 180, personSeconds: chosen.length * 180 }
   writeFileSync(join(out, 'access.run.json'), JSON.stringify(run))
 }
+// exposure: example batch with made-up smoke seconds and what-if entries (UI only; keeps placeholder: true).
+{
+  const batch = clone(JSON.parse(readFileSync(join(root, 'public/demo/batch.example.json'), 'utf8')))
+  batch.id = 'exposure'
+  batch.runs.forEach((r, i) => {
+    r.smokeSeconds = 1500 + (i % 7) * 60
+  })
+  const n = batch.runs.length
+  const mean = batch.runs.reduce((s, r) => s + r.smokeSeconds, 0) / n
+  const why = (label, d, extra) => `${label}: 90% out ${d} s later on average (slower in 3 of ${n} fires); ${extra}`
+  batch.whatIf = [
+    { id: 'proppedStairs', label: 'Stair doors propped open', doors: [], sprinklers: false, n, dT90: 0.2, dT90Min: -3, dT90Max: 9, slower: 3, faster: 1, dTrapped: 0, dDosed: 0.3, dSmokeSeconds: +(mean * 0.22).toFixed(0), why: why('Stair doors propped open', 0, '+366 person-seconds in smoke, +0.3 people at an illustrative smoke dose of 1, +0.0 trapped per fire.') },
+    { id: 'blockedExit', label: 'Exit E1 blocked', doors: [], sprinklers: false, n, dT90: 64, dT90Min: 10, dT90Max: 120, slower: n, faster: 0, dTrapped: 2, why: why('Exit E1 blocked', 64, '+2.0 trapped per fire.') },
+    { id: 'sprinklers', label: 'Sprinklers on', doors: [], sprinklers: true, n, dT90: -0.5, dT90Min: -4, dT90Max: 3, slower: 10, faster: 20, dTrapped: 0, dSmokeSeconds: -120, why: why('Sprinklers on', -0.5, '-120 person-seconds in smoke, +0.0 trapped per fire.') },
+  ]
+  writeFileSync(join(out, 'exposure.batch.json'), JSON.stringify(batch))
+}
 console.log('wrote', out)

@@ -3,6 +3,7 @@ import { useClock } from '../store/clock'
 import { listDemoRuns, loadDemoRun } from '../data/loader'
 import { compareRuns, findPrecomputedVariant } from '../model/whatif'
 import { spotPosition } from '../model/spots'
+import { batchHeadline, pairHeadline } from '../model/exposure'
 
 export interface TourCtx {
   after: (ms: number, fn: () => void) => void
@@ -97,7 +98,12 @@ const sec = (v: number | null) => (v == null ? 'not reached' : `${v.toFixed(0)} 
 function variantCaption(): string {
   const st = useApp.getState()
   const [a, b] = st.compareKeys.map((k) => st.runs[k])
-  if (!a || !b || !b.whatIf) return ''
+  if (!a || !b || !b.whatIf) {
+    const bh = batchHeadline(st.batch)
+    return bh ? `${bh.main} (mean of ${bh.n} fires)` : ''
+  }
+  const h = pairHeadline(a.run, b.run, `Stair door ${b.whatIf.door} propped open`)
+  if (h) return h.secondary ? `${h.main} · ${h.secondary}` : h.main
   const c = compareRuns(a.run, b.run)
   return `Stair door ${b.whatIf.door} propped open: t90 ${sec(c.t90[0])} → ${sec(c.t90[1])}${c.dT90 != null ? ` (${sgn(c.dT90)})` : ''}, trapped ${a.run.metrics.trapped} → ${b.run.metrics.trapped}`
 }

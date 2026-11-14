@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../store/app'
 import { compareRuns, defaultWhatIfDoor, stairDoors } from '../model/whatif'
+import { pairHeadline } from '../model/exposure'
 import type { DoorState } from '../data/types'
 
 const STATES: DoorState[] = ['propped', 'open', 'closed', 'blocked']
@@ -52,6 +53,10 @@ export default function WhatIfCard() {
     ? active
     : order.map((k) => runs[k]).reverse().find((r) => r.whatIf?.baselineKey === active?.key)
   const cmp = variant && base ? compareRuns(base.run, variant.run) : null
+  const head =
+    variant?.whatIf && base
+      ? pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${variant.whatIf.door} open` : `${variant.whatIf.door} ${variant.whatIf.state}`)
+      : null
 
   return (
     <div className="whatif">
@@ -83,6 +88,7 @@ export default function WhatIfCard() {
         {busy ?? 'Run what-if'}
       </button>
       {err && <p className="err">{err}</p>}
+      {head && <p className="whatif-card"><b>{head.main}</b></p>}
       {cmp && variant && (
         <p className="whatif-card" style={{ color: cmp.dT90 != null ? (cmp.dT90 > 0 || cmp.dTrapped > 0 ? '#f87171' : '#4ade80') : cmp.dTrapped > 0 ? '#f87171' : undefined }}>
           t90 {fmt(cmp.t90[0])} → {fmt(cmp.t90[1])}

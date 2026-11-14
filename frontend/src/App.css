@@ -145,3 +145,7 @@ select { background: var(--line); color: inherit; border: 1px solid var(--line-s
 .results .stats.access thead td { font-size: 11px; }
 .results .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 .results .assist p { margin: 4px 0; font-size: 12px; }
+.whatif-headline { border: 1px solid #444; border-radius: var(--radius); padding: 8px; margin: 8px 0; }
+.whatif-headline .main { font-size: 16px; font-weight: 700; margin: 4px 0; }
+.whatif-headline ul { margin: 6px 0; padding-left: 18px; }
+.whatif-headline .dim { opacity: 0.7; font-size: var(--fs-sm); }

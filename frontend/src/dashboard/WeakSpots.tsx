@@ -1,5 +1,6 @@
 import { useApp } from '../store/app'
 import { spotPosition } from '../model/spots'
+import WhatIfHeadline from './WhatIfHeadline'
 import RiskLegend, { Stamps } from './RiskLegend'
 
 export default function WeakSpots() {
@@ -40,6 +41,7 @@ export default function WeakSpots() {
       ) : (
         <>
           <Stamps />
+          <WhatIfHeadline />
           <label className="check">
             <input type="checkbox" checked={risk} onChange={(e) => set((s) => ({ layers: { ...s.layers, risk: e.target.checked } }))} /> Risk map
           </label>
