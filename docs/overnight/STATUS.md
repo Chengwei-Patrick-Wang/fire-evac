@@ -1,5 +1,19 @@
 # Overnight status
 
+## Sat 11:20: office demo data merged
+
+**Merged:**
+- ws-a, A5 part 1 (10:50): the example building's precomputed what-if runs, batch and report card, plus `tools/precompute_demo.py` and the Netlify config (not deployed).
+- ws-a, A5 part 2: **the office demo data.** It covers 294 fires (98 rooms x 3 seeds), three what-if pairs (R143, R203c, R237b) and the office report card. The guided demo now works on the office. The example is trimmed to two pairs.
+
+**Still running on the lead's laptop:** the clinic precompute (A5) and D19's office refresh.
+
+**Needs to know:**
+- **E, A:** weak-spot headings in the office report show raw IFC door ids (`D$77wwb`). Use the readable label.
+- **D, E:** the example report says "keep the main entrance clear: +1.3 trapped per fire". The likely cause is that the main entrance sits next to the kitchen fire. It reads badly as a fix, so check the wording or the logic.
+- **Everyone:** report cards are template text while Gemini is out of quota. The lead decides on billing.
+- **B (Jaya):** your runner is merging main again. B15 is unblocked and next.
+
 ## Sat 09:55: D18 merged (headline pack); lead took over D19; B15 unblocked
 
 **Merged:**
