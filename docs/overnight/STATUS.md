@@ -1,5 +1,20 @@
 # Overnight status
 
+## Sat 12:45: D19 merged; lunch-hour work
+
+**Merged:** ws-d **D19** (lead takeover): `fire/refresh.py` reruns the same fires with C14's smoke-aware exit choice off and on, then lists which headline numbers changed.
+- Example (168 runs, 0 failed): propped stair doors +25% -> +26% time in smoke. Widening door DL1 flips from not helping to helping.
+- Office: propped stair doors +49% -> +54%. The 3rd weak spot becomes Exit Stair S2 (east), and blocking Stair S1 adds 55% more smoke time (was 60%).
+- D15's and D18's batches already ran with C14 on, so their numbers stand.
+- Still missing: the office's C14-off fixes. They are finishing now with `--resume`.
+
+**Running over lunch on the lead's laptop:**
+- D19's office fixes (until 13:30 at the latest).
+- A: readable labels in report-card headings, with no raw IFC ids like `D$77wwb`.
+- Fix tasks for **C, D and E**, from the demo review: the R227 keep-out; the "+1.3 trapped" fix wording; the R203b sliver; readable interior door labels; the what-if contrast; the Sprinklers checkbox in static mode. The tasks get appended to your plans when they're ready.
+
+**Frame rate:** the office demo runs at about 29 FPS in a small window once no simulations run.
+
 ## Sat 12:05: A5 done; all three buildings precomputed
 
 **Merged:** ws-a, **A5 done**. The static demo now covers all three buildings:
