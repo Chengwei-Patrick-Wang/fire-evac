@@ -300,6 +300,18 @@ All three CLI runs evacuated 300/300 with zero remaining/inStairs; no recording 
 
 **Handoff for A:** all three office fires complete; regenerate office precomputed runs and batches with their accompanying scenarios. Burning stair rooms close their doors to route choice. **Handoff for D:** R125/R143 keep-outs now use 1.5 m, so recompute their risk. No contracts or shared data files changed.
 
+### Task C13b (P0 · Sat 5 AM): Stair arrivals clear of the boundary next to a blocked exit (unblocks D15)
+
+**Files:** Modify `sim/run.py` (stair-arrival placement, around the check that raises "within 0.2 m of geometry boundary", near line 602), `sim/smoke_test.py`.
+
+**Interfaces:** Consumes `data/buildings/office.json`. Produces stair arrivals that never raise: a spot is always at least the agent radius + 0.25 m inside the walkable area and outside any fire keep-out, else the agent waits in the stair FIFO until one frees.
+
+- [ ] **Reproduce** (D's blocker, lead's note Sat 04:20): office, kitchen fire in R106, 250 occupants, seed 2, door `D$77wwb` set to `blocked` (single-quote the id in shell: `$` expands). The run raises at the first stair arrival: agent (0.36, 22.81) within 0.2 m of the geometry boundary.
+- [ ] **Fix:** sample arrival candidates inside the stair polygon buffered inward by (radius + 0.25 m) and intersected with the floor's walkable area minus the keep-out disc (C10). If none is free, keep the agent queued for the next step instead of raising. Log a `stair_wait` count in the metrics if useful (optional field).
+- [ ] **Checks:** a fast test on a tiny two-floor geometry where the lower stair polygon touches a blocked door (no raise, everyone out), plus the office repro behind `--slow` (completes, no RuntimeError).
+- [ ] **Verify:** `python -m sim.smoke_test` (fast) passes, and `python -m sim.smoke_test --slow` runs the office repro to the end.
+- [ ] **Commit** `fix(sim): stair arrivals stay clear of the boundary next to blocked exits`.
+
 ### Task C14 (P1 · Sat 7 AM): Exit choice weighs smoke on the route and exits a visitor doesn't know
 
 **Files:** Modify `sim/brain.py`, `sim/run.py`, `sim/smoke_test.py`.
