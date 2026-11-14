@@ -1,4 +1,4 @@
-"""Multi-floor evacuation with width-limited FIFO stair transfers (spec §7.2).
+"""Multi-floor evacuation with width-limited stair transfers (spec §7.2).
 
 C owns this module (stair transfer, brain, reroutes, blocked doors).
 
@@ -8,16 +8,23 @@ Behavior:
 - Occupants are split over rooms (not corridor/stair/restroom/storage) by area, or
   scenario.occupants.perRoom; profile, v0 and startDelay come from sim.profiles.
 - One CollisionFreeSpeedModel sim per floor. Stages: every exit on the floor, plus
-  connected downward stairs. Arrivals wait for a clear spot before re-entry.
+  connected downward stairs. Assistance waits leave earlier admission slots free;
+  arrivals re-enter in arrival-time order once a clear spot is available.
 - Each agent chooses a route using travel time and queues, and stands still
-  (desired_speed 0) until alarmTime + startDelay.
+  (desired_speed 0) until alarmTime + startDelay, or an earlier cue countdown.
+- Fire in the same room, or visibility below 10 m, starts a separate 0–10 s
+  cue delay; the first cue wins and the alarm can still start people sooner.
+  scenario.premovement overrides profile delay ranges by room type.
+- People keep 2.5 m from the burning item where room geometry permits;
+  smaller keep-out areas preserve connected escape routes.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
 - Mid-run blocked interior doors act only through slowdown and trapping.
   Agents in a stairwell (status 2 or 3) are not exposed to fire.
 """
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import Counter
+from heapq import heappush, heappop
 import argparse
 import json
 import math
@@ -28,11 +35,11 @@ from pathlib import Path
 import jupedsim as jps
 import numpy as np
 import shapely
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
 from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider
-from sim.profiles import PROFILES
+from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
 DT = 0.01
@@ -46,6 +53,7 @@ WALL_CLEARANCE = 0.3   # spawn inside (room ∩ walkable).buffer(-0.3)
 MIN_SPACING = 0.5      # spawn points at least this far apart
 STOPPED = 0.0          # desired_speed before the start delay is over (1.4.2 accepts 0)
 MIN_SMOKE_SPEED = 0.2
+FIRE_KEEPOUT_M = 2.5
 
 
 def _warn(msg: str) -> None:
@@ -71,6 +79,41 @@ def floor_walkable(floor: dict, blocked=frozenset()) -> Polygon:
         dropped = 1 - polys[0].area / sum(p.area for p in polys)
         _warn(f"{floor['id']}: {len(polys)} walkable pieces; dropped area {dropped:.1%}; simulating the largest only")
     return polys[0]
+
+
+def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
+    """Cut a room-clipped fire disc, retaining connected exits and stair zones."""
+    if not math.isfinite(radius) or radius < 0:
+        raise ValueError("fireKeepout must be finite and nonnegative")
+    if radius == 0:
+        return walk
+    point = Point(x, y)
+    origin = next((r for r in floor["rooms"] if r["id"] == room), None)
+    if origin is None:
+        origin = next((r for r in floor["rooms"] if Polygon(r["polygon"]).covers(point)), None)
+    if origin is None:
+        return walk
+    room_poly = Polygon(origin["polygon"])
+    room_area = walk.intersection(room_poly).area
+    zones = [Polygon(z["polygon"]) for z in floor["exits"] + floor["stairs"]]
+    attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
+    # Never enlarge an explicitly smaller user-supplied distance on fallback.
+    radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
+    for candidate in radii:
+        cut = walk.difference(point.buffer(candidate).intersection(room_poly))
+        pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
+        pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
+                        key=lambda p: p.area, reverse=True)
+        if not pieces or any(p.area > 0.5 for p in pieces[1:]):
+            continue
+        retained = pieces[0]
+        if retained.intersection(room_poly).area < room_area / 4:
+            continue
+        if any(z.distance(retained) > 0.1 for z in attached):
+            continue
+        return retained
+    _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
+    return walk
 
 
 def _largest_remainder(total: int, weights: list[float]) -> list[int]:
@@ -116,6 +159,17 @@ def _sample_points(region, n: int, rng: np.random.Generator, taken: list, label:
 
 def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, walkable=None) -> list[dict]:
     """Agents with idx 0..N-1, profile, floor, room, v0, startDelay, radius, x, y."""
+    premovement = scenario.get("premovement", {})
+    if not isinstance(premovement, dict):
+        raise ValueError("premovement must map room types to [lo, hi] ranges")
+    for room_type, bounds in premovement.items():
+        if (not isinstance(bounds, (list, tuple)) or len(bounds) != 2
+                or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                       or not math.isfinite(v) for v in bounds)
+                or not 0 <= bounds[0] <= bounds[1]):
+            raise ValueError(f"premovement {room_type}: expected two finite numbers with 0 <= lo <= hi")
+    room_types = {(f["id"], r["id"]): r.get("type")
+                  for f in building["floors"] for r in f["rooms"]}
     occ = scenario.get("occupants") or {}
     rooms = []  # (floor id, room, spawn region)
     for floor in building["floors"]:
@@ -150,7 +204,8 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, wa
             spec = PROFILES["typical"]
         a["profile"] = prof
         a["v0"] = round(float(rng.uniform(*spec["v0"])), 2)
-        a["startDelay"] = round(float(rng.uniform(*spec["startDelay"])), 1)
+        delay = premovement.get(room_types[a["floor"], a["room"]], spec["startDelay"])
+        a["startDelay"] = round(float(rng.uniform(*delay)), 1)
         a["radius"] = spec["radius"]
     if unknown:
         _warn(f"unknown profiles {sorted(unknown)}: using 'typical' parameters")
@@ -168,10 +223,10 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, wa
 class _FloorSim:
     """One JuPedSim simulation for one floor, plus our jps-id -> idx map."""
 
-    def __init__(self, floor: dict, index: int, net: StairNet, blocked=frozenset()):
+    def __init__(self, floor: dict, index: int, net: StairNet, blocked, walk):
         self.id = floor["id"]
         self.index = index
-        self.walk = floor_walkable(floor, blocked)
+        self.walk = walk
         self.sim = jps.Simulation(model=jps.CollisionFreeSpeedModel(), geometry=self.walk, dt=DT)
         self.stages: list[dict] = []
         self.jid2idx: dict[int, int] = {}
@@ -257,6 +312,38 @@ def _t_share(exit_times: list[float], n_agents: int, share: float):
     return exit_times[need - 1] if len(exit_times) >= need else None
 
 
+def profile_metrics(agents, events):
+    """Summarize outcomes by profile and assistance waits from event durations."""
+    by_idx = {a["idx"]: a["profile"] for a in agents}
+    counts = Counter(by_idx.values())
+    exits = {profile: [] for profile in counts}
+    trapped = Counter()
+    waits = []
+    for event in events:
+        kind = event["type"]
+        if kind == "exit":
+            exits[by_idx[event["idx"]]].append(event["t"])
+        elif kind == "trapped":
+            trapped[by_idx[event["idx"]]] += 1
+        elif kind == "wait":
+            waits.append(event["until"] - event["t"])
+    profiles = {}
+    for profile, count in counts.items():
+        times = sorted(exits[profile])
+        profiles[profile] = {
+            "agents": count, "evacuated": len(times), "trapped": trapped[profile],
+            "t50": _t_share(times, count, 0.5),
+            "t90": _t_share(times, count, 0.9),
+            "t100": _t_share(times, count, 1.0),
+        }
+    person_seconds = sum(waits)
+    assist = {"waiting": len(waits),
+              "meanWait": person_seconds / len(waits) if waits else None,
+              "maxWait": max(waits) if waits else None,
+              "personSeconds": person_seconds}
+    return profiles, assist
+
+
 def smoke_speed(v0, S):
     return min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - S)))
 
@@ -283,8 +370,22 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     print(f"routing: {ROUTING_MODE}")
     blocked = {key for key, state in scenario.get("doors", {}).items() if state == "blocked"}
     walkable = {f["id"]: floor_walkable(f, blocked) for f in building["floors"]}
+    radius = float(scenario.get("fireKeepout", FIRE_KEEPOUT_M))
+    if not math.isfinite(radius) or radius < 0:
+        raise ValueError("fireKeepout must be finite and nonnegative")
+    ignition = scenario.get("fire") or {}
+    if radius and ignition and fire.hrr(float(scenario.get("maxTime", 600))) > 0:
+        for floor in building["floors"]:
+            if floor["id"] == ignition.get("floor"):
+                walkable[floor["id"]] = fire_keepout(
+                    walkable[floor["id"]], floor, ignition.get("room"),
+                    ignition["x"], ignition["y"], radius)
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
+    cue_rng = np.random.default_rng([seed, 3])
+    for a in agents:
+        a["cueDelay"] = float(cue_rng.uniform(*CUE_DELAY))
+    cues = {}
     net.check({a["floor"] for a in agents})
     n = len(agents)
     mode = scenario.get("brain", "rules")
@@ -302,7 +403,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     seen_smoke = set()
 
     floors = building["floors"]
-    sims = [_FloorSim(f, i, net, blocked) for i, f in enumerate(floors)]
+    sims = [_FloorSim(f, i, net, blocked, walkable[f["id"]]) for i, f in enumerate(floors)]
     by_id = {fs.id: fs for fs in sims}
 
     status = [0] * n
@@ -416,6 +517,16 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                            "from": current, "to": st["id"], "reason": reason})
         return st
 
+    def start_agent(i, t):
+        if status[i] == 0 and i not in trapped:
+            fs, jid = where[i]
+            target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
+            if target[i] is not None:
+                fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
+                fs.sim.agent(jid).model.desired_speed = smoke_speed(
+                    agents[i]["v0"], fire.visibility(fs.id, *fs.sim.agent(jid).position))
+            status[i] = 1
+
     def enter_stair(i, t, fs, st):
         profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
         until = None
@@ -431,7 +542,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         entry["arrival"] = link["arrival"]
         entry["group"] = st["group"]
         transit[i] = entry
-        arrivals.setdefault((entry["to"], st["group"]), deque()).append(i)
+        heappush(arrivals.setdefault((entry["to"], st["group"]), []), (entry["arrive"], i))
         watch.anchors.pop(i, None)
         status[i] = 2 if until is not None and t < until else 3
         where[i] = None
@@ -454,14 +565,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         while next_start < n and alarm + agents[start_order[next_start]]["startDelay"] <= t + 1e-9:
             i = start_order[next_start]
             next_start += 1
-            if status[i] == 0 and i not in trapped:
-                fs, jid = where[i]
-                target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
-                if target[i] is not None:
-                    fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
-                    fs.sim.agent(jid).model.desired_speed = smoke_speed(
-                        agents[i]["v0"], fire.visibility(fs.id, *fs.sim.agent(jid).position))
-                status[i] = 1
+            start_agent(i, t)
 
         for i, entry in transit.items():
             if status[i] == 2 and t >= entry["hold_until"] - 1e-9:
@@ -471,7 +575,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         for (fid, group), queue in list(arrivals.items()):
             fs = by_id[fid]
             while queue:
-                i = queue[0]
+                _, i = queue[0]
                 entry = transit[i]
                 if entry["arrive"] > t + 1e-9:
                     break
@@ -482,7 +586,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 if st is None:
                     break
                 if st["kind"] == "stair" and st["group"] == group:
-                    queue.popleft()
+                    heappop(queue)
                     enter_stair(i, t, fs, st)
                     continue
                 region = entry["arrival"].buffer(-0.3)
@@ -500,7 +604,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     journey_id=st["journey"], stage_id=st["stage"]))
                 fs.jid2idx[jid] = i
                 where[i], target[i], status[i] = (fs, jid), st, 1
-                queue.popleft()
+                heappop(queue)
                 del transit[i]
 
         if k % FIRE_EVERY == 0:
@@ -517,6 +621,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     active -= 1
                     events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
                                    "x": round(x, 2), "y": round(y, 2)})
+                elif status[i] == 0:
+                    if i not in cues:
+                        if (fire.hrr(t) > 0 and fs.id == ignition.get("floor")
+                                and agents[i]["room"] == ignition.get("room")):
+                            cues[i] = (t, "fire")
+                        elif fire.visibility(fs.id, x, y) < CUE_VIS_M:
+                            cues[i] = (t, "smoke")
+                    if i in cues and t >= cues[i][0] + agents[i]["cueDelay"]:
+                        start_agent(i, t)
+                        events.append({"t": t, "type": "start", "idx": i,
+                                       "floor": fs.id, "cue": cues[i][1]})
                 elif status[i] == 1:
                     stuck = watch.update(i, t, x, y)
                     if stuck:
@@ -592,6 +707,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "t100": _t_share(exit_times, n, 1.0),
         "exitCounts": exit_counts,
     }
+
+    metrics["profiles"], metrics["assist"] = profile_metrics(agents, events)
 
     fire_cfg = scenario.get("fire") or {}
     return {

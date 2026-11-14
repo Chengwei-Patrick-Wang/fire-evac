@@ -4,6 +4,9 @@ Mobility ranges follow docs/context/03-research-findings.md. Assistance delay
 is a scenario assumption, not a property of the wheelchair profile.
 """
 
+CUE_VIS_M = 10.0
+CUE_DELAY = (0.0, 10.0)
+
 PROFILES: dict[str, dict] = {
     "typical": {"v0": (1.0, 1.5), "startDelay": (10.0, 60.0), "radius": 0.2,
                 "stairs": True, "stairSpeed": 0.55},
