@@ -207,6 +207,10 @@ function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
   const job = useTrace((s) => s.aiJob);
   const { acceptAi, discardAi, setAiJob } = useTrace.getState();
   const drafts = floor.rooms.filter((r) => r.ai).length;
+  // the outcome line has done its job; a pass still running (on another floor) keeps its state
+  const settle = () => {
+    if (useTrace.getState().aiJob.kind !== "busy") setAiJob({ kind: "idle" });
+  };
   const busy = job.kind === "busy";
   const here = job.kind !== "idle" && job.floorId === floor.id;
   // once every AI room is reviewed (or the draft is undone), the "N AI rooms" line has done its job
@@ -256,7 +260,7 @@ function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
             title="Keep every AI room on this floor as traced"
             onClick={() => {
               acceptAi(floor.id);
-              setAiJob({ kind: "idle" });
+              settle();
             }}
           >
             Accept all
@@ -266,7 +270,7 @@ function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
             title="Remove this floor's unreviewed AI rooms (Undo brings them back)"
             onClick={() => {
               discardAi(floor.id);
-              setAiJob({ kind: "idle" });
+              settle();
             }}
           >
             Discard AI draft
