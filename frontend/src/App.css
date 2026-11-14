@@ -67,6 +67,8 @@ select { background: var(--line); color: inherit; border: 1px solid var(--line-s
 .scenario button.run { background: #f97316; color: var(--bg); font-weight: 600; }
 .scenario .err { color: var(--danger); }
 .whatif .note { margin: 2px 0 6px; font-size: var(--fs-xs) }
+.whatif .doorrow { flex-wrap: wrap; }
+.whatif .doorrow select:first-child { flex: 1 1 100%; min-width: 0; }
 .credits.split { display: flex }
 .credits.split .src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis }
 .credits .lic { flex: none; margin-left: 12px }
@@ -82,6 +84,7 @@ ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; f
 .spots li:hover { background: var(--line); }
 .badge.ok { background: #166534; color: #dcfce7 }
 .badge.warn { background: #78350f; color: #fef3c7 }
+.badge.trade { background: #7c2d12; color: #ffedd5 }
 .badge { background: var(--line-strong); border-radius: 3px; padding: 0 4px; font-size: 10px; text-transform: uppercase; }
 
 .center canvas { touch-action: none; }

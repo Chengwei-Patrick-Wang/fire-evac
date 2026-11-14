@@ -392,6 +392,16 @@ try {
       if ((await list.count()) === 0) return
       await list.first().scrollIntoViewIfNeeded()
       await shot('fixes-list')
+      if ((await page.evaluate(() => window.__app.getState().batch?.id)) === 'fixes') {
+        // The fixture holds one trade-off judged from its numbers and one the batch flags (D22): both badged, costs after "; but",
+        // and no spot named by its raw id. Demo batches skip the id check: their D-written labels keep IFC ids until D23 and the precompute rerun.
+        const trades = await list.first().locator('.badge.trade').allTextContents()
+        if (trades.length !== 2 || trades.some((t) => t.trim() !== 'trade-off')) problems.push(`fixes: want two "trade-off" badges, got ${JSON.stringify(trades)}`)
+        if (!(await list.first().innerText()).includes('; but +1.3 trapped per fire')) problems.push('fixes: the list lacks "; but +1.3 trapped per fire"')
+        const named = await page.locator('.fixes .target, .spots button b').allInnerTexts()
+        for (const w of ['DSB2', 'DSA2', 'DSA1', 'E1', 'E2'])
+          if (named.some((t) => new RegExp(`\\b${w}\\b`).test(t))) problems.push(`fixes: raw id ${w} in a fix target or weak-spot heading`)
+      }
       const btn = list.locator('button.spot').first()
       const id = await btn.getAttribute('data-spot')
       await btn.click()

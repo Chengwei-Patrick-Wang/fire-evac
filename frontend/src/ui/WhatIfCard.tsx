@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../store/app'
 import { compareRuns, defaultWhatIfDoor, stairDoors } from '../model/whatif'
 import { pairHeadline, readWhatIf } from '../model/exposure'
+import { doorLabels } from '../model/spots'
 import type { DoorState } from '../data/types'
 
 const STATES: DoorState[] = ['propped', 'open', 'closed', 'blocked']
@@ -35,6 +36,15 @@ export default function WhatIfCard() {
   const def = building && fire ? defaultWhatIfDoor(building, fire) : null
   const chosen = door || def || ''
 
+  // Doors read as words; the id stays each option's value. With several floors the floor tells equal names apart.
+  const names = building ? doorLabels(building) : null
+  const multi = (building?.floors.length ?? 0) > 1
+  const nameOf = (id: string) => names?.get(id)?.label ?? id
+  const optionText = (id: string) => {
+    const n = names?.get(id)
+    return n ? `${n.label}${multi ? ` · ${n.floor}` : ''}` : id
+  }
+
   // Static mode cannot run sprinklers, so quote the measured what-if (the batch's, else the headline pack's).
   const measured = live
     ? undefined
@@ -63,22 +73,22 @@ export default function WhatIfCard() {
   const cmp = variant && base ? compareRuns(base.run, variant.run) : null
   const head =
     variant?.whatIf && base
-      ? pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${variant.whatIf.door} open` : `${variant.whatIf.door} ${variant.whatIf.state}`)
+      ? pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${nameOf(variant.whatIf.door)} open` : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`)
       : null
 
   return (
     <div className="whatif">
       <h4>What if…</h4>
       <div className="doorrow">
-        <select value={chosen} onChange={(e) => setDoor(e.target.value)} aria-label="Door">
+        <select value={chosen} onChange={(e) => setDoor(e.target.value)} aria-label="Door" title={optionText(chosen)}>
           <optgroup label="Stair doors">
             {stair.map((id) => (
-              <option key={id}>{id}</option>
+              <option key={id} value={id}>{optionText(id)}</option>
             ))}
           </optgroup>
           <optgroup label="Other doors">
             {others.map((id) => (
-              <option key={id}>{id}</option>
+              <option key={id} value={id}>{optionText(id)}</option>
             ))}
           </optgroup>
         </select>

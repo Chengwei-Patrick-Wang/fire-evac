@@ -1,5 +1,6 @@
 import { useApp } from '../store/app'
 import { readFixes } from '../model/fixes'
+import { spotLabel } from '../model/spots'
 import { seedBadge } from '../model/ranges'
 import MeasuredFixes from './MeasuredFixes'
 
@@ -39,7 +40,7 @@ export default function HeadlinePack() {
             return (
               <li key={`${t.kind}-${t.id}-${i}`} className={activeSpot === t.id ? 'on' : ''}>
                 <button className="spot" data-spot={t.id} onClick={() => useApp.getState().goToSpot(t.id, t.floor)}>
-                  <b>#{t.rank ?? i + 1} {t.label ?? t.id}</b> {b && <span className={b.stable ? 'badge ok' : 'badge warn'}>{b.text}</span>}
+                  <b>#{t.rank ?? i + 1} {spotLabel(t)}</b> {b && <span className={b.stable ? 'badge ok' : 'badge warn'}>{b.text}</span>}
                   <div className="dim">{t.why}</div>
                 </button>
               </li>

@@ -140,6 +140,11 @@ const clone = (o) => JSON.parse(JSON.stringify(o))
 {
   const batch = clone(JSON.parse(readFileSync(join(root, 'public/demo/batch.example.json'), 'utf8')))
   batch.id = 'fixes'
+  // Real batches' `why` starts with the spot's label ("Stair SB door: ..."), so lists can name a spot without its id.
+  const spotNames = ['Stair SB door', 'Stair SA door', 'Stair SA door']
+  batch.top.forEach((t, i) => {
+    t.why = `${spotNames[i]}: ${t.why.slice(t.why.indexOf(': ') + 2)}`
+  })
   const n = 12
   batch.fixes = [
     { id: 'widen-DSB2', kind: 'widen', label: 'Widen Stair SB door from 1.00 m to 1.50 m', door: 'DSB2', floor: 'F2', width: 1.5, n, dT90: -12, dT90Min: -20, dT90Max: 1, slower: 1, faster: 10, dTrapped: -0.3, dSmokeSeconds: -300, smokePct: -18, helps: true,
@@ -150,8 +155,14 @@ const clone = (o) => JSON.parse(JSON.stringify(o))
       why: 'Self-closers on stair doors (vs propped open): 90% out 0 s sooner on average and 394 fewer person-seconds in smoke across 12 fires.' },
     { id: 'widen-DSA1', kind: 'widen', label: 'Widen Stair SA door from 1.00 m to 1.50 m', door: 'DSA1', floor: 'F1', width: 1.5, n, dT90: 18, smokePct: -3, dTrapped: 0.5, helps: false,
       why: 'Widen Stair SA door from 1.00 m to 1.50 m: 90% out 18 s later on average across 12 fires; +0.5 trapped per fire.' },
+    // Today's shape (D14): `helps` is "any gain" and there is no `tradeoff`, so the UI judges it from the numbers: a trade-off.
+    { id: 'keepClear-E1', kind: 'keepClear', label: 'Keep Exit Main entrance clear (vs blocked)', derivedFrom: 'whatIf.blockedExit', door: 'E1', floor: 'F1', n: 36, dT90: -58, dSmokeSeconds: -3022, smokePct: -68, dTrapped: 1.3, helps: true,
+      why: 'Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34); +1.3 trapped per fire.' },
+    // D22's shape: `tradeoff` and `costs` are there, and `helps` excludes trade-offs.
+    { id: 'keepClear-E2', kind: 'keepClear', label: 'Keep Exit East stair exit clear (vs blocked)', derivedFrom: 'whatIf.blockedExit', door: 'E2', floor: 'F1', n: 36, dT90: -4, dTrapped: -0.2, smokePct: 37, helps: false, tradeoff: true, costs: ['37% more time in smoke'],
+      why: 'Trade-off: Keep Exit East stair exit clear (vs blocked): 90% out 4 s sooner on average and 0.2 fewer trapped per fire across 36 fires, but 37% more time in smoke.' },
   ]
-  batch.fixesSkipped = [{ id: 'widen-DSA2', reason: 'Door DSA2: the wider opening reaches a third room' }]
+  batch.fixesSkipped = [{ id: 'widen-DSA2', reason: 'Stair SA door: the wider opening reaches a third room' }]
   writeFileSync(join(out, 'fixes.batch.json'), JSON.stringify(batch))
   const real = clone(batch)
   delete real.placeholder
@@ -193,7 +204,9 @@ const clone = (o) => JSON.parse(JSON.stringify(o))
 // headlines: made-up headlines/v0 pack for example-office (UI only), built from the example batch.
 {
   const batch = JSON.parse(readFileSync(join(root, 'public/demo/batch.example.json'), 'utf8'))
-  const fx = JSON.parse(readFileSync(join(out, 'fixes.batch.json'), 'utf8')).fixes.slice(0, 2).map((f) => {
+  const fixed = JSON.parse(readFileSync(join(out, 'fixes.batch.json'), 'utf8'))
+  batch.top = fixed.top // the same weak spots, with whys that start with their labels
+  const fx = fixed.fixes.slice(0, 2).map((f) => {
     const { door, floor, width, ...rest } = f
     return rest
   })
