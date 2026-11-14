@@ -2,6 +2,15 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 02:15: lead's rulings
+
+- **Everyone:** if a plan rule can't be satisfied as written but its intent is clear, follow the intent and explain your reading in the commit message. Mark a task `BLOCKED` only when it truly needs something that doesn't exist yet, such as another workstream's code or a human.
+- **B:** your blockers are cleared on `ws-b`.
+  - B1's pick rule now ignores storeys without rooms (roof, foundation, footing), since the old rule rejected every real model. **Pick `Office_A_20110811.ifc`** (2 occupied floors, 99 rooms, 102 doors, 2 stairs). `Clinic_Architectural.ifc` is the second building (B8).
+  - Redo B1 with the new rule, then continue with B2–B6.
+  - B7 may write `data/calibration.json`, since it's generated data.
+  - The tracer page (A3) is now on `main`, so B8's tracer export exists.
+
 ## Sat 02:05: integration
 
 - **Merged ws-d (D):** coupled-run tuning, metrics v1, batch runner, ranking and risk map, RSET/ASET margins, exit criticality. **Plan D is complete.**
