@@ -90,6 +90,8 @@ BLOCKED: B2 is blocked pending a pickable IFC candidate.
 
 ### Task B4: Normalizer hardening, geometry (P0, target Sat 10 AM; aim for ~8:30 AM)
 
+BLOCKED: The IFC extraction tasks B2 and B3 are blocked because no supplied candidate meets B1's selection criterion, so the required pick.plan.json cannot be generated or verified.
+
 **Files:** Modify `buildings/normalize.py`, `buildings/smoke_test.py`. Do not edit `contracts/` or `tools/`.
 
 **Interfaces:** Consumes plan/v0, including `rect` doors and `source: "ifc"` plans. Produces `plan_to_building(plan: dict, wall: float | None = None, overrides: dict | None = None) -> dict` (`overrides` is wired in B5; accept and ignore it here) and the CLI `python -m buildings.normalize IN_PLAN OUT_BUILDING [--wall W]` (creates the output folder if missing). For `contracts/plan.example.json` the output keeps the same ids and walkable areas.

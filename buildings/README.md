@@ -2,6 +2,15 @@
 
 Run `python -m buildings.inspect_ifc data/raw` to reproduce the inspection below. Paths in `data/raw/` are local downloads and are not committed.
 
+The supplied `Downloads/fire-evac-ifc` bundle also contains two additional NIBS Common BIM Files (ERDC-CERL), copied to `data/raw/team-downloads/`:
+
+| Model | Storeys and spaces | Doors | Stairs | Scale | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| Office_A_20110811.ifc | Level 1: 60; Level 2: 39; Roof: 0 | 102 | 2 | 1 | Not pickable: roof has no spaces |
+| Duplex_A_20110907.ifc | T/FDN: 0; Level 1: 10; Level 2: 10; Roof: 1 | 14 | 2 | 1 | Not pickable: foundation has no spaces |
+
+Both have contiguous occupied storeys, but neither satisfies B1's requirement that every IFC storey have spaces. The bundle's clinic is the same model already inspected below. The recorded full listing below predates these two additional candidates.
+
 No model passes the task's strict rule that every storey have spaces. The tool's closest candidate is:
 
 PICK: data/raw/vtt/ARCH/IFC/ARK_NordicLCA_Office_Concrete_As-Built_Revit.ifc
