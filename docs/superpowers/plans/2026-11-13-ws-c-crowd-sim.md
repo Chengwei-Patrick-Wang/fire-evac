@@ -306,11 +306,17 @@ All three CLI runs evacuated 300/300 with zero remaining/inStairs; no recording 
 
 **Interfaces:** Consumes `data/buildings/office.json`. Produces stair arrivals that never raise: a spot is always at least the agent radius + 0.25 m inside the walkable area and outside any fire keep-out, else the agent waits in the stair FIFO until one frees.
 
-- [ ] **Reproduce** (D's blocker, lead's note Sat 04:20): office, kitchen fire in R106, 250 occupants, seed 2, door `D$77wwb` set to `blocked` (single-quote the id in shell: `$` expands). The run raises at the first stair arrival: agent (0.36, 22.81) within 0.2 m of the geometry boundary.
-- [ ] **Fix:** sample arrival candidates inside the stair polygon buffered inward by (radius + 0.25 m) and intersected with the floor's walkable area minus the keep-out disc (C10). If none is free, keep the agent queued for the next step instead of raising. Log a `stair_wait` count in the metrics if useful (optional field).
-- [ ] **Checks:** a fast test on a tiny two-floor geometry where the lower stair polygon touches a blocked door (no raise, everyone out), plus the office repro behind `--slow` (completes, no RuntimeError).
-- [ ] **Verify:** `python -m sim.smoke_test` (fast) passes, and `python -m sim.smoke_test --slow` runs the office repro to the end.
-- [ ] **Commit** `fix(sim): stair arrivals stay clear of the boundary next to blocked exits`.
+- [x] **Reproduce** (D's blocker, lead's note Sat 04:20): office, kitchen fire in R106, 250 occupants, seed 2, door `D$77wwb` set to `blocked` (single-quote the id in shell: `$` expands). The run raises at the first stair arrival: agent (0.36, 22.81) within 0.2 m of the geometry boundary.
+- [x] **Fix:** sample arrival candidates inside the stair polygon buffered inward by (radius + 0.25 m) and intersected with the floor's walkable area minus the keep-out disc (C10). If none is free, keep the agent queued for the next step instead of raising. Log a `stair_wait` count in the metrics if useful (optional field).
+- [x] **Checks:** a fast test on a tiny two-floor geometry where the lower stair polygon touches a blocked door (no raise, everyone out), plus the office repro behind `--slow` (completes, no RuntimeError).
+- [x] **Verify:** `python -m sim.smoke_test` (fast) passes, and `python -m sim.smoke_test --slow` runs the office repro to the end.
+- [x] **Commit** `fix(sim): stair arrivals stay clear of the boundary next to blocked exits`.
+
+**Reproduction note (C13b):** The specified office R106 kitchen fire, 250 occupants, seed 2 and blocked `D$77wwb` completed on the current post-C14 branch even before this fix (250/250 out; t100 182.59 s), so the historical RuntimeError was not reproduced. The unsafe 0.1 m fallback was still present. The new tiny two-floor regression directly checks the required 0.45 m boundary clearance, forces temporary full-landing retries, and verifies that an undersized landing leaves all eight agents queued instead of relaxing clearance. Arrival regions are cached per floor, stair group and body radius; both the stair polygon and the effective floor geometry are buffered inward, including blocked-door and fire boundaries.
+
+**Verification (C13b):** With `LLM_PROVIDER=off`, the fast suite passed in 10.8 s and the final slow suite passed in 95.4 s. The office blocked-exit regression completed in 6.8 s: 250/250 evacuated, zero trapped/remaining/inStairs, t90 147.71 s, t100 192.21 s, no blocked-exit use. All three 300-person office fire regressions passed. No live LLM calls were made.
+
+**Intent-first exception (lead’s Sat 02:15 ruling):** stricter arrival clearance changes congestion and random trajectories. The full-size lobby keep-out run now has 19 trapped, all outside the flame keep-out, versus 61 in its paired no-keep-out run. The old absolute cap of 15 failed; the slow check now uses the fast check’s existing requirement that keep-out at least halve trapping, retaining geometric and flame-entry assertions. This is a disclosed outcome change, not a claim that the historical count is preserved. Handoff for D: the R106/blocked-`D$77wwb` case completes and D15 can rerun; precomputed runs may change with the safer arrival positions. Only `sim/` and this plan changed.
 
 ### Task C14 (P1 · Sat 7 AM): Exit choice weighs smoke on the route and exits a visitor doesn't know
 

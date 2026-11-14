@@ -482,6 +482,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     trapped: set[int] = set()
     transit = {}
     arrivals = {}
+    arrival_regions = {}
     assisted = set()
 
     def zone_queues(t):
@@ -675,12 +676,15 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     heappop(queue)
                     enter_stair(i, t, fs, st)
                     continue
-                arrival = entry["arrival"]
-                if not arrival.within(fs.walk):
-                    arrival = arrival.intersection(fs.walk)
-                region = arrival.buffer(-0.3)
-                if region.is_empty:
-                    region = arrival.buffer(-0.1)
+                # Both the stair edge and the actual floor boundary need body
+                # clearance. fs.walk already excludes blocked doors and fire.
+                # Never relax clearance for a narrow/empty landing: retry FIFO.
+                key = (fid, group, agents[i]["radius"])
+                if key not in arrival_regions:
+                    clearance = agents[i]["radius"] + 0.25
+                    arrival_regions[key] = entry["arrival"].buffer(-clearance).intersection(
+                        fs.walk.buffer(-clearance))
+                region = arrival_regions[key]
                 positions = [ag.position for ag in fs.sim.agents()]
                 gap = max(MIN_SPACING, agents[i]["radius"] +
                           max((agents[fs.jid2idx[ag.id]]["radius"] for ag in fs.sim.agents()
