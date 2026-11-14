@@ -149,3 +149,55 @@ select { background: var(--line); color: inherit; border: 1px solid var(--line-s
 .whatif-headline .main { font-size: 16px; font-weight: 700; margin: 4px 0; }
 .whatif-headline ul { margin: 6px 0; padding-left: 18px; }
 .whatif-headline .dim { opacity: 0.7; font-size: var(--fs-sm); }
+
+.sharecard { position: fixed; top: 44px; right: 12px; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; width: 260px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 16px #0008; }
+.sharecard h3 { margin: 0; }
+.sharecard .sharex { position: absolute; top: 4px; right: 6px; background: none; border: none; color: inherit; cursor: pointer; font-size: 18px; }
+.sharecard .qrtile { background: #fff; padding: 8px; border-radius: var(--radius); line-height: 0; align-self: center; }
+.sharecard input { width: 100%; box-sizing: border-box; font-size: 11px; }
+.sharecard p { margin: 0; font-size: 12px; }
+
+/* Printable report */
+.printreport { position: fixed; inset: 0; z-index: 110; overflow: auto; background: #64748b; color: #111; }
+.printreport .bar { position: sticky; top: 0; display: flex; gap: 8px; padding: 8px 12px; background: #0f172a; }
+.printreport .page { background: #fff; color: #111; width: 8.5in; max-width: 100%; margin: 16px auto; padding: 0.6in; box-sizing: border-box; box-shadow: 0 2px 12px #0006; }
+.printreport .page h1 { font-size: 22px; margin: 0 0 4px; }
+.printreport .page h2 { font-size: 16px; margin: 18px 0 6px; border-bottom: 1px solid #cbd5e1; }
+.printreport .page h4 { color: #111; }
+.printreport .page .dim, .printreport .page .dim * { color: #475569; }
+.printreport table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.printreport th, .printreport td { border: 1px solid #cbd5e1; padding: 3px 6px; text-align: left; vertical-align: top; }
+.printreport figure { margin: 8px 0; text-align: center; }
+.printreport figure svg { max-height: 9cm; max-width: 100%; }
+.printreport figcaption { font-size: 12px; color: #475569; }
+@media print { @page { size: letter; margin: 12mm } }
+body.printing #root { display: none; }
+body.printing, html:has(body.printing) { background: #fff; }
+body.printing .printreport { position: static; background: none; overflow: visible; }
+body.printing .printreport .page { margin: 0; padding: 0; box-shadow: none; max-width: none; width: auto; }
+body.printing .noprint { display: none; }
+body.printing section, body.printing figure, body.printing tr { break-inside: avoid; }
+body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+
+/* Accessibility */
+.brand { margin: 0; font-size: var(--fs-md); font-weight: 700; white-space: nowrap; }
+.file input { display: block; position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.file { position: relative; }
+.skip { position: absolute; left: 8px; top: 8px; z-index: 200; transform: translateY(-200%); }
+.skip:focus { transform: none; }
+.displaypanel { position: fixed; top: 44px; right: 12px; z-index: 60; display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 10px 12px; font-size: var(--fs-sm); }
+a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--warn); outline-offset: 1px; }
+.spots li button.spot { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+:root[data-motion="reduce"] .tourbar { animation: none; width: 100%; }
+:root[data-motion="reduce"] .spinner { animation-duration: 3s; }
+:root[data-contrast="high"] button, :root[data-contrast="high"] select, :root[data-contrast="high"] input { border: 2px solid #fff; }
+:root[data-contrast="high"] button:focus-visible, :root[data-contrast="high"] select:focus-visible, :root[data-contrast="high"] input:focus-visible, :root[data-contrast="high"] .file:focus-within { outline: 3px solid #ffd400; outline-offset: 2px; }
+:root[data-contrast="high"] a { text-decoration: underline; color: #fff; }
+:root[data-contrast="high"] .about-card a { color: #fff; }
+:root[data-contrast="high"] .badge { background: #000; border: 1px solid #fff; color: #fff; }
+:root[data-contrast="high"] .toolbar3d, :root[data-contrast="high"] .agentlegend, :root[data-contrast="high"] .tourcap,
+:root[data-contrast="high"] .banner, :root[data-contrast="high"] .pane-caption, :root[data-contrast="high"] .agentreadout { background: #000; border: 2px solid #fff; color: #fff; }
+:root[data-contrast="high"] .about-card, :root[data-contrast="high"] .sharecard, :root[data-contrast="high"] .displaypanel { background: #000; border: 2px solid #fff; }
+.aboutbtns button:first-child, .topbar .demo, .toggles button.on { color: #fff; }
+.results .stats th[scope=row] { text-align: left; font-weight: 400; padding: 2px 8px 2px 0; }
+.results .stats th[scope=col] { text-align: left; font-weight: 400; font-size: 11px; }

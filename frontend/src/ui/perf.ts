@@ -1,4 +1,5 @@
-// Frame-rate probe: `await __fps(10)` in the console (dev build or ?perf).
+// Frame-rate probe: `await __fps(10)` in the console (dev build, ?perf or ?qa).
+// `__perf()` returns the last frame's draw calls, triangles, drei <Html> labels and the GL renderer string.
 export function measureFps(seconds = 5): Promise<{ avg: number; low1: number }> {
   return new Promise((resolve) => {
     const dts: number[] = []
@@ -21,5 +22,36 @@ export function measureFps(seconds = 5): Promise<{ avg: number; low1: number }> 
 }
 
 export const perfOn = () => import.meta.env.DEV || new URLSearchParams(location.search).has('perf')
+const qaOn = () => new URLSearchParams(location.search).has('qa')
 
-if (typeof window !== 'undefined' && perfOn()) (window as unknown as { __fps: typeof measureFps }).__fps = measureFps
+export const perfStats = { calls: 0, triangles: 0 }
+
+let rendererName: string | null = null
+function readRenderer(): string {
+  if (rendererName !== null) return rendererName
+  try {
+    const gl = document.querySelector('main.center canvas') as HTMLCanvasElement | null
+    const ctx = (gl?.getContext('webgl2') ?? gl?.getContext('webgl')) as WebGLRenderingContext | null
+    if (!ctx) return 'unknown'
+    const ext = ctx.getExtension('WEBGL_debug_renderer_info')
+    rendererName = String(ctx.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : ctx.RENDERER))
+  } catch {
+    rendererName = 'unknown'
+  }
+  return rendererName
+}
+
+export function perfReport() {
+  let html = 0
+  document.querySelectorAll('main.center canvas').forEach((c) => {
+    const p = c.parentElement
+    if (p) html += Math.max(0, p.childElementCount - 1)
+  })
+  return { calls: perfStats.calls, triangles: perfStats.triangles, html, renderer: readRenderer() }
+}
+
+if (typeof window !== 'undefined' && (perfOn() || qaOn())) {
+  const w = window as unknown as { __fps: typeof measureFps; __perf: typeof perfReport }
+  w.__fps = measureFps
+  w.__perf = perfReport
+}

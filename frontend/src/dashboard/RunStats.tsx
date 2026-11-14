@@ -22,7 +22,7 @@ export default function RunStats() {
       <tbody>
         {rows.map(([k, v]) => (
           <tr key={k}>
-            <td className="dim">{k}</td>
+            <th scope="row" className="dim">{k}</th>
             <td>{v}</td>
           </tr>
         ))}

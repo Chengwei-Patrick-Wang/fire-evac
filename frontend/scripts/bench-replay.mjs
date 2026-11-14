@@ -1,4 +1,4 @@
-// Replay CPU benchmark on the stress fixtures (run `node scripts/make-stress.mjs` first).
+// Replay CPU benchmark on the stress fixtures (run `node scripts/make-stress.mjs${CL ? ' --clinic' : ''}` first).
 // Steps a 10x replay at 60 ticks/s: sampleAgent for every agent per tick, plus queueCounts when the frame changes.
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -13,12 +13,14 @@ try {
   console.log('bench skipped: needs Node 22.18+')
   process.exit(0)
 }
+const CL = process.argv.includes('--clinic')
+const NAME = CL ? 'clinic' : 'stress'
 let building, run
 try {
-  building = JSON.parse(readFileSync(join(root, '.fixtures/stress.building.json'), 'utf8'))
-  run = JSON.parse(readFileSync(join(root, '.fixtures/stress.run.json'), 'utf8'))
+  building = JSON.parse(readFileSync(join(root, `.fixtures/${NAME}.building.json`), 'utf8'))
+  run = JSON.parse(readFileSync(join(root, `.fixtures/${NAME}.run.json`), 'utf8'))
 } catch {
-  console.log('bench skipped: run `node scripts/make-stress.mjs` first')
+  console.log(`bench skipped: run make-stress.mjs${CL ? ' --clinic' : ''} first`)
   process.exit(0)
 }
 
@@ -48,5 +50,5 @@ for (let k = 0; k < ticks; k++) {
   if (d > max) max = d
 }
 console.log(
-  `index ${indexMs.toFixed(0)} ms; per tick avg ${(sum / Math.max(1, ticks)).toFixed(3)} ms, max ${max.toFixed(3)} ms (budget 33 ms for 30 FPS)`,
+  `${CL ? 'clinic: ' : ''}index ${indexMs.toFixed(0)} ms; per tick avg ${(sum / Math.max(1, ticks)).toFixed(3)} ms, max ${max.toFixed(3)} ms (budget 33 ms for 30 FPS)`,
 )

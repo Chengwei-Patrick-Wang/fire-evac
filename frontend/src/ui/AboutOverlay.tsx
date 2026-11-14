@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { useDialogFocus } from './a11y'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
 import { useTour } from '../tour/tour'
+import { phoneReachable, shareUrl } from '../model/link'
 
-const SITE_URL = (import.meta.env.VITE_SITE_URL as string | undefined) ?? ''
 
 export function markAboutSeen() {
   try {
@@ -16,6 +17,7 @@ export function markAboutSeen() {
 export function shouldAutoOpenAbout(): boolean {
   const p = new URLSearchParams(location.search)
   if (p.has('demo') || p.has('sample')) return false
+  if (new URLSearchParams(location.hash.replace(/^#/, '')).has('b')) return false
   try {
     return !localStorage.getItem('fes.aboutSeen')
   } catch {
@@ -26,6 +28,9 @@ export function shouldAutoOpenAbout(): boolean {
 export default function AboutOverlay() {
   const about = useApp((s) => s.about)
   const credits = useApp((s) => s.building?.credits)
+
+  const cardRef = useRef<HTMLDivElement>(null)
+  useDialogFocus(cardRef, about)
 
   const close = () => {
     markAboutSeen()
@@ -44,10 +49,11 @@ export default function AboutOverlay() {
   }, [about])
 
   if (!about) return null
+  const url = phoneReachable() ? shareUrl() : null
   const extra = credits && !/synthetic/i.test(credits) ? credits : null
   return (
     <div className="about-backdrop" role="dialog" aria-modal="true" aria-label="About" onClick={close}>
-      <div className="about-card" onClick={(e) => e.stopPropagation()}>
+      <div className="about-card" ref={cardRef} onClick={(e) => e.stopPropagation()}>
         <h2>Fire evacuation sim</h2>
         <p className="pitch">Give us a building, and we'll show where people get stuck before a fire does.</p>
         <h3>How it works</h3>
@@ -67,15 +73,15 @@ export default function AboutOverlay() {
           {extra && <li>{extra}</li>}
           <li>Libraries: JuPedSim, three.js, React Three Fiber, Recharts</li>
         </ul>
-        <p className="dim">Shortcuts: Space play/pause, W baseline ↔ what-if, 1–6 demo scenes, Esc stops the demo.</p>
-        {SITE_URL && (
+        <p className="dim">Shortcuts: Space play/pause, ←/→ scrub 5 s, Home/End, W baseline ↔ what-if, 1–6 demo scenes, Esc stops the demo.</p>
+        {url && (
           <div className="qr">
             <div className="qrtile">
-              <QRCodeSVG value={SITE_URL} size={160} level="M" />
+              <QRCodeSVG value={url} size={160} level="M" />
             </div>
             <div>
               <div>Scan to scrub the replay on your phone</div>
-              <a href={SITE_URL}>{SITE_URL}</a>
+              <a href={url}>{url}</a>
             </div>
           </div>
         )}
@@ -88,7 +94,7 @@ export default function AboutOverlay() {
           >
             Play the 3-minute demo
           </button>
-          <button onClick={close}>Close</button>
+          <button data-close onClick={close}>Close</button>
         </div>
       </div>
     </div>

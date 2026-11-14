@@ -78,6 +78,12 @@ interface AppState {
   batchRunning: string | null
   batchError: string | null
   fromTracer: string | null
+  pendingCam: number[] | null
+  report: { key: string; md: string } | null
+  printView: boolean
+  setPrintView: (b: boolean) => void
+  share: boolean
+  setShare: (b: boolean) => void
   about: boolean
   setAbout: (b: boolean) => void
   resultsTab: ResultsTab
@@ -142,6 +148,12 @@ export const useApp = create<AppState>((set) => ({
   focus: null,
   batchRunning: null,
   batchError: null,
+  pendingCam: null,
+  report: null,
+  printView: false,
+  setPrintView: (printView) => set({ printView }),
+  share: false,
+  setShare: (share) => set({ share }),
   about: false,
   setAbout: (about) => set({ about }),
   resultsTab: 'results',

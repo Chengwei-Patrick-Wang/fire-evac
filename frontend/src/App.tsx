@@ -11,13 +11,19 @@ import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import Scrubber from './ui/Scrubber'
+import ReplaySummary from './ui/ReplaySummary'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
 import AgentLegend from './ui/AgentLegend'
 import ErrorBoundary from './ui/ErrorBoundary'
 import NewBuildingCard from './ui/NewBuildingCard'
 import TourCaption from './tour/TourCaption'
 import { useTour, useTourKeys } from './tour/tour'
-import { makeDraft } from './model/scenarioDraft'
+import ShareCard from './ui/ShareCard'
+import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
+import { findPrecomputedVariant } from './model/whatif'
+import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
+import type { LinkState } from './model/link'
+import type { DemoRun, DoorState } from './data/types'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
@@ -32,9 +38,10 @@ import {
 } from './data/loader'
 
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
-  Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour })
+  Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour, __pose: cameraPose })
 
 const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
+const PrintReport = lazy(() => import('./ui/PrintReport'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
 
 function msg(e: unknown) {
@@ -65,6 +72,70 @@ async function selectBuilding(id: string) {
   }
 }
 
+async function ensureRun(entry: DemoRun, whatIf?: { baselineKey: string; door: string; state: DoorState }) {
+  const st = useApp.getState()
+  if (st.runs[entry.id]) {
+    if (st.activeRunKey !== entry.id) st.switchRun(entry.id)
+    return
+  }
+  const run = await loadDemoRun(entry)
+  useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
+}
+
+export async function restoreLink(link: LinkState) {
+  try {
+    const st0 = useApp.getState()
+    if (!st0.building || st0.building.id !== link.b) return
+    const entries = await listDemoRuns(link.b)
+    const entry = link.r ? entries.find((e) => e.id === link.r) : undefined
+    if (entry) {
+      if (st0.activeRunKey !== entry.id || !st0.runs[entry.id]) {
+        if (entry.whatIf === null) await ensureRun(entry)
+        else {
+          const base = entries.find((e) => e.buildingId === entry.buildingId && e.fire.room === entry.fire.room && e.whatIf === null)
+          if (base) {
+            await ensureRun(base)
+            const hit = findPrecomputedVariant([entry], { buildingId: link.b, doors: base.doors ?? {} })
+            await ensureRun(entry, { baselineKey: base.id, door: hit?.door ?? '?', state: hit?.state ?? 'propped' })
+          } else await ensureRun(entry)
+        }
+      }
+    } else if (link.ff !== undefined && link.fx !== undefined && link.fy !== undefined) {
+      const hit = nearestPrecomputedRun(entries, { floor: link.ff, x: link.fx, y: link.fy })
+      if (hit) {
+        await ensureRun(hit.entry)
+        useApp.getState().setNotice(`Showing the nearest precomputed run (fire in ${hit.entry.fire.room})`)
+      }
+    } else if (link.r) {
+      const s = useApp.getState()
+      s.setNotice(`Run ${link.r} isn't precomputed here; showing ${s.activeRunKey ? s.runs[s.activeRunKey]?.label : 'the first run'}.`)
+    }
+    const patch: Partial<ReturnType<typeof useApp.getState>> = {}
+    const cur = useApp.getState()
+    if (link.tab) patch.resultsTab = link.tab
+    if (link.m) patch.riskMetric = link.m
+    if (link.l) {
+      const l = { ...cur.layers }
+      for (const k of Object.keys(l) as (keyof typeof l)[]) l[k] = link.l.includes(k)
+      patch.layers = l
+    }
+    if (link.x !== undefined) patch.explode = link.x
+    if (link.f && cur.building?.floors.some((f) => f.id === link.f)) patch.visibleFloors = [link.f]
+    if (link.split !== undefined) patch.split = link.split
+    useApp.setState(patch)
+    if (link.t !== undefined) {
+      useClock.getState().seek(link.t)
+      useClock.setState({ playing: false })
+    }
+  } catch (e) {
+    useApp.getState().setNotice(msg(e))
+  } finally {
+    linkCtl.restoring = false
+  }
+}
+
+let startLink: LinkState | null = null
+
 async function startup() {
   const app = useApp.getState()
   app.setLoading('Starting…')
@@ -76,6 +147,13 @@ async function startup() {
       await selectBuilding(SAMPLE_BUILDING.id)
       return
     }
+    let link: LinkState | null = null
+    if (!params.has('demo')) {
+      await loadIndexIds()
+      link = decodeLink(location.hash)
+      if (link) linkCtl.restoring = true
+    }
+    startLink = link
     let list = await listBuildings().catch((e) => {
       useApp.getState().setNotice(msg(e))
       return []
@@ -83,13 +161,25 @@ async function startup() {
     if (list.length === 0) list = [{ id: SAMPLE_BUILDING.id, name: SAMPLE_BUILDING.name }]
     useApp.getState().setBuildings(list)
     const want = params.get('building')
-    const id = list.find((b) => b.id === want)?.id ?? list[0].id
+    const linked = link ? list.find((b) => b.id === link.b) : undefined
+    const id = linked?.id ?? list.find((b) => b.id === want)?.id ?? list[0].id
     if (id === SAMPLE_BUILDING.id) {
       useApp.getState().setBuilding(SAMPLE_BUILDING)
       useApp.getState().setDraft(makeDraft(SAMPLE_BUILDING))
       useApp.getState().setLoading(null)
-    } else await selectBuilding(id)
+    } else {
+      if (linked && link?.cam) useApp.setState({ pendingCam: link.cam })
+      await selectBuilding(id)
+    }
+    if (link) {
+      if (linked) await restoreLink(link)
+      else {
+        const b = useApp.getState().building
+        useApp.getState().setNotice(`This link's building ${link.b} isn't on this site; showing ${b?.name ?? id}.`)
+      }
+    }
   } finally {
+    linkCtl.restoring = false
     useApp.getState().setLoading(null)
   }
 }
@@ -159,7 +249,7 @@ function Credits() {
 }
 
 export default function App() {
-  const { view, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
+  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
@@ -188,6 +278,28 @@ export default function App() {
   }, [])
 
   useTourKeys()
+  useLinkSync()
+  useEffect(() => {
+    const on = async () => {
+      const link = decodeLink(location.hash)
+      const st = useApp.getState()
+      if (!link || linkCtl.restoring || st.loading || st.view !== 'replay') return
+      linkCtl.restoring = true
+      try {
+        if (st.building?.id !== link.b) {
+          if (!st.buildings.some((b) => b.id === link.b)) return
+          if (link.cam) useApp.setState({ pendingCam: link.cam })
+          await selectBuilding(link.b)
+        } else if (link.cam) useApp.setState({ pendingCam: link.cam })
+        await restoreLink(link)
+      } finally {
+        linkCtl.restoring = false
+      }
+    }
+    const h = () => void on()
+    window.addEventListener('hashchange', h)
+    return () => window.removeEventListener('hashchange', h)
+  }, [])
   useEffect(() => {
     if (view === 'tracer') useClock.setState({ playing: false })
   }, [view])
@@ -195,6 +307,7 @@ export default function App() {
     void startup().then(() => {
       if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
       else if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
+      if (startLink && startLink.tab && startLink.tab !== 'results' && window.matchMedia('(max-width: 900px)').matches) setOpenPanel('right')
     })
   }, [])
 
@@ -213,6 +326,7 @@ export default function App() {
 
   return (
     <div className="app" key="replay">
+      <button className="skip" onClick={() => document.getElementById('play')?.focus()}>Skip to replay controls</button>
       <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
       <aside className={'left' + (phone && openPanel !== 'left' ? ' collapsed' : '')}>
         <h3>Scenario</h3>
@@ -248,6 +362,7 @@ export default function App() {
             <AgentReadout />
             <NewBuildingCard />
             <TourCaption />
+            <ReplaySummary />
           </>
       </main>
       <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>
@@ -260,6 +375,12 @@ export default function App() {
       <footer className="bottom"><Scrubber /></footer>
       <ClockDriver />
       <AboutOverlay />
+      <ShareCard />
+      {printView && (
+        <Suspense fallback={null}>
+          <PrintReport />
+        </Suspense>
+      )}
       <Credits />
 
     </div>

@@ -43,9 +43,12 @@ export default function ExitBars() {
   if (!lr) return <div className="empty"><b>Load a run</b><span>Exit use appears once a run is loaded.</span></div>
   if (!data.any) return <div className="empty"><b>No exits used</b><span>No one reached an exit in this run.</span></div>
   return (
-    <div style={{ width: '100%', height: 200 }}>
+    <div role="img" aria-label="Exit use" aria-describedby="exit-summary" style={{ width: '100%', height: 200 }}>
+      <p id="exit-summary" className="sr-only">
+        {'Exit use: ' + data.rows.map((r) => `${r.id} ${Object.entries(r).reduce((a, [k, v]) => (k === 'id' ? a : a + (v as number)), 0)} people`).join(', ') + '.'}
+      </p>
       <ResponsiveContainer>
-        <BarChart data={data.rows} margin={{ top: 8, right: 12, bottom: 4, left: -20 }}>
+        <BarChart accessibilityLayer={false} data={data.rows} margin={{ top: 8, right: 12, bottom: 4, left: -20 }}>
           <CartesianGrid stroke="#1e293b" />
           <XAxis dataKey="id" stroke="#94a3b8" fontSize={11} />
           <YAxis allowDecimals={false} stroke="#94a3b8" fontSize={11} />

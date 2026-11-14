@@ -71,9 +71,11 @@ export default function WeakSpots() {
           {batch.top.length === 0 && <p className="dim">No weak spots listed.</p>}
           <ol className="spots">
             {batch.top.map((t, i) => (
-              <li key={t.kind + t.id + i} className={activeSpot === t.id ? 'on' : ''} onClick={() => go(t.id, t.floor)}>
-                <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{t.id}</b> · {t.floor} · score {t.score.toFixed(1)}
-                <div className="dim">{t.why}</div>
+              <li key={t.kind + t.id + i} className={activeSpot === t.id ? 'on' : ''}>
+                <button className="spot" onClick={() => go(t.id, t.floor)}>
+                  <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{t.id}</b> · {t.floor} · score {t.score.toFixed(1)}
+                  <div className="dim">{t.why}</div>
+                </button>
               </li>
             ))}
           </ol>
