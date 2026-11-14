@@ -43,17 +43,21 @@
 
 ### Task B1: Download IFC candidates, inspect, pick the model (P0, target Sat 2 AM)
 
+Overnight note: no candidate meets the strict pickability rule; the README records the closest candidate and traced-building fallback. Team chat was not available in this run.
+
 **Files:** Create `buildings/inspect_ifc.py`, `buildings/README.md`. Downloads go to `data/raw/<name>/` (gitignored).
 
 **Interfaces:** Consumes nothing from the scaffold. Produces `python -m buildings.inspect_ifc PATH...` (each PATH is an `.ifc` file or a folder searched recursively); its last line is `PICK: <path>`. `buildings/README.md` records the counts table, the pick, its unit scale and its credits text.
 
-- [ ] Download each archive into its own new empty folder and unzip it there with `python -m zipfile -e ZIP DIR` (never run anything from those folders). VTT example BIM files (CC BY-SA 4.0), page https://cris.vtt.fi/en/publications/bim-files-to-download/: `curl -L -o data/raw/vtt/ARCH.zip https://www.nordicsustainableconstruction.com/Media/638593249820446520/ARCH.zip` (the page's link on Fri night; if it fails, take the link from the page; ARCH holds the architecture models of the residential and the three-floor office building; skip STRUCTURAL and HVAC). NIBS Common BIM Files, https://wbdg.org/node/9165 (clinic and office IFC zips such as `2011-09-14-Clinic-IFC.zip`, also linked from https://www.wbdg.org/node/23884): both pages load by JavaScript, so a person downloads them in a browser into `data/raw/nibs-clinic/` and `data/raw/nibs-office/`; with no browser, continue with VTT only and say so in the README.
-- [ ] Write `buildings/inspect_ifc.py`. Per file print the schema and `ifcopenshell.util.unit.calculate_unit_scale(model)`, then one row per `IfcBuildingStorey` sorted by `Elevation * scale`: name, elevation in m, counts of IfcSpace, IfcDoor, IfcStair, IfcStairFlight. Storey of an element: `ifcopenshell.util.element.get_container(e)`, else `get_aggregate(e)`, repeated up to 5 times. Verdict `PICKABLE` when every storey has at least one IfcSpace and the model has at least 2 IfcStair (or, with none, at least 2 IfcStairFlight). Last line `PICK: <path>`: the pickable file with the most storeys, then the most spaces; if none is pickable, the closest one plus a line saying what is missing.
-- [ ] Run it on `data/raw`. If nothing is pickable, also try 1–2 models from the Open IFC Model Repository (spec §13: next candidate, else the traced building: then tell A, skip B2 and B3, and let B4, B5 and B8 carry the real building). Write `buildings/README.md` with the counts table, `PICK: data/raw/...`, the unit scale, the runner-up and the pick's credits text (NIBS files: free download, made by the US Army ERDC/CERL, no license found, credit them; VTT: CC BY-SA 4.0, credit VTT and share the derived plan under the same license). Post the pick and counts in team chat.
-- [ ] **Verify:** `python -m buildings.inspect_ifc data/raw` prints a table per model and ends with `PICK: <path>`; the README shows the same path.
-- [ ] **Commit** `feat(buildings): inspect_ifc and IFC pick`, then push `ws-b`.
+- [x] Download each archive into its own new empty folder and unzip it there with `python -m zipfile -e ZIP DIR` (never run anything from those folders). VTT example BIM files (CC BY-SA 4.0), page https://cris.vtt.fi/en/publications/bim-files-to-download/: `curl -L -o data/raw/vtt/ARCH.zip https://www.nordicsustainableconstruction.com/Media/638593249820446520/ARCH.zip` (the page's link on Fri night; if it fails, take the link from the page; ARCH holds the architecture models of the residential and the three-floor office building; skip STRUCTURAL and HVAC). NIBS Common BIM Files, https://wbdg.org/node/9165 (clinic and office IFC zips such as `2011-09-14-Clinic-IFC.zip`, also linked from https://www.wbdg.org/node/23884): both pages load by JavaScript, so a person downloads them in a browser into `data/raw/nibs-clinic/` and `data/raw/nibs-office/`; with no browser, continue with VTT only and say so in the README.
+- [x] Write `buildings/inspect_ifc.py`. Per file print the schema and `ifcopenshell.util.unit.calculate_unit_scale(model)`, then one row per `IfcBuildingStorey` sorted by `Elevation * scale`: name, elevation in m, counts of IfcSpace, IfcDoor, IfcStair, IfcStairFlight. Storey of an element: `ifcopenshell.util.element.get_container(e)`, else `get_aggregate(e)`, repeated up to 5 times. Verdict `PICKABLE` when every storey has at least one IfcSpace and the model has at least 2 IfcStair (or, with none, at least 2 IfcStairFlight). Last line `PICK: <path>`: the pickable file with the most storeys, then the most spaces; if none is pickable, the closest one plus a line saying what is missing.
+- [x] Run it on `data/raw`. If nothing is pickable, also try 1–2 models from the Open IFC Model Repository (spec §13: next candidate, else the traced building: then tell A, skip B2 and B3, and let B4, B5 and B8 carry the real building). Write `buildings/README.md` with the counts table, `PICK: data/raw/...`, the unit scale, the runner-up and the pick's credits text (NIBS files: free download, made by the US Army ERDC/CERL, no license found, credit them; VTT: CC BY-SA 4.0, credit VTT and share the derived plan under the same license). Post the pick and counts in team chat.
+- [x] **Verify:** `python -m buildings.inspect_ifc data/raw` prints a table per model and ends with `PICK: <path>`; the README shows the same path.
+- [x] **Commit** `feat(buildings): inspect_ifc and IFC pick`, then push `ws-b`.
 
 ### Task B2: IFC extraction I, storeys and room footprints (P0, target Sat 10 AM; aim for ~4 AM)
+
+BLOCKED: No IFC candidate meets B1's pickability criterion; the closest has an empty storey between occupied storeys. Use the traced-building fallback until a suitable IFC is available.
 
 **Files:** Create `buildings/ifc.py`; modify `buildings/smoke_test.py`.
 
@@ -70,6 +74,8 @@ IFC facts (verified on IfcOpenShell 0.9.0.post1 with a millimetre model): `scale
 - [ ] **Commit** `feat(buildings): IFC storeys and rooms`; push.
 
 ### Task B3: IFC extraction II, doors, stair rooms and groups (P0, target Sat 10 AM; aim for ~7 AM)
+
+BLOCKED: B2 is blocked pending a pickable IFC candidate.
 
 **Files:** Modify `buildings/ifc.py`, `buildings/smoke_test.py`.
 
