@@ -16,7 +16,9 @@ Behavior:
   cue delay; the first cue wins and the alarm can still start people sooner.
   scenario.premovement overrides profile delay ranges by room type.
 - People keep 2.5 m from the burning item where room geometry permits;
-  smaller keep-out areas preserve connected escape routes.
+  smaller discs or sealed empty rooms preserve connected escape routes. Fallback
+  discs may be smaller than the flame footprint; nearby people remain subject
+  to untenable trapping.
 - A burning stairwell is not an escape route; its doors close to route choice.
 - Every 1 s: fire.step(t), smoke slows agents; traps record "untenable"
   or "no route" when every escape option has closed.
@@ -58,6 +60,7 @@ MIN_SPACING = 0.5      # spawn points at least this far apart
 STOPPED = 0.0          # desired_speed before the start delay is over (1.4.2 accepts 0)
 MIN_SMOKE_SPEED = 0.2
 FIRE_KEEPOUT_M = 2.5
+KEEPOUT_SMALL_M = (0.75, 0.5)
 
 
 def _warn(msg: str) -> None:
@@ -102,8 +105,13 @@ def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
     return keepout_cut(walk, floor, room, x, y, radius)[0]
 
 
-def keepout_cut(walk, floor, room, x, y, radius):
-    """Cut a room-clipped fire disc, retaining connected exits and stair zones."""
+def keepout_cut(walk, floor, room, x, y, radius, small=KEEPOUT_SMALL_M, seal=True):
+    """Preserve existing cuts, then try small discs or seal an empty room.
+
+    Retain connected exits, stairs and body-width routes. Return infinity for
+    sealing, zero with a reasoned warning if no safe cut exists. Small discs
+    can undercut the flame footprint; fire.untenable still traps nearby people.
+    """
     if not math.isfinite(radius) or radius < 0:
         raise ValueError("fireKeepout must be finite and nonnegative")
     if radius == 0:
@@ -117,35 +125,49 @@ def keepout_cut(walk, floor, room, x, y, radius):
     room_area = walk.intersection(room_poly).area
     zones = [Polygon(z["polygon"]) for z in floor["exits"] + floor["stairs"]]
     attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
-    # Never enlarge an explicitly smaller user-supplied distance on fallback.
-    radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
-    fallback = None
-    for candidate in radii:
-        removed = point.buffer(candidate).intersection(room_poly).intersection(walk)
+    def connected_cut(removed):
         cut = walk.difference(removed)
         pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
         pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
                         key=lambda p: p.area, reverse=True)
         if not pieces or any(p.area > 0.5 for p in pieces[1:]):
-            continue
+            return None, "sealing splits the walkable area"
         retained = pieces[0]
-        if retained.intersection(room_poly).area < room_area / 4:
-            continue
         if any(z.distance(retained) > 0.1 for z in attached):
-            continue
+            return None, "sealing detaches an exit or stair"
         if body_pieces(retained) > original_pieces:
-            continue
-        if fallback is None:
-            fallback = (retained, candidate)
-        # JuPedSim can route into a positive gap narrower than a body.
-        # Prefer a smaller disc, but retain the original cut if all have slots.
-        gap = removed.distance(walk.boundary)
-        if 0.01 < gap < 0.3:
-            continue
-        return retained, candidate
-    if fallback is not None:
-        return fallback
-    _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
+            return None, "sealing leaves a piece narrower than a body"
+        return retained, None
+
+    # Finish the original radii, including their slot fallback, before trying
+    # smaller discs. Never enlarge an explicitly smaller user-supplied radius.
+    radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
+    for candidates in (radii, [r for r in small if 0.5 <= r < radius]):
+        fallback = None
+        for candidate in candidates:
+            removed = point.buffer(candidate).intersection(room_poly).intersection(walk)
+            retained, _ = connected_cut(removed)
+            if retained is None or retained.intersection(room_poly).area < room_area / 4:
+                continue
+            if fallback is None:
+                fallback = (retained, candidate)
+            # JuPedSim can route into a positive gap narrower than a body.
+            gap = removed.distance(walk.boundary)
+            if 0.01 < gap < 0.3:
+                continue
+            return retained, candidate
+        if fallback is not None:
+            return fallback
+    if not seal:
+        reason = "the scenario places people there"
+    elif origin.get("type") not in NO_OCCUPANTS:
+        reason = "occupied room"
+    else:
+        retained, reason = connected_cut(room_poly.intersection(walk))
+        if retained is not None:
+            return retained, math.inf
+    _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out disc and the room "
+          f"cannot be sealed ({reason}); keeping walkable area")
     return walk, 0.0
 
 
@@ -442,9 +464,12 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     if radius and ignition and fire.hrr(float(scenario.get("maxTime", 600))) > 0:
         for floor in building["floors"]:
             if floor["id"] == ignition.get("floor"):
-                walkable[floor["id"]] = fire_keepout(
+                origin = fire_room(floor, ignition.get("room"), ignition["x"], ignition["y"])
+                per_room = scenario.get("occupants", {}).get("perRoom", {})
+                seal = origin is None or per_room.get(origin["id"], 0) <= 0
+                walkable[floor["id"]] = keepout_cut(
                     walkable[floor["id"]], floor, ignition.get("room"),
-                    ignition["x"], ignition["y"], radius)
+                    ignition["x"], ignition["y"], radius, seal=seal)[0]
     burning_doors = set()
     burning_groups = set()
     closed_groups = set()

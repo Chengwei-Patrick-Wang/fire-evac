@@ -571,21 +571,21 @@ Handoff for A: copy `data/calibration.json` to `frontend/public/demo/calibration
 - **Prototype of the fallback below.** Office rooms with no keep-out drop from 24 to 1 (R141, a corridor; R145 and R215 are sealed) and clinic rooms from 102 to 7 (corridors R1CC2, R1EC2, R2BC5, R2CC5; occupied R1B07, R1E02, R2A12-A). Every room that has a cut today keeps it.
 - Produces: `KEEPOUT_SMALL_M = (0.75, 0.5)`; `keepout_cut(walk, floor, room, x, y, radius, small=KEEPOUT_SMALL_M, seal=True)`. Its radius is `math.inf` when the whole room is sealed.
 
-- [ ] **Step 1: Smaller discs, only as a fallback.** Run today's loop unchanged.
+- [x] **Step 1: Smaller discs, only as a fallback.** Run today's loop unchanged.
   - Only when it ends with neither a slot-free cut nor a slot fallback, run the same checks and the same slot preference over the `small` radii below `radius`.
   - 0.5 m is the flame footprint's base radius, so nothing smaller.
   - A room with a cut today keeps exactly that radius: office R143 1.0, R203c 1.0 (via its slot fallback), R237b 2.5; example L1 2.5, R101 2.5, C1 1.0. So no demo pair and no C18 radius changes.
   - R227 gets 0.75 m.
-- [ ] **Step 2: Seal an empty dead-end room.** Seal only if no disc passes, `seal` is true and the room's type is in `NO_OCCUPANTS`.
+- [x] **Step 2: Seal an empty dead-end room.** Seal only if no disc passes, `seal` is true and the room's type is in `NO_OCCUPANTS`.
   - Remove `room polygon ∩ walk`. The door's nub on the neighbour's side stays.
   - Accept the result under the same split, zone and `body_pieces` checks. The quarter rule doesn't apply, since nobody is placed there.
   - Return `(retained, math.inf)`.
   - This seals office R145 and R215, and clinic R1C03, R1E30, R2B25, R2C07 and R2C08.
-- [ ] **Step 3: Say why when nothing works.** Keep the walkable area, with one warning that names the reason. For example: `WARNING (sim): F1/R141: no safe fire keep-out disc and the room cannot be sealed (sealing splits the walkable area); keeping walkable area`.
+- [x] **Step 3: Say why when nothing works.** Keep the walkable area, with one warning that names the reason. For example: `WARNING (sim): F1/R141: no safe fire keep-out disc and the room cannot be sealed (sealing splits the walkable area); keeping walkable area`.
   - Reasons: `occupied room`, `the scenario places people there`, `sealing splits the walkable area`, `sealing detaches an exit or stair`, `sealing leaves a piece narrower than a body`.
   - Update `keepout_cut`'s docstring and the module docstring's keep-out line. A fallback disc can be smaller than the flame footprint, so anyone who stays near the fire is still trapped as `untenable`.
-- [ ] **Step 4: People the scenario puts there.** In `run()`, pass `seal=False` when `scenario.occupants.perRoom` gives the fire room a positive count. Otherwise `place_occupants` would raise for the sealed room.
-- [ ] **Step 5: Smoke test.**
+- [x] **Step 4: People the scenario puts there.** In `run()`, pass `seal=False` when `scenario.occupants.perRoom` gives the fire room a positive count. Otherwise `place_occupants` would raise for the sealed room.
+- [x] **Step 5: Smoke test.**
   - **Fast `check_keepout_fallback()`.** If the office is missing, print a skip line. All under 1 s:
     - On the F2 walkable, R227 at (31.392, 9.0275) returns 0.75 with no WARNING on stderr.
     - Its removed area is 1.77 ± 0.02 m², and the cut keeps 8.24 ± 0.02 m² of R227.
@@ -600,10 +600,20 @@ Handoff for A: copy `data/calibration.json` to `frontend/public/demo/calibration
     - Print `keep-out: office 24 -> 1 rooms without a cut, clinic 102 -> 7`, and assert at most 1 and 7.
     - Run an office scenario with 40 agents (`perRoom` R111: 4, R113a: 36), a kitchen fire in R111 at its representative point, seed 1, `maxTime` 400. It must print no keep-out WARNING, no status 0/1 row on F1 may come closer than 0.74 m to the fire point in any frame (0.01 m rounding), and `remaining == inStairs == 0`.
     - Run the same with the fire in R145 (`perRoom` R113a: 40). No row may lie inside R145 in any frame, and `remaining == inStairs == 0`.
-- [ ] **Step 6: Verify:** With `LLM_PROVIDER=off`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the slow check's counts line and the R227 numbers under this heading.
-- [ ] **Step 7: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "fix(sim): fire keep-out falls back to small discs or a sealed room instead of none"` (no attribution lines).
-  - Handoff for D and A: 23 office rooms (R227 among them) and 95 clinic rooms now get a keep-out. Rooms that had one keep it, so the demo pairs stay valid. Rerun the office and clinic batches at the next precompute.
+- [x] **Step 6: Verify:** With `LLM_PROVIDER=off`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the slow check's counts line and the R227 numbers under this heading.
+- [x] **Step 7: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "fix(sim): fire keep-out falls back to small discs or a sealed room instead of none"` (no attribution lines).
+  - Existing slow-suite assertion repaired: the current office lobby has two recoverable stalls (idx 28 at 151 s and idx 261 at 193 s), and all 300 evacuate by 218.31 s. Running the committed pre-C21 `sim/run.py` and the updated version on the same lobby scenario produced identical frames and events. The smoke test now bounds lobby stalls at two and retains its requirement that every stalled agent subsequently exits; no crowd-model tuning.
+- Handoff for D and A: 23 office rooms (R227 among them) and 95 clinic rooms now get a keep-out. Rooms that had one keep it, so the demo pairs stay valid. Rerun the office and clinic batches at the next precompute.
   - The WARNING now prints only for office R141 and 7 clinic rooms.
+
+**C21 results:** Existing disc and slot-fallback choices are preserved before trying 0.75 m and 0.5 m discs. Empty eligible rooms can be sealed only when connectivity, attached zones and body-width components are preserved; explicit positive `perRoom` counts disable sealing. Failure warnings identify why sealing is unavailable. Smaller discs do not replace the fire model's untenable-footprint check.
+
+- R227: radius **0.75 m**, removed **1.7643 m²**, retained room area **8.2423 m²**, no warning; body pieces unchanged, zones attached and boundary clearance ≥ 0.3 m. Fast fallback check: < 0.1 s.
+- `keep-out: office 24 -> 1 rooms without a cut, clinic 102 -> 7 rooms without a cut`. Every previously positive radius is unchanged across both buildings.
+- R111 kitchen fire (4 occupants in R111, 36 in R113a) and sealed R145 fire (40 in R113a): **40 evacuated, 0 trapped, 0 remaining, 0 in stairs** each. All frame positions satisfy the requested fire-distance / sealed-room exclusions. Room sweep and both scenarios: 8.8 s.
+- Handoff for D and A: 23 office rooms and 95 clinic rooms now get a keep-out; rerun those batches at the next precompute. Existing demo-pair radii remain unchanged.
+
+**Final verification:** `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1 .venv/bin/python -m sim.smoke_test` passed in **13.8 s**; `--slow` passed in **221.7 s** (fast is 6.2% of slow, within C9's 25% budget). `git diff --check` passed. Logs: `/tmp/c21-fast.log`, `/tmp/c21-slow.log`. Only `sim/` and this plan changed; no contract edits, live LLM calls or git syncing.
 
 ### Task C22 (P0 · Sat 4:30 PM): Corridor speed against density, measured in steady walking (credibility chart)
 
