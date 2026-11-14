@@ -1,6 +1,8 @@
 // The tracer's state: A2's TraceState (image pixels) plus 50-step undo and redo, this session's
-// floor images, and what the canvas is doing. The trace autosaves, without the images, to
-// localStorage["fire-evac-trace"]; an image re-attaches when its floor's image is uploaded again.
+// floor images, what the canvas is doing, and the AI first pass. The trace autosaves, without the
+// images, to localStorage["fire-evac-trace"]; an image re-attaches when its floor's image is
+// uploaded again. AI-proposed rooms carry ai: true (drawn dashed) until they are edited, marked
+// reviewed or accepted.
 import { create } from "zustand";
 import type { Pt } from "./geometry";
 import type { TraceDoor, TraceFloor, TraceRoom, TraceScale, TraceState } from "./plan";
@@ -28,6 +30,31 @@ export interface Selection {
 
 export type RemoveTarget = { kind: "floor"; floorId: string } | Selection;
 
+/** The AI first pass (POST /api/trace/propose): one at a time, for one floor. */
+export type AiJob =
+  | { kind: "idle" }
+  | { kind: "busy"; floorId: string; since: number } // since: Date.now() when it was sent
+  | { kind: "done"; floorId: string; added: number; skipped: number; seconds: number; model: string }
+  | { kind: "failed"; floorId: string; message: string; detail?: string };
+
+export type NewRoom = Omit<TraceRoom, "id">;
+
+/** What the AI pass's outcome says, for the canvas and the inspector (null while idle or busy). */
+export function aiOutcome(job: AiJob): { text: string; detail?: string; tone: "ok" | "warn" | "err" } | null {
+  if (job.kind === "done") {
+    const skipped = job.skipped ? `; ${job.skipped} left out (on a room you traced, or too small)` : "";
+    if (job.added === 0) return { text: `The AI found no rooms it could use${skipped}. Draw by hand.`, tone: "warn" };
+    const by = job.model ? ` by ${job.model}` : "";
+    return {
+      text: `${job.added} AI room${job.added > 1 ? "s" : ""} on ${job.floorId}, dashed until you edit or accept them`,
+      detail: `Proposed${by} in ${Math.round(job.seconds)} s${skipped}. Check each one, then add the doors and stair groups.`,
+      tone: "ok",
+    };
+  }
+  if (job.kind === "failed") return { text: job.message, detail: job.detail, tone: "err" };
+  return null;
+}
+
 type Meta = Pick<TraceState, "id" | "name" | "credits">;
 type RoomPatch = Partial<Omit<TraceRoom, "id">>;
 type DoorPatch = Partial<Omit<TraceDoor, "id">>;
@@ -45,6 +72,7 @@ export interface TraceStore extends TraceState {
   saveError: string | null;
   mergeKey: string | null;
   mergeAt: number;
+  aiJob: AiJob;
 
   // Trace edits: each one is an undo step. `key` merges quick repeats (typing, dragging).
   setMeta: (patch: Partial<Meta>, key?: string) => void;
@@ -53,8 +81,15 @@ export interface TraceStore extends TraceState {
   setImage: (floorId: string, img: FloorImage) => void;
   setScale: (floorId: string, scale: TraceScale | null) => void;
   setRef: (floorId: string, ref: Pt | null) => void;
-  addRoom: (floorId: string, room: Omit<TraceRoom, "id">) => string;
+  addRoom: (floorId: string, room: NewRoom) => string;
+  /** Edits a room; any edit but `ai` itself marks an AI room reviewed. */
   updateRoom: (floorId: string, id: string, patch: RoomPatch, key?: string) => void;
+  /** The AI draft for a floor, as one undo step: replaces the floor's unreviewed AI rooms. */
+  addAiRooms: (floorId: string, rooms: NewRoom[]) => void;
+  /** Every AI room on the floor becomes a reviewed room. */
+  acceptAi: (floorId: string) => void;
+  /** Removes the floor's unreviewed AI rooms. */
+  discardAi: (floorId: string) => void;
   addDoor: (floorId: string, door: Omit<TraceDoor, "id">) => string;
   updateDoor: (floorId: string, id: string, patch: DoorPatch, key?: string) => void;
   remove: (target: RemoveTarget) => void;
@@ -69,6 +104,7 @@ export interface TraceStore extends TraceState {
   setPublic: (on: boolean) => void;
   setShowBelow: (on: boolean) => void;
   requestFit: () => void;
+  setAiJob: (job: AiJob) => void;
 }
 
 /** Just the TraceState fields (what history, autosave and export use). */
@@ -135,6 +171,7 @@ export const useTrace = create<TraceStore>()((set, get) => {
     saveError: null,
     mergeKey: null,
     mergeAt: 0,
+    aiJob: { kind: "idle" },
 
     setMeta: (patch, key) => {
       const s = get();
@@ -198,7 +235,35 @@ export const useTrace = create<TraceStore>()((set, get) => {
 
     updateRoom: (floorId, id, patch, key) => {
       if (!has(floorId)) return;
-      commit({ floors: mapFloor(floorId, (f) => ({ ...f, rooms: f.rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)) })) }, key);
+      const edit = (r: TraceRoom): TraceRoom => {
+        const next: TraceRoom = { ...r, ...patch };
+        if (!patch.ai) delete next.ai; // edited or marked reviewed: no longer an AI draft
+        return next;
+      };
+      commit({ floors: mapFloor(floorId, (f) => ({ ...f, rooms: f.rooms.map((r) => (r.id === id ? edit(r) : r)) })) }, key);
+    },
+
+    addAiRooms: (floorId, rooms) => {
+      if (!has(floorId)) return;
+      const fresh = rooms.map((r): TraceRoom => ({ ...r, ai: true, id: newId("r") }));
+      commit({ floors: mapFloor(floorId, (f) => ({ ...f, rooms: [...f.rooms.filter((r) => !r.ai), ...fresh] })) });
+      set(fixView(get()));
+    },
+
+    acceptAi: (floorId) => {
+      if (!get().floors.some((f) => f.id === floorId && f.rooms.some((r) => r.ai))) return;
+      const reviewed = (r: TraceRoom): TraceRoom => {
+        const next = { ...r };
+        delete next.ai;
+        return next;
+      };
+      commit({ floors: mapFloor(floorId, (f) => ({ ...f, rooms: f.rooms.map((r) => (r.ai ? reviewed(r) : r)) })) });
+    },
+
+    discardAi: (floorId) => {
+      if (!get().floors.some((f) => f.id === floorId && f.rooms.some((r) => r.ai))) return;
+      commit({ floors: mapFloor(floorId, (f) => ({ ...f, rooms: f.rooms.filter((r) => !r.ai) })) });
+      set(fixView(get()));
     },
 
     addDoor: (floorId, door) => {
@@ -262,6 +327,7 @@ export const useTrace = create<TraceStore>()((set, get) => {
     setPublic: (isPublic) => set({ isPublic }),
     setShowBelow: (showBelow) => set({ showBelow }),
     requestFit: () => set({ fitNonce: get().fitNonce + 1 }),
+    setAiJob: (aiJob) => set({ aiJob }),
   };
 });
 

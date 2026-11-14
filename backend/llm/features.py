@@ -1,9 +1,12 @@
-"""LLM features (spec 7.5): the report card, and decisions for LLM-driven agents (sim C7, C8).
+"""LLM features (spec 7.5): the report card, decisions for LLM-driven agents (sim C7, C8), and the
+tracer's first pass (A8).
 
     report(batch_or_run, building) -> str                       markdown; never raises
     report_card(batch_or_run, building, allow_llm=True) -> (markdown, ai_written)
     decide(obs) -> dict | None                                  one agent (sim.brain.LLMBrain, C7)
     decide_batch(observations) -> list[dict | None]             many agents, one model call (C8)
+    propose_plan(image, hints) -> dict | None                   rooms from a floor-plan image
+    sanitize_floor(raw, hints) -> dict                          the model's rooms, checked
 
 Report card. Every number is built here, in code, from the batch/v0 or run/v0 (and the building, for
 names). The model sees only the weak spots, the headline numbers and door and room names, and
@@ -26,8 +29,24 @@ when there is no current target, "wait" when the target is the current one, else
 call uses thinking "minimal" (1-5 s on gemini-3.5-flash against 5-13 s at its default) and the
 client's timeout, retry and fallback rules; anything that fails is None.
 
+First pass. propose_plan(image, hints) sends a PNG, JPEG or WebP floor plan with hints
+{metersPerPixel, width, height, name?, level?} for the image as sent, and asks for rooms only
+(vision models miss doors, research 03): {rooms: [{name, type, polygon: [[x, y], ...]}]} on a
+0-1000 grid (x right, y down) with type one of the 13 spec types. sanitize_floor turns that into a
+plan/v0 floor {id, level, elevation, height: 3.5, rooms: [{id: "AI1", name, type, polygon}],
+doors: []} in floor meters, y up, from the image's bottom-left corner: (px * s, (height - py) * s).
+It snaps every vertex to 0.25 m and drops polygons with fewer than 3 points, a point that is not
+two numbers, a vertex outside the image, no single clear shape after shapely.make_valid (a
+bow-tie), or under 1 m2; an unknown type becomes other; at most 60 rooms. Timeout 60 s per model
+(vision calls took 5-20 s, once 57 s). The call walks the client's chain with Gemini 2.x moved to
+the end (GEMINI_MODEL stays first): on the test floor (contracts/plan.example.json F1 drawn at
+30 px/m) gemini-3.6-flash gave all 12 rooms at IoU 1.00 in 7 s, gemini-2.5-flash the right 12
+rooms but squeezed toward the image center, mean IoU 0.39, in 40 s (measured Sat 4 AM).
+propose_plan is None when the model gives nothing usable.
+
     python -m backend.llm.features report [result.json [building.json]]   (default: example batch)
     python -m backend.llm.features decide                                   (three sample agents)
+    python -m backend.llm.features propose plan.png METERS_PER_PIXEL [level]
 """
 from __future__ import annotations
 
@@ -36,6 +55,7 @@ import math
 import re
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 from . import client
@@ -759,6 +779,234 @@ def decide(obs: dict) -> dict | None:
         return None
 
 
+# ------------------------------------------------------------ tracer first pass
+
+ROOM_TYPES = ("office", "classroom", "kitchen", "dining", "lounge", "bedroom", "lab", "storage",
+              "restroom", "corridor", "lobby", "stair", "other")  # spec 6
+PROPOSE_TIMEOUT = 60.0  # s per model call (the brief said 45; one vision call took 57 s)
+PROPOSE_THINKING = "low"
+GRID = 1000.0  # the model's coordinates: 0-1000 on each axis of the image, x right, y down
+SLACK = 10.0  # grid units (1%) a vertex may stray past the image edge before its room is dropped
+SNAP = 0.25  # m, the tracer's grid (spec 6)
+MIN_ROOM_AREA = 1.0  # m2, as the tracer's validatePlan
+MAX_ROOMS = 60
+FLOOR_HEIGHT = 3.5  # m, as the tracer's export
+NAME_CHARS = 40
+PROPOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rooms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string", "enum": list(ROOM_TYPES)},
+                    "polygon": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+                },
+                "required": ["name", "type", "polygon"],
+            },
+        }
+    },
+    "required": ["rooms"],
+}
+
+
+def image_mime(data) -> str | None:
+    """image/png, image/jpeg or image/webp from the file's first bytes; None for anything else."""
+    head = bytes(data[:12]) if isinstance(data, (bytes, bytearray)) else b""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def check_hints(hints) -> tuple[float, int, int, str, int]:
+    """(meters per pixel, width, height, name, level) of the image as sent; ValueError when unusable."""
+    if not isinstance(hints, dict):
+        raise ValueError("hints must be a JSON object {metersPerPixel, width, height, name?, level?}")
+    s = _num(hints.get("metersPerPixel"))
+    if s is None or s <= 0:
+        raise ValueError("metersPerPixel must be a positive number")
+    size = []
+    for key in ("width", "height"):
+        v = _num(hints.get(key))
+        if v is None or v != int(v) or not 1 <= v <= 100_000:
+            raise ValueError(f"{key} must be the image's {key} in pixels, a whole number")
+        size.append(int(v))
+    level = _num(hints.get("level"))
+    level = int(level) if level is not None and level == int(level) else 0
+    name = hints.get("name")
+    name = " ".join(name.split())[:80] if isinstance(name, str) else ""
+    return s, size[0], size[1], name, level
+
+
+def _vision_chain() -> list[str]:
+    """The client's Gemini chain with Gemini 2.x models after the others (GEMINI_MODEL stays first)."""
+    models = client.chain()
+    rest = models[1:]
+    return models[:1] + [m for m in rest if not m.startswith("gemini-2")] + [m for m in rest if m.startswith("gemini-2")]
+
+
+def _propose_prompt(width: int, height: int, name: str) -> str:
+    what = f' ("{name}")' if name else ""
+    return (
+        f"This image is an architectural floor plan{what}, {width} x {height} pixels. Trace its rooms for "
+        "a building evacuation simulation.\n\n"
+        "List every enclosed room or space of the building: offices, classrooms, meeting rooms, corridors "
+        "and hallways, lobbies, stairwells, restrooms, kitchens, storage rooms and so on. Skip furniture, "
+        "fixtures, door swings, dimension lines, text outside rooms, the legend, the title block and "
+        "anything outside the building. Do not list doors or windows.\n\n"
+        "For each room give:\n"
+        '- name: the label printed in the room (for example "Office 105"), or a short description if it '
+        "has none.\n"
+        f"- type: one of {', '.join(ROOM_TYPES)}. Hallways are corridor, entrance halls lobby, stairwells "
+        "stair, toilets restroom; use other when nothing fits.\n"
+        "- polygon: the room's outline as its corner points [x, y] in order around the room, on a 0-1000 "
+        "grid: x runs from 0 at the left edge of the image to 1000 at the right edge, y from 0 at the top "
+        "edge to 1000 at the bottom edge. Follow the middle of the walls, so that neighbouring rooms share "
+        "their common edge exactly, with no gaps and no overlaps. Use 4 corners for a rectangular room, "
+        "more only where the walls really turn (an L-shaped room, a corridor that bends).\n\n"
+        f"List each room once, at most {MAX_ROOMS} rooms (the largest ones if there are more)."
+    )
+
+
+def _snap(v: float) -> float:
+    """To the 0.25 m grid, halves rounded up as the tracer's Math.round does (+ 0.0: never -0.0)."""
+    return round(math.floor(v / SNAP + 0.5) * SNAP, 3) + 0.0
+
+
+def _ring(points) -> list[tuple[float, float]]:
+    """Points without repeated neighbours or a closing repeat of the first one."""
+    out: list[tuple[float, float]] = []
+    for p in points:
+        if not out or out[-1] != p:
+            out.append(p)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    return out
+
+
+def _grid_points(polygon) -> list[tuple[float, float]] | None:
+    """[[x, y], ...] as floats; None when it is not a list or any point is not two finite numbers."""
+    if not isinstance(polygon, list):
+        return None
+    out = []
+    for p in polygon:
+        if isinstance(p, dict):
+            p = [p.get("x"), p.get("y")]
+        if not isinstance(p, (list, tuple)) or len(p) != 2:
+            return None
+        x, y = _num(p[0]), _num(p[1])
+        if x is None or y is None:
+            return None
+        out.append((x, y))
+    return out
+
+
+def _room_polygon(points: list[tuple[float, float]], s: float, w: int, h: int) -> tuple[list | None, str]:
+    """(the room in floor meters, snapped and valid, or None) and why it was dropped."""
+    from shapely.geometry import Polygon
+    from shapely.validation import make_valid
+
+    if len(points) < 3:
+        return None, "fewer than 3 points"
+    if any(not (-SLACK <= v <= GRID + SLACK) for p in points for v in p):
+        return None, "outside the image"
+    ring = _ring([(_snap(min(max(x, 0.0), GRID) / GRID * w * s),
+                   _snap((h - min(max(y, 0.0), GRID) / GRID * h) * s)) for x, y in points])
+    if len(ring) < 3:
+        return None, "under 1 m2"  # snapping collapsed it
+    poly = Polygon(ring)
+    if not poly.is_valid:  # a bow-tie, a spike or a self-touching ring: keep it only if one shape is clear
+        fixed = make_valid(poly)
+        parts = [g for g in getattr(fixed, "geoms", [fixed]) if g.geom_type == "Polygon" and g.area >= MIN_ROOM_AREA]
+        if len(parts) != 1:
+            return None, "self-intersecting"
+        poly = Polygon(_ring([(_snap(x), _snap(y)) for x, y in parts[0].exterior.coords]))
+        if len(poly.exterior.coords) < 4 or not poly.is_valid:
+            return None, "self-intersecting"
+    if poly.area < MIN_ROOM_AREA:
+        return None, "under 1 m2"
+    simple = poly.simplify(0)  # drop corners that snapping left on a straight edge
+    if simple.geom_type == "Polygon" and simple.is_valid and len(simple.exterior.coords) >= 4:
+        poly = simple
+    return [[x, y] for x, y in _ring(list(poly.exterior.coords))], ""
+
+
+def _room_type(value) -> str:
+    t = value.strip().lower() if isinstance(value, str) else ""
+    if t not in ROOM_TYPES and t.endswith("s") and t[:-1] in ROOM_TYPES:
+        t = t[:-1]  # stairs, offices
+    return t if t in ROOM_TYPES else "other"
+
+
+def _sanitize(raw, hints) -> tuple[dict, Counter]:
+    """(the plan/v0 floor, how many rooms were dropped and why). ValueError for unusable hints."""
+    s, w, h, _, level = check_hints(hints)
+    dropped: Counter = Counter()
+    rooms: list[dict] = []
+    items = raw.get("rooms") if isinstance(raw, dict) else None
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            dropped["not a room"] += 1
+            continue
+        points = _grid_points(item.get("polygon"))
+        polygon, why = (None, "a point that is not two numbers") if points is None else _room_polygon(points, s, w, h)
+        if polygon is None:
+            dropped[why] += 1
+            continue
+        if len(rooms) >= MAX_ROOMS:
+            dropped[f"over {MAX_ROOMS} rooms"] += 1
+            continue
+        rtype = _room_type(item.get("type"))
+        name = " ".join(item["name"].split())[:NAME_CHARS] if isinstance(item.get("name"), str) else ""
+        rooms.append({"id": f"AI{len(rooms) + 1}", "name": name or ("Room" if rtype == "other" else rtype.capitalize()),
+                      "type": rtype, "polygon": polygon})
+    floor = {"id": f"F{level + 1}", "level": level, "elevation": round(level * FLOOR_HEIGHT, 3),
+             "height": FLOOR_HEIGHT, "rooms": rooms, "doors": []}
+    return floor, dropped
+
+
+def sanitize_floor(raw, hints: dict) -> dict:
+    """The model's {rooms: [...]} as a plan/v0 floor (module docstring: First pass). Junk rooms are
+    dropped, never fixed up by guessing; raises ValueError only for unusable hints."""
+    return _sanitize(raw, hints)[0]
+
+
+def propose_plan(image: bytes, hints: dict) -> dict | None:
+    """The tracer's first pass: a plan/v0 floor of rooms (doors: []) proposed from a floor-plan image,
+    or None when the model is off, down, slow or unusable, or the input is. Never raises."""
+    try:
+        try:
+            _, width, height, name, _ = check_hints(hints)
+        except ValueError as e:
+            print(f"LLM trace: no proposal ({e})", file=sys.stderr)
+            return None
+        mime = image_mime(image)
+        if mime is None:
+            print("LLM trace: no proposal (the image is not PNG, JPEG or WebP)", file=sys.stderr)
+            return None
+        t0 = time.time()
+        answer = client.complete(_propose_prompt(width, height, name), image=bytes(image), image_mime=mime,
+                                 schema=PROPOSE_SCHEMA, timeout=PROPOSE_TIMEOUT, thinking=PROPOSE_THINKING,
+                                 models=_vision_chain())
+        if not isinstance(answer, dict):
+            return None
+        floor, dropped = _sanitize(answer, hints)
+        why = ", ".join(f"{n} {reason}" for reason, n in dropped.most_common())
+        print(f"LLM trace: {len(floor['rooms'])} rooms kept from {client.last_model}"
+              + (f", {sum(dropped.values())} dropped ({why})" if dropped else "")
+              + f", {time.time() - t0:.1f} s", file=sys.stderr)
+        return floor
+    except Exception as e:
+        print(f"LLM trace: no proposal ({type(e).__name__}: {e})", file=sys.stderr)
+        return None
+
+
 # ------------------------------------------------------------------------ cli
 
 SAMPLE_OBS = [  # shapes as sim/run.py builds them (values illustrative)
@@ -811,7 +1059,20 @@ def _main(argv: list[str]) -> int:
             print(f"agent {obs['idx']} ({obs['trigger']}, current {obs['current']}): {decision}")
         print(f"({client.provider()}, model {client.last_model}, {time.time() - t0:.1f} s)", file=sys.stderr)
         return 0 if any(decisions) else 1
-    print("usage: python -m backend.llm.features report [result.json [building.json]] | decide", file=sys.stderr)
+    if command == "propose" and len(argv) >= 3:  # one live call: send public plans only (spec 12)
+        from PIL import Image  # comes with matplotlib
+
+        data = Path(argv[1]).read_bytes()
+        with Image.open(argv[1]) as im:
+            width, height = im.size
+        hints = {"metersPerPixel": float(argv[2]), "width": width, "height": height,
+                 "level": int(argv[3]) if len(argv) > 3 else 0}
+        floor = propose_plan(data, hints)
+        print(json.dumps(floor, indent=1) if floor is not None else "no proposal")
+        print(f"({client.provider()}, model {client.last_model}, {time.time() - t0:.1f} s)", file=sys.stderr)
+        return 0 if floor else 1
+    print("usage: python -m backend.llm.features report [result.json [building.json]] | decide"
+          " | propose plan.png METERS_PER_PIXEL [level]", file=sys.stderr)
     return 2
 
 

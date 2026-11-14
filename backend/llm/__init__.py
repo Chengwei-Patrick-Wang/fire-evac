@@ -1,4 +1,5 @@
-"""LLM client and features (spec 7.5): callers write llm.report(...), llm.decide(obs).
+"""LLM client and features (spec 7.5): callers write llm.report(...), llm.decide(obs),
+llm.propose_plan(image, hints).
 
 The names below load on first use (PEP 562), so `import backend.llm` stays cheap and
 `python -m backend.llm.features` does not import the module twice. google-genai itself is
@@ -7,6 +8,7 @@ imported on the first model call.
 _FROM = {
     "complete": "client", "provider": "client",
     "decide": "features", "decide_batch": "features", "report": "features", "report_card": "features",
+    "propose_plan": "features", "sanitize_floor": "features",
 }
 __all__ = sorted(_FROM)
 
