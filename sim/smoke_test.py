@@ -1282,6 +1282,37 @@ def check_runsize(building, fast, core, slow=False):
     print("run size: rounding, hold roundtrip and recording parity OK")
 
 
+def check_smoke_walk(slow=False):
+    from sim.calibrate import (UniformSmoke, smoke_walk, speed_visibility,
+                               visibility_limits, SMOKE_RULE_LIMIT)
+    from sim.run import smoke_speed
+
+    for v0 in (0.6, 1.0, 1.5):
+        for visibility in (1, 2, 3, 10):
+            assert smoke_speed(v0, visibility) == min(v0, max(0.2, v0 - 0.34 * (3 - visibility)))
+    assert smoke_speed(0.6, 1) == 0.2
+    smoke = UniformSmoke(1.5)
+    assert smoke.visibility("F1", 0, 0) == 1.5
+    assert smoke.snapshot("F1") is None and smoke.hrr(100) == 0
+    assert not smoke.untenable("F1", 0, 0) and not smoke.blocked_doors()
+    if slow:
+        curve = speed_visibility()
+        failures = visibility_limits(curve)
+        saved = json.loads((ROOT / "data/calibration.json").read_text())
+        assert saved["speedVisibility"] == curve
+        assert SMOKE_RULE_LIMIT in saved["limits"]
+        # Keep and disclose measured misses instead of tuning the crowd model.
+        assert all(failure in saved["limits"] for failure in failures), failures
+        for failure in failures:
+            print(failure)
+    else:
+        smoky, clear = smoke_walk(1.5, agents=4), smoke_walk(30, agents=4)
+        assert smoky["samples"] > 0 and clear["samples"] > 0
+        assert abs(smoky["simulated"] / smoky["formula"] - 1) <= 0.1, smoky
+        assert smoky["simulated"] < clear["simulated"]
+    print("smoke walking-speed measurements OK")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1296,6 +1327,7 @@ def main(argv=None) -> int:
         return result
 
     timed("calibration", check_calibration)
+    timed("smoke walk", check_smoke_walk)
     timed("brain", check_brain)
     timed("floors", check_floors)
     timed("watch and geometry", check_watch_and_geometry)
@@ -1326,6 +1358,7 @@ def main(argv=None) -> int:
         timed("full sweep", check_sweep, building, fast, slow=True)
         timed("full seeds", check_seeds, building, scenario, slow=True)
         timed("full calibration", check_calibration, slow=True)
+        timed("full smoke walk", check_smoke_walk, slow=True)
         timed("office blocked arrival", check_blocked_arrival, slow=True)
         timed("office scale", check_scale)
         timed("clinic scale", check_clinic_scale)

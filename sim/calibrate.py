@@ -13,10 +13,81 @@ from shapely.geometry import Point, box
 
 from buildings.normalize import plan_to_building
 from fire.stub import NoFire
-from sim.run import floor_walkable, run
+from sim.run import floor_walkable, run, smoke_speed
 
 ROOT = Path(__file__).resolve().parents[1]
 WIDTHS = (0.8, 0.9, 1.0, 1.2, 1.6)
+VISIBILITIES = (1.0, 1.5, 2.0, 2.5, 3.0, 5.0, 30.0)
+SMOKE_RULE_LIMIT = ("Walking speed in smoke: the published rule is a model input; this curve "
+                    "checks that the simulator applies it as published, not independent validation.")
+
+
+class UniformSmoke(NoFire):
+    """Constant visibility without heat, smoke snapshots or blocked routes."""
+
+    def __init__(self, visibility):
+        if not math.isfinite(visibility) or visibility <= 0:
+            raise ValueError("visibility must be finite and positive")
+        super().__init__({}, {})
+        self.distance = visibility
+
+    def visibility(self, floor_id, x, y):
+        return self.distance
+
+
+def smoke_walk(visibility, agents=8, seed=1):
+    building = corridor_building(length=30.0, width=3.0, door=1.2)
+    scenario = _scenario(building, agents, 1.2, seed)
+    scenario["maxTime"] = 200
+    result = run(building, scenario, UniformSmoke(visibility))
+    v0 = {a["idx"]: a["v0"] for a in result["agents"]}
+    speeds, expected = [], []
+    for first, second in zip(result["frames"], result["frames"][1:]):
+        dt = second["t"] - first["t"]
+        if first["t"] < 1 or dt <= 0:
+            continue
+        following = {r[0]: r for r in second["a"]}
+        for row in first["a"]:
+            after = following.get(row[0])
+            if (row[4] != 1 or not 2 <= row[1] <= 24 or after is None
+                    or after[4] != 1 or after[3] != row[3]):
+                continue
+            speeds.append(math.hypot(after[1] - row[1], after[2] - row[2]) / dt)
+            expected.append(smoke_speed(v0[row[0]], visibility))
+    if not speeds:
+        raise ValueError("corridor walk produced no moving frame-pair samples")
+    return {"visibility": visibility, "simulated": round(mean(speeds), 4),
+            "formula": round(mean(expected), 4), "samples": len(speeds)}
+
+
+def speed_visibility(agents=8):
+    points = []
+    for visibility in VISIBILITIES:
+        measurement = smoke_walk(visibility, agents)
+        points.append({"label": f"{visibility:g} m visibility", "visibility": visibility,
+                       "simulated": measurement["simulated"], "samples": measurement["samples"],
+                       "references": [{"name": "Fridolf et al. (2018), as used by Cheong (2020)",
+                                       "value": measurement["formula"]}]})
+    return {"title": "Walking speed in smoke: simulation against the published rule",
+            "source": f"JuPedSim 1.4.2 CollisionFreeSpeedModel, {agents} typical agents, seed 1; "
+                      "30 × 3 m corridor, 1.2 m door; x = 2–24 m, t ≥ 1 s, immediate start",
+            "formula": "min(v0, max(0.2, v0 − 0.34·(3 − S)))", "points": points}
+
+
+def visibility_limits(curve):
+    failures = []
+    points = curve["points"]
+    for point in points:
+        reference = point["references"][0]["value"]
+        if abs(point["simulated"] / reference - 1) > 0.1:
+            failures.append(f"{point['visibility']:g} m visibility differs from the rule by more than 10%")
+    speeds = {p["visibility"]: p["simulated"] for p in points}
+    if not all(speeds[a] < speeds[b] for a, b in zip(VISIBILITIES[:4], VISIBILITIES[1:5])):
+        failures.append("speeds do not decrease monotonically from 3 to 1 m visibility")
+    if max(speeds[s] for s in (3, 5, 30)) - min(speeds[s] for s in (3, 5, 30)) > 0.03:
+        failures.append("clear-air speeds at 3, 5 and 30 m differ by more than 0.03 m/s")
+    return ["Walking speed in smoke measurement limit: " + issue + "." for issue in failures]
+
 
 
 def corridor_building(length=30.0, width=2.4, door=1.0):
@@ -150,6 +221,13 @@ def calibration(agents=200):
     print("density bin | density | speed m/s | samples", flush=True)
     for p in speeds:
         print(f"{p['label']} | {p['density']:.2f} | {p['simulated']:.2f} | {p['samples']}", flush=True)
+    visibility = speed_visibility()
+    limits.extend([SMOKE_RULE_LIMIT, *visibility_limits(visibility)])
+    print("visibility | simulated | formula | simulated/formula | samples", flush=True)
+    for p in visibility["points"]:
+        reference = p["references"][0]["value"]
+        print(f"{p['visibility']:g} | {p['simulated']:.2f} | {reference:.2f} | "
+              f"{p['simulated'] / reference:.3f} | {p['samples']}", flush=True)
     return {"version": "calibration/v0", "title": "Door flow: simulation against published values",
             "source": f"JuPedSim 1.4.2 CollisionFreeSpeedModel, {agents} agents, seed 1, NoFire, immediate start",
             "points": points, "limits": limits,
@@ -157,7 +235,7 @@ def calibration(agents=200):
                              "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 100 typical agents, seed 1; "
                              "30 × 2.4 m corridor, 1 m door; 8 m measurement strip, t ≥ 5 s; "
                              "Weidmann (1993) and SFPE corridor reference curves",
-                             "points": speeds}}
+                             "points": speeds}, "speedVisibility": visibility}
 
 
 def main(argv=None):
