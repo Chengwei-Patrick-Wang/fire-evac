@@ -410,6 +410,93 @@ try {
       if (st.a !== id || !st.v || st.v.length !== 1) problems.push(`fixes: activeSpot ${st.a} (want ${id}), visibleFloors ${JSON.stringify(st.v)}`)
       await shot('fixes-fly')
     })
+  await step('live-fallback', async () => {
+    // qa has no backend, so a fresh page (the main page's runs stay as they are) is put in live mode by hand and the API answered by routes.
+    // Every way a live run can fail must end on the nearest precomputed fire with the note; with none for the building, the live error stays.
+    const p3 = await ctx.newPage()
+    const before = problems.length
+    p3.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json|status of 500|ERR_CONNECTION_REFUSED/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[live-fallback] ${m.text()}`)
+    })
+    p3.on('pageerror', (e) => errors.push(`[live-fallback] ${String(e)}`))
+    try {
+      let how = 'http'
+      const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+      await p3.route('**/runs', (r) => (how === 'down' ? r.abort('connectionrefused') : how === 'http' ? json(r, { detail: 'qa: backend error' }, 500) : json(r, { runId: 'qa-run' })))
+      await p3.route('**/runs/qa-run', (r) => json(r, how === 'failed' ? { status: 'error', error: 'qa: run failed' } : { status: 'running' }))
+      await p3.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await p3.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      const first = await p3.evaluate(() => {
+        // pollRun's wait is 180 s of Date.now: this lets the page's clock jump over it
+        const real = Date.now.bind(Date)
+        let skew = 0
+        Date.now = () => real() + skew
+        window.__skew = (ms) => (skew += ms)
+        return window.__app.getState().activeRunKey
+      })
+      // A precomputed fire other than the one on screen: the last run of this building (no what-if) whose spot no other run shares.
+      const t = await p3.evaluate(async (first) => {
+        const st = window.__app.getState()
+        const idx = await (await fetch('demo/index.json')).json()
+        const base = idx.runs.filter((r) => r.buildingId === st.building.id && r.whatIf === null)
+        const lone = base.filter((r) => r.id !== first && base.filter((o) => o.fire.x === r.fire.x && o.fire.y === r.fire.y).length === 1)
+        return lone.length ? lone[lone.length - 1] : null
+      }, first)
+      if (!t) return void problems.push('live-fallback: no second precomputed fire to fall back to in the demo index')
+      await p3.evaluate((fire) => {
+        const d = window.__app.getState().draft
+        window.__app.getState().patchDraft({ fire: { ...d.fire, floor: fire.floor, room: fire.room, x: fire.x, y: fire.y } })
+      }, t.fire)
+      const runButton = p3.locator('.scenario > button.run')
+      const read = () =>
+        p3.evaluate(() => {
+          const a = window.__app.getState()
+          return { key: a.activeRunKey, note: a.runNote, fallback: a.runFallback, err: a.runError, mode: a.mode, notice: a.notice, running: a.running }
+        })
+      const settle = () => p3.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
+      const note = `Live run unavailable: showing the nearest precomputed fire (room ${t.fire.room}).`
+      for (const name of ['http', 'failed', 'slow', 'down']) {
+        how = name
+        await p3.evaluate((first) => {
+          window.__app.getState().switchRun(first)
+          window.__app.setState({ mode: 'live', notice: null })
+        }, first)
+        await runButton.click()
+        if (name === 'slow') {
+          await p3.waitForFunction(() => /Running… \d+ s/.test(window.__app.getState().running ?? ''), null, { timeout: 15000 })
+          await p3.evaluate(() => window.__skew(200000))
+        }
+        await settle()
+        const s = await read()
+        const dom = await p3.locator('.scenario p.warn').allInnerTexts()
+        const wantMode = name === 'down' ? 'static' : 'live'
+        if (s.key !== t.id) problems.push(`live-fallback (${name}): active run ${s.key}, want ${t.id}`)
+        if (s.note !== note || !s.fallback || dom.length !== 1 || dom[0] !== note) problems.push(`live-fallback (${name}): note "${s.note}", on screen ${JSON.stringify(dom)}, want "${note}"`)
+        if (s.err) problems.push(`live-fallback (${name}): runError "${s.err}" beside a precomputed run`)
+        if (s.mode !== wantMode) problems.push(`live-fallback (${name}): mode ${s.mode}, want ${wantMode}`)
+        if (name === 'down' && s.notice !== 'Backend unreachable: precomputed runs only') problems.push(`live-fallback (down): notice "${s.notice}"`)
+        if (name === 'http') {
+          await p3.locator('.scenario p.warn').scrollIntoViewIfNeeded()
+          await p3.screenshot({ path: join(out, 'live-fallback.png') })
+          shots.push('live-fallback')
+        }
+      }
+      // No precomputed run for the building: today's error, and no note.
+      how = 'http'
+      await p3.evaluate(() => {
+        const a = window.__app
+        a.setState({ mode: 'live', notice: null, building: { ...a.getState().building, id: 'qa-none' } })
+      })
+      await runButton.click()
+      await settle()
+      const s = await read()
+      if (s.err !== 'Request failed (500): qa: backend error' || s.note || s.fallback) problems.push(`live-fallback (none): runError "${s.err}", note "${s.note}"`)
+      if (!(await p3.locator('.scenario p.err').allInnerTexts()).includes('Request failed (500): qa: backend error')) problems.push('live-fallback (none): the error is not on screen')
+      if (problems.length === before) lines.push('live-fallback ok: http, failed, slow and down end on the nearest precomputed fire; none keeps the error')
+    } finally {
+      await p3.close()
+    }
+  })
   if (FPS && opens.length > 0)
     await step('fps', async () => {
       await page.locator('.results [role=tab]').first().click()

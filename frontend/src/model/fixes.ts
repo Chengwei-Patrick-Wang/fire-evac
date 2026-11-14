@@ -78,6 +78,8 @@ export function fixTarget(
 
 const sg = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}`
 const sg1 = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}`
+/** The t90 change ("-12 s t90"). One that rounds to 0 s says so in words: "+0 s t90" would read as a slowdown. */
+const t90Text = (v: number) => (Math.round(v) === 0 ? 'no change in 90% out' : `${sg(v)} s t90`)
 
 interface Measure {
   kind: 'gain' | 'cost' | null
@@ -88,7 +90,7 @@ interface Measure {
 function measures(fix: Fix): Measure[] {
   const out: Measure[] = []
   const by = (v: number, limit: number): Measure['kind'] => (v <= -limit ? 'gain' : v >= limit ? 'cost' : null)
-  if (isNum(fix.dT90)) out.push({ kind: by(fix.dT90, VERDICT.t90), text: `${sg(fix.dT90)} s t90` })
+  if (isNum(fix.dT90)) out.push({ kind: by(fix.dT90, VERDICT.t90), text: t90Text(fix.dT90) })
   if (isNum(fix.smokePct)) out.push({ kind: by(fix.smokePct, VERDICT.smokePct), text: `${sg(fix.smokePct)}% smoke exposure` })
   else if (isNum(fix.dSmokeSeconds))
     out.push({ kind: fix.dSmokeSeconds < 0 ? 'gain' : fix.dSmokeSeconds > 0 ? 'cost' : null, text: `${sg(fix.dSmokeSeconds)} person-seconds in smoke` })
@@ -137,7 +139,7 @@ export function fixLine(fix: Fix): string {
     const costs = fixCosts(fix)
     if (gains.length && costs.length) return `${fix.label}: ${gains.join(', ')} across ${fix.n} fires; but ${costs.join(', ')}`
   }
-  let s = `${fix.label}: ${sg(fix.dT90)} s t90`
+  let s = `${fix.label}: ${t90Text(fix.dT90)}`
   if (isNum(fix.smokePct)) s += `, ${sg(fix.smokePct)}% smoke exposure`
   else if (isNum(fix.dSmokeSeconds)) s += `, ${sg(fix.dSmokeSeconds)} person-seconds in smoke`
   s += ` across ${fix.n} fires`
