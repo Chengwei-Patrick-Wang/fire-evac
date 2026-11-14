@@ -685,3 +685,231 @@ Handoff for A: copy `data/calibration.json` to `frontend/public/demo/calibration
 Handoff for E and A: schema unchanged; E30's `sync-demo.mjs` copies this file into `frontend/public/demo/` on the next `npm run build`. Commit that generated copy; the chart and Known limits list update automatically.
 
 **Final verification:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `.venv/bin/python -m sim.smoke_test` passed in **14.4 s** and `--slow` passed in **224.8 s** (fast is 6.4% of slow, within C9's 25% budget). The full curve exactly matches the saved points and all its limits are present. `git diff --check` passed. Logs: `/tmp/c22-calibrate.log`, `/tmp/c22-fast.log`, `/tmp/c22-slow.log`. Only `sim/`, the explicitly authorized generated calibration file, and this plan changed. No live LLM calls or git syncing.
+
+## Added Sat 15:13 (run by the lead's machine)
+
+> The team moved to other work at 14:30; the lead's machine runs these in order.
+
+### Task C23 (P0 · Sat 5 PM): Every room on fire: the office and the clinic after C21
+BLOCKED: taken over by the lead's machine at 15:13; skip
+
+**Files:** Modify `sim/sweep.py` (new `room_cases`, `keepout_problems`, a `keepout` option on `check_case`, CLI `--all-rooms`), `sim/smoke_test.py` (new `check_room_sweep`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`, plus any `sim/` file a Step 3 fix needs. Writes gitignored `data/runs/rooms/`.
+
+**Interfaces:**
+- Consumes:
+  - C17's `sim/sweep.py`:
+    - `check_case(building, scenario)` merges `BATCH_RECORDING`. It fails a case on an exception, on `remaining + inStairs > 0`, on an agent without exactly one `exit` or `trapped`, on a `trapped` without `reason`, on an agent with two `stuck` events, or on a bad frame row.
+    - Also `sweep(cases, buildings, workers, budget_min)` (spawn pool, budget cutoff), `write_report`, `load_buildings` and `building_path`.
+  - C21's `keepout_cut(walk, floor, room, x, y, radius, small, seal) -> (polygon, radius)`: 2.5, 1.5 or 1.0 m; fallback 0.75 or 0.5 m; `math.inf` for a sealed room; 0.0 with a `WARNING (sim)` line.
+    - `run()` cuts only on the fire floor, starting from `floor_walkable(floor, blocked)`, with `fireKeepout` (default 2.5).
+    - It passes `seal=False` when `perRoom` puts people in the fire room.
+  - What the demo runs:
+    - A's precompute (`tools/precompute_demo.py`, `PRESETS`) uses 250 occupants on the office and 280 on the clinic, the kitchen preset, seeds 1–3 and `maxTime` 400, with the fire at each room's `representative_point()`.
+    - It skips corridors and stairs, takes only 24 clinic rooms, and fails a batch only on exceptions. Its rerun after D22 and D23 will be the first big run of C21's geometry.
+    - The judge's live fire starts from that batch's base scenario (`makeDraft(building, batch.base)` in `frontend/src/App.tsx`). The click (`frontend/src/scene/FirePicker.tsx`) can land on any point of any non-stair room, corridors included, rounded to 0.01 m.
+    - A live run that fails shows its error on screen (`runScenario` in `frontend/src/store/app.ts`). Only an unreachable backend falls back to a precomputed run.
+- **Measured** on today's `main`, the keep-out at each room's representative point:
+  - Office, 109 rooms: 2.5 m in 20, 1.5 m in 10, 1.0 m in 55, 0.75 m in 14, 0.5 m in 7, sealed in 2 (R145, R215), no cut in 1 (corridor R141).
+  - Clinic, 252 rooms: 2.5 m in 17, 1.5 m in 48, 1.0 m in 85, 0.75 m in 45, 0.5 m in 45, sealed in 5, no cut in 7 (R1B07, R1CC2, R1E02, R1EC2, R2A12-A, R2BC5, R2CC5).
+  - C21 gave 23 office and 95 clinic rooms a new keep-out after the last precompute. Only C21's two 40-agent office runs (R111, R145) have exercised those fires so far.
+- **Measured: a probe of 11 rooms** at precompute settings (kitchen, seed 1, 1 s recording), on the lead's laptop with 3–4 runs at once:
+  - Office at 250 agents, clean: the 0.75 m rooms R111, R133, R206 and RS201 (a stair), and the 0.5 m rooms R119, R218 and R121 (a corridor). All 250 got out, with nothing trapped, no `stuck` event and no frame row inside the cut. t100 was 183–214 s.
+  - Office corridor R141, which has no cut: 247 out and 3 trapped.
+  - Clinic at 280 agents, clean: R1AC1 (1.5 m) and R2B17 (now 0.75 m). The uncut R1B07 had 279 out and 1 trapped. t100 was about 176 s.
+  - Wall time per case: office 66–108 s, clinic about 165 s (about 8 s and 17 s on a Mac).
+  - At those speeds, every room of both buildings takes about 3.5 h on four workers: the office about 40 min, the clinic's 102 fallback, sealed and uncut rooms about 70 min, and its other 150 rooms about 100 min.
+- Produces, in `sim/sweep.py`:
+  - `DESIGN_OCCUPANTS = {"office": 250, "clinic": 280}`, A's precompute values. Other buildings use their base scenario's total.
+  - `room_cases(buildings, seed=1, agents=None, preset="kitchen", max_time=300, clicks=False) -> list[dict]`:
+    - One case per room of every floor, corridors and stairs included, with the fire at the room's `representative_point()`. Its id is `<building>-<room>`.
+    - Order: building by building, in the order given. Within a building, the riskiest keep-outs come first: none, 0.5, 0.75, sealed, then 1.0, 1.5 and 2.5 m. A budget cutoff then drops the safest rooms.
+    - With `clicks`, add a case for every non-stair room at a click point (id `<building>-<room>-click`), after all the representative ones. Draw it uniformly inside `room ∩ walkable` shrunk by 0.3 m, from `np.random.default_rng([seed, k])` (k = the room's index in the building), and round it to 0.01. Skip it when that region is empty.
+    - Each scenario deep-copies the base, keeping its `doors`, `alarmTime` and `sprinklers`. Set `seed`, `maxTime` (300: short, and past every t100 above), `brain` rules, `occupants {total, mix}`, and fire `{floor, room, x, y, type: preset, start: 0}`.
+  - `keepout_problems(building, scenario, result) -> list[str]`: frame rows of any status on the fire floor inside `walk − cut`, shrunk 0.01 m for rounding. Compute the cut once per case, from the same inputs `run()` uses.
+  - `check_case(building, scenario, keepout=False)`. With `keepout`, add those problems and two row fields:
+    - `radius`, the cut's radius;
+    - `stuck`, the case's count of `stuck` events. It is reported only; C17's two-per-agent rule stays the failure.
+  - CLI `python -m sim.sweep --all-rooms [--buildings office,clinic] [--agents N] [--max-time 300] [--clicks] [--resume] [--workers N] [--budget-min 90] [--out data/runs/rooms]`.
+    - With `--all-rooms`, `--buildings` defaults to `office,clinic`.
+    - `--resume` skips the case ids already in `<out>/report.json` and merges the new rows into it, so the sweep can run in chunks around other jobs.
+    - `report.json` gains `fallback: {building: {"0.75": [...], "0.5": [...], "sealed": [...], "none": [...]}}`, with room ids from the representative-point cases, and `unrun`: the case ids the budget cut off.
+    - The C17 path (no `--all-rooms`) is unchanged.
+
+- [ ] **Step 1: Cases and checks.** Write `DESIGN_OCCUPANTS`, `room_cases`, `keepout_problems`, the `keepout` option and the CLI. Keep `sweep_cases` and C17's default `check_case` exactly as they are.
+- [ ] **Step 2: Run.** Start `python -m sim.sweep --all-rooms --workers 4` in the background with `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, logging to `debug/c23-rooms.log`.
+  - Its 90 min budget covers the office and the clinic's riskiest rooms. Continue with `--resume` whenever the machine is free. The clinic's 1.0–2.5 m rooms come last and are optional before the freeze.
+  - If time allows, add `--clicks --buildings office --resume`: 102 judge-style click points, about 36 min.
+  - Never shrink a crowd or raise `maxTime` to change an outcome.
+- [ ] **Step 3: Fix.** Group the failures by root cause: the same exception and line, or the same problem at the same place. Fix up to three causes, biggest first, in `sim/`.
+  - C17's rules apply: never wrap `run()` in try/except, raise `maxTime`, shrink a case, or loosen an assertion or C13b's arrival clearance.
+  - Demo numbers must not churn. Before the first edit outside `sim/sweep.py`, save these runs to ignored `debug/c23-before/`:
+    - the office baselines of R143, R203c and R237b, and the clinic's R1AC1, built like the pairs in `frontend/public/demo/index.json`: design occupancy, kitchen, seed 1, the stair door `closed`;
+    - `check_core`'s run.
+  - After each fix, all five must be byte-identical. If a fix changes one, revert it and describe it under this heading with its repro, for the lead.
+  - Rerun the failed cases once after the fixes.
+- [ ] **Step 4: Smoke test** `check_room_sweep(building, fast)`.
+  - **Fast:**
+    - `room_cases` on the example is deterministic: 24 representative cases, corridor C1 (1.0 m) first, with unique ids.
+    - With `clicks`, it adds 20 click cases (the four stair rooms get none). Every click point lies inside its room ∩ walkable, shrunk by 0.3 m.
+    - `keepout_problems` flags a hand-made row inside L1's removed disc and passes one 0.1 m outside it.
+    - Two real 12-agent example cases with `keepout=True` are `ok`: L1 (radius 2.5) and corridor C1 (radius 1.0). Each takes about 1.5 s on the lead's laptop.
+    - Resume: with a hand-made report that holds one finished id, the cases left to run skip exactly that id.
+  - **Slow:** `check_case(..., keepout=True)` is `ok` on the repro of each cause this task fixed.
+- [ ] **Step 5: Verify:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put these under this heading:
+  - the sweep line before and after the fixes, the cases run and unrun, and the `fallback` lists;
+  - every case with a `stuck` event;
+  - one row per root cause: cause, cases, fixed or open, and a repro (building, room, point, agents).
+- [ ] **Step 6: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "test(sim): every room on fire in the office and the clinic; first fixes"` (no attribution lines).
+  - Handoff for A: run the precompute rerun after this merges. Keep the guided demo away from any room still listed as open or unrun.
+  - Handoff for D: the `fallback` lists name the rooms whose fires keep people only 0.5–0.75 m away, or not at all.
+
+### Task C24 (P1 · Sat 6:30 PM): Narrow doors: the model wedges at 0.86 m, the demo buildings' standard door
+BLOCKED: taken over by the lead's machine at 15:13; skip
+
+**Files:** Modify `sim/calibrate.py` (`WIDTHS`, door labels, one `limits` line), `sim/smoke_test.py` (new `check_door_widths`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`. Regenerate `data/calibration.json` (C's generated file, as in C15, C20 and C22). Only if Step 2 finds a wedge in a real building, also `sim/run.py`.
+
+**Interfaces:**
+- Consumes:
+  - C15's `door_flow(width, agents=200, seed=1)`: everyone starts at once in a 14 × 10 m room with one door, NoFire, and `maxTime` = 20 + 1.5 × agents / (1.3 × (w − 0.3)).
+  - `calibration()` puts a width that doesn't evacuate everyone into `limits`, labelled `f"{width:.1f} m door"`. That label would print 0.86 as "0.9".
+  - The saved `data/calibration.json` has points at 0.9, 1.0, 1.2 and 1.6 m. Its only door limit reads "0.8 m door: 57 of 200 passed by the run limit…".
+  - A door's `width` equals its opening in the walkable area (the rect's long side, and |a − b|).
+- **Measured** (lead's laptop, seed 1, `door_flow` with 200 agents):
+  - 0.79 m: 108 of 200 out, last exit at 116 s, 555 `stuck` events.
+  - 0.85 m: 89 of 200 out, last exit at 95 s, 574 `stuck`.
+  - 0.86 m: 30 of 200 out, last exit at 33 s, 1,023 `stuck`. The run took 436 s of wall time to reach `maxTime`.
+  - 0.89 m: 200 of 200 out at 0.99 persons/s, with 8 `stuck`. C15 measured 0.9 m at 1.00 persons/s.
+  - At 0.86 m, 30 or 60 people (seeds 1–3) all get out at 0.93–0.97 persons/s, with no `stuck`.
+- **The demo buildings** (door widths):
+  - Office, 104 doors: 87 at 0.86 m, 5 at 0.79 m, 4 at 0.89 m, 2 at 1.0 m and 6 at 1.73 m.
+    - The 0.86 m doors include every stair door, exit D$77x5b and both stair-room exits.
+    - The 0.79 m doors lead from restrooms to the outside and are not exits.
+  - Clinic, 236 doors: 222 at 0.86 m, 4 at 0.85 m (R1DC1 to outside, not exits), and the rest at 0.95–1.73 m. The 0.86 m doors include 4 of the 5 stair doors (DqxQ3VC is 1.63 m) and 4 of the 9 exits.
+  - The example's narrowest door is 0.9 m.
+- **Real layouts don't wedge so far:**
+  - The office at 250 agents gets everyone out in every probe (the eight rooms in C23).
+  - The office at 500 agents, kitchen fire in R143, got 500 of 500 out, with no `stuck` event and t90 184 s.
+  - C13's stairwell fire sends about 150 people from F2 through one 0.86 m stair door, and all get out.
+  - Corridors feed doors in single file. The wedge needs more than about 60 people pressing into one narrow door from an open room. The occupants box in the app has no maximum.
+- Produces:
+  - `WIDTHS = (0.8, 0.86, 0.9, 1.0, 1.2, 1.6)`. Labels keep one decimal unless the width needs two, so every existing label and point stays byte-identical.
+  - A new `limits` line, worded from Step 2's numbers. For example: "The office and clinic doors are 0.86 m. With 200 people pressing in at once, two bodies wedge in such a door (30 of 200 passed); in these buildings' layouts no doorway wedged, even at 500 occupants."
+  - `check_door_widths(slow=False)`.
+
+- [ ] **Step 1: Threshold.** Reproduce the 0.86 m row. Then measure `door_flow` at 0.87 and 0.88 m (200 agents, seeds 1 and 2), and at 0.86 m with 100 and 150 agents. Put the table under this heading.
+  - A jammed run lasts until `maxTime`: about 7 min on the lead's laptop. Run the seven at once.
+- [ ] **Step 2: Real buildings.** Run the office with `--agents 500` and the clinic with `--agents 560` (twice the design occupancy), from their scenario files. On the lead's laptop that is about 4 and 6–10 min.
+  - Count the wedges: two or more people with `stuck` events within 1 m of the same door narrower than 0.9 m. Count `remaining` too, and add any wedge in C23's report.
+  - **No wedge:** go on to Step 3. The model stays unchanged.
+  - **A wedge:** first add the squeeze rule to `run()`, in the 1 s tick:
+    - Watch status-1 people within 0.5 m of the opening (a–b) of an unblocked door narrower than 0.9 m.
+    - When two or more of them at one door have moved less than 0.05 m over 5 ticks, set each one's `ag.model.radius` to 0.75 × its profile radius. People turn sideways in a narrow door.
+    - Log `{t, type: "squeeze", idx, floor, door}` once per person. Give the full radius back at the first tick when that person is at least 1 m from the opening and no one else is within the full radius plus 0.3 m.
+    - The example's doors are 0.9 m or wider, so it can't trigger the rule. C23's office and clinic baselines must stay byte-identical; list any that don't, with their squeeze counts.
+- [ ] **Step 3: Calibration.** Add 0.86 to `WIDTHS`, fix the label format and add the new `limits` line. Regenerate with `python -m sim.calibrate`; the jammed 0.86 m door adds about 7 min on the lead's laptop.
+  - Compared with `git show HEAD:data/calibration.json`, only the new limits lines change.
+  - If Step 2 added the squeeze rule, the 0.8 and 0.86 m doors may also move from `limits` into `points`.
+- [ ] **Step 4: Smoke test.**
+  - **Fast `check_door_widths()`:**
+    - The most common door width in the office and in the clinic is 0.86 m, the width the limits line names. Skip a missing building with a printed line.
+    - The saved calibration has the 0.86 m line in `limits` (or a 0.86 m point, if the squeeze rule landed). Its labels at 0.9–1.6 m are unchanged.
+    - With the squeeze rule only: a pure helper fed hand-made tracks flags two people still for 5 s in one 0.86 m doorway. It flags neither one still person nor two people who moved 0.1 m.
+  - **Slow:** the office at 500 agents shows no wedge, and `remaining == inStairs == 0` (about 4 min on the lead's laptop). Leave the 7-minute jammed `door_flow(0.86)` to the generator.
+- [ ] **Step 5: Verify:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put Steps 1–2's numbers and the new limits line under this heading.
+- [ ] **Step 6: Commit:** `git add sim data/calibration.json docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "test(sim): narrow-door limit measured at the demo buildings' 0.86 m doors"` (no attribution lines). If Step 2 added the squeeze rule, use `fix(sim): people squeeze through narrow doors instead of wedging` instead.
+  - Handoff for E and A: the credibility panel's limits gain the 0.86 m lines (and a 0.86 m bar, if the squeeze rule landed). E30's `sync-demo.mjs` copies the file on the next build.
+  - If the squeeze rule landed, also tell A: `squeeze` is a new optional event type, and the precompute must rerun.
+
+### Task C25 (P1 · Sat 8 PM): Same results, less time: the judge's live fire and the precompute
+BLOCKED: taken over by the lead's machine at 15:13; skip
+
+**Files:** Modify `sim/run.py` (`_FloorSim`, `choose`, `blocking_doors`, the smoke-grid tick, the step loop, the CLI), `sim/seeds.py` and `sim/sweep.py` (pass `parallel=False`), `sim/smoke_test.py` (new `check_parallel`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`.
+
+**Interfaces:**
+- Consumes:
+  - `run()`'s step loop: `for fs in sims: fs.sim.iterate()`, then `removed_agents()` per floor.
+  - `choose()`: on every `distances` miss it computes `goal = st["poly"].intersection(fs.walk).representative_point()`, a whole-floor polygon intersection, then `route_points`.
+  - `visible_smoke(...)`, called for every option of every re-planning person whenever `fs.id in smoke_grids`.
+  - `blocking_doors(fs, st)`, called for every stage in every `choose` and for each due arrival. `blocked` and `closed_groups` change only at the 1 s tick.
+  - Outside C's folder:
+    - A's API (`backend/app/jobs.py`) spawns one process per run; `simulate()` is `run()` plus `fire.metrics.compute`.
+    - The app's `pollRun` gives up after 180 s and shows an error, with no precomputed fallback.
+- **Measured** on the lead's Windows laptop: the office scenario (250 agents, kitchen fire in R143, seed 1, `FireModel`). The machine was busy, so wall times vary by ±25%.
+  - `run()` took 71–97 s. The API adds 2–4 s of imports, 0.7 s for `FireModel()` and 3–4 s for `fire.metrics.compute`. C's runner does such a run in about 8 s (C13, C14).
+  - Where a 71 s run goes (light timers):
+    - JuPedSim `iterate`: 51 s, about 57% of it on F1 and 43% on F2.
+    - `route_points`: 4.7 s (10,678 RoutingEngine calls, already memoized per half-meter cell).
+    - `visible_smoke`: 3.3 s (24,944 calls).
+    - The `goal` intersection: about 3.5 s (one per distance miss, with the same answer for each stage every time).
+    - `fire.step` 1.5 s, `RuleBrain.decide` 1.1 s, `add_agent` 0.85 s, `_frame` 0.74 s, `blocking_doors` 0.46 s (35,879 calls), JSON dump 0.1 s.
+  - **JuPedSim:**
+    - On office F1, a routed agent costs about 0.22 ms per step, because JuPedSim re-plans its path every step. A parked agent costs 0.0075 ms.
+    - `Simulation.iterate` releases the GIL: two simulations in two threads took 0.59× the sequential time.
+  - **Prototype** (a scratch copy of `run.py`):
+    1. `goal` stored once per stage in `_FloorSim`.
+    2. `visible_smoke` skipped (seen = 0) on a floor whose decoded grid has no cell below `CUE_VIS_M` visibility, where its sum is exactly 0.
+    3. `blocking_doors` memoized, and the memo cleared at each 1 s tick after `blocked` and `closed_groups` change.
+    4. Floors 2..n iterate on a `ThreadPoolExecutor` while floor 1 iterates on the main thread.
+  - **Prototype results:**
+    - Office: 97 s → 80 s with (1)–(3), and 72 s with (4) as well. Every run JSON was byte-identical, also across processes.
+    - Example at 160 agents: (1)–(3) made no difference (21 s), and (4) was slower (25 s → 31–33 s). There the per-step thread handoff costs more than the second floor's step.
+  - Under 30 s on the lead's laptop is out of reach without changing results: JuPedSim's own stepping is 72% of the run.
+- Produces:
+  - Stage dicts gain `goal`, computed from the final stage polygon (after C17's triangle swap).
+  - `run(building, scenario, fire=None, parallel=None)`. `None` reads the `SIM_PARALLEL_FLOORS` environment variable ("1" turns it on), so it is off by default.
+  - `run_seeds` and the sweep pass `parallel=False`, so process pools don't oversubscribe cores.
+  - `PARALLEL_MIN_MS`, and the CLI flag `python -m sim.run BUILDING SCENARIO OUT [--parallel]`.
+
+- [ ] **Step 1: Before.** Save these to ignored `debug/c25-before/`, and note each wall time:
+  - `python -m sim.run data/buildings/office.json data/buildings/office.scenario.json debug/c25-before/office.json`;
+  - the same for the clinic;
+  - `check_core`'s run.
+- [ ] **Step 2: Exact savings.** Apply (1)–(3). Nothing else in the dynamics changes, and no random draw moves to another stream.
+- [ ] **Step 3: Parallel floors, opt-in.** Apply (4) behind `parallel`.
+  - Every floor finishes `iterate` before any `removed_agents()` is read. Every add, journey switch and speed change stays on the main thread, between steps.
+  - Time each floor's `iterate` with `time.perf_counter`, in both modes. Use the pool for the next tick only if the second-slowest floor averaged at least `PARALLEL_MIN_MS` (start at 0.5) per step over the last tick. The choice changes time, never results.
+  - Shut the pool down in a `finally`.
+- [ ] **Step 4: Equality and timing.**
+  - Rerun Step 1's three runs, sequential and with `--parallel`. All six must equal their before-files byte for byte (`cmp`). If one differs, find the cause; never accept a difference.
+  - Time the office and the example in both modes. Keep the `PARALLEL_MIN_MS` at which the example is at most 5% slower than sequential and the office gains most.
+  - Target: the office at least 25% faster with `--parallel` on your machine.
+- [ ] **Step 5: Smoke test** `check_parallel(building, fast)`.
+  - **Fast:**
+    - Every stage's `goal` equals the old formula, on the example and on office F1.
+    - A 40-agent example run with `FireModel`, `DSA1` propped and `E2` blocked gives the same JSON with `parallel=True` (and `PARALLEL_MIN_MS` 0, so the pool really runs) as with `parallel=False`.
+  - **Slow:** the office scenario at 250 agents with `parallel=True` and `PARALLEL_MIN_MS` 0 equals the sequential run byte for byte. Print both wall times.
+- [ ] **Step 6: Verify:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put a table under this heading: office, clinic and example; seconds before, after (sequential) and with `--parallel`. Add the threshold you kept.
+- [ ] **Step 7: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "perf(sim): same runs in less time: cached stage goals, skipped smoke-free scans, optional parallel floors"` (no attribution lines).
+  - Handoff for A:
+    - Start the demo API with `SIM_PARALLEL_FLOORS=1`; spawned workers inherit it.
+    - On the lead's laptop an office live run still takes over a minute, against a few seconds on C's runner. Serve live runs from the fastest Mac, or keep the judge's fire on the precomputed nearest run.
+    - Check `pollRun`'s 180 s cap against clinic runs on the demo machine.
+  - Handoff for D: `run_many` can pass `parallel=False` too. Precompute and batches keep the sequential default and still gain Step 2's savings.
+
+### Task C26 (P2 · Sat 9 PM): Determinism guard: byte-identical runs in one process and across processes
+BLOCKED: taken over by the lead's machine at 15:13; skip
+
+**Files:** Modify `sim/smoke_test.py` (new `check_determinism`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`. Modify other `sim/` code only if Step 3 finds a cause.
+
+**Interfaces:**
+- Consumes:
+  - `run()`, and the CLI `python -m sim.run BUILDING SCENARIO OUT`, which writes compact JSON (`separators=(",", ":")`).
+  - JuPedSim agent ids, which keep counting across simulations in one process (AGENTS.md).
+  - Python's per-process string hashing (`PYTHONHASHSEED`), which reorders sets of door, room and group ids.
+  - Existing guards: `check_core` compares the events and metrics of a same-seed rerun (NoFire, one process), and C16's `run_seeds` compares metrics. C25's `check_parallel` covers its own parallel mode.
+  - run/v0 has no timing fields (`wallS` lives only in sweep and seed rows), so whole files compare.
+- **Measured:**
+  - The example at 160 agents with `FireModel`, run twice in one process, gave identical JSON.
+  - The office at 250 agents gave byte-identical JSON in three processes with random hash seeds: sequential, and C25's prototype with and without threads.
+  - A lead session on Sat 06:25 found the same for office R118b fires, also after a different fire had run first in that process.
+  - A fire point 1 mm away (x 41.489 against 41.49) changes the run (t90 138.41 s against 139.49 s), so every comparison must reuse the exact scenario JSON.
+  - No check guards any of this today.
+- Produces: `check_determinism(building, scenario, slow=False)`.
+
+- [ ] **Step 1: One process.** Use a 24-agent example scenario: `FireModel`, `DSA1` propped, `E2` blocked, a mix with 10% visitor and 10% wheelchair, `maxTime` 600. Run it twice; the two `json.dumps` texts must be identical. Register the check late in `main()`, so other runs have warmed every cache first.
+- [ ] **Step 2: Other processes.** Write that scenario to a temporary folder. Run it with `python -m sim.run` in a subprocess, with the repo root as cwd, `LLM_PROVIDER=off` and `PYTHONHASHSEED=0`. The output file must equal Step 1's text byte for byte; a fresh process has cold caches.
+  - Keep the fast part under about 2 s on a Mac: two small runs and one subprocess.
+  - Slow adds a subprocess with `PYTHONHASHSEED=4242`. It also repeats Steps 1–2 on the office at 40 agents, with `D$77xsW` propped and `D$77x5b` blocked, and runs a different office fire between the two in-process runs.
+- [ ] **Step 3: Fix only if needed.** If anything differs, find the first differing event or frame, and fix its cause in `sim/`: sort before iterating over a set, and key by `idx`. Never round, sort or drop output fields to make files match.
+- [ ] **Step 4: Verify:** With `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the hash seeds and modes you compared, and any cause you fixed, under this heading.
+- [ ] **Step 5: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "test(sim): byte-identical runs within and across processes"` (no attribution lines).
