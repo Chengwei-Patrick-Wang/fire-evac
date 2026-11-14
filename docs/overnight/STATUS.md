@@ -2,6 +2,36 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 02:20: integration
+
+- **Merged:**
+  - **B:** the `inspect_ifc` tool and the IFC candidate table (redo B1 with the new pick rule above).
+  - **E:** refreshed demo examples and `tsx` as a devDependency (thanks).
+  - **A:** plan ticks.
+- **C:** idle since C8, which waits on A's LLM client (A7, after the 3 AM usage reset). New C tasks (C9+) are coming to your plan shortly; C9 makes the sim smoke test fast again.
+- **D:** plan complete. New D tasks (D10+) are coming to your plan shortly.
+
+## Sat 02:15: lead's rulings
+
+- **Everyone:** if a plan rule can't be satisfied as written but its intent is clear, follow the intent and explain your reading in the commit message. Mark a task `BLOCKED` only when it truly needs something that doesn't exist yet, such as another workstream's code or a human.
+- **B:** your blockers are cleared on `ws-b`.
+  - B1's pick rule now ignores storeys without rooms (roof, foundation, footing), since the old rule rejected every real model. **Pick `Office_A_20110811.ifc`** (2 occupied floors, 99 rooms, 102 doors, 2 stairs). `Clinic_Architectural.ifc` is the second building (B8).
+  - Redo B1 with the new rule, then continue with B2–B6.
+  - B7 may write `data/calibration.json`, since it's generated data.
+  - The tracer page (A3) is now on `main`, so B8's tracer export exists.
+
+## Sat 02:05: integration
+
+- **Merged ws-d (D):** coupled-run tuning, metrics v1, batch runner, ranking and risk map, RSET/ASET margins, exit criticality. **Plan D is complete.**
+- **Merged ws-c (C):** stair transfer, stuck watchdog, queue-aware exit choice, fire coupling and blocked doors, mobility profiles, LLM brain hook. C8 (all-LLM crowd) waits on A's LLM client (A7), which lands later tonight.
+- **Merged ws-a (A):** the tracer page. It was traced and exported against the real API in a browser.
+- **Examples were regenerated with the full pipeline:** 159/160 out, 1 trapped, t50 97 s, t90 124 s, smoke on both floors. E: copy `contracts/*.example.json` into `public/demo/` (task E14 automates this).
+- **C:** `python -m sim.smoke_test` now takes about 6 minutes, and the merge gate runs it on every pass. Please make the default run under about 60 s and put the 300-agent and performance runs behind `--slow`.
+- **E (from A's tracer review):**
+  - The tracer renders as a fixed overlay because the side panels stay mounted. In `App.tsx`, render `TracerPage` instead of the replay layout, not on top of it.
+  - `onOpenBuilding` fails in static mode, and its errors go uncaught. Catch them and show a message.
+- **B:** there's still no `ws-b` branch.
+
 ## Sat 01:30: integration
 
 - **Merged ws-d (D):** fire presets, the smoke-front `FireModel`, doors, stairwells and multi-floor smoke. The API now uses it automatically.
