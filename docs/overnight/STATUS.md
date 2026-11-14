@@ -1,5 +1,78 @@
 # Overnight status
 
+## Sat 09:15: D15 merged (office demo batch); lead took over D18
+
+**Merged:** ws-d **D15** (lead takeover), the real office demo batch. It ran 12 rooms x 3 seeds: 252 runs plus a pilot, 0 failed, and every comparison has n=36. Wall time was 49 min on the shared laptop. The command is in `fire/README.md`. The output `data/runs/batch-office.json` is gitignored and sits on the lead's laptop in `../HackUMass-ws-d-lead/data/runs/`. The blocked-exit sweep ran clean, so C13b fixed the old crash.
+
+**Office headline numbers (for the demo, A6 and E's Report tab):**
+- Weak spots:
+  1. Fire in OPEN OFFICE (R237b): 14.3 people trapped on average; 90% out after 141 s.
+  2. Exit Stair S1 (west): 15 people queued at peak; 181 person-seconds of waiting per fire.
+  3. Exit Stair S2 (east): 10 people queued at peak; 114 person-seconds.
+  4. The door from SECURE DOC ROOM to OPEN OFFICE: 5 people queued at peak; 26 person-seconds, all of them in smoke.
+
+  The top 3 hold in 2 of 3 seeds, and S1 ranks first in 3 of 3.
+- What-ifs, per fire:
+  - Propped stair doors: +152 person-seconds in smoke (+54%), no change in 90% out.
+  - Stair S1 blocked: 90% out 13 s later (slower in 36 of 36), +154 person-seconds in smoke.
+  - Sprinklers: 1.2 fewer people trapped.
+- Best measured fix: widen Exit Stair S1 (west) from 0.86 m to 1.36 m. 90% are out 2 s sooner, with 6% less time in smoke (faster in 23 of 36 fires).
+- The story: the fire's location barely changes 90% out (135-141 s for every room). Nearly everyone trapped comes from the OPEN OFFICE fire, because the SECURE DOC ROOM (R205) has its only door into the open office.
+
+**Needs to know:**
+- **D, E, A (sprinklers):** the sprinklers what-if shows +47% time in smoke. That is how smoke time is counted, not harm: the sim drops trapped people from the frames, so their smoke time stops counting. In a paired check, trapped went 12 -> 0 and smoke time went 2,003 -> 3,626 person-seconds. Show sprinklers by people trapped, not by smoke time. The caveat is in `fire/README.md`.
+- **C (Althan):** every fire in office room R227 logs `WARNING (sim): F2/R227: no safe fire keep-out cut; keeping walkable area`, so people can still walk through that burning room. Worth a look at 10 AM.
+- **Everyone running batches or the precompute:** prefix the command with `OPENBLAS_NUM_THREADS=1`. Each pool worker drops from about 550 MB to about 33 MB with identical results. Memory reached 47.8 of 48.6 GB while two batches ran.
+- **D (Aidan):** the lead took over **D18 (headline numbers pack)** at 09:10; it is running now. D20 (run cache, P1) is still yours. The sprinklers what-if and the sprinklers fix rerun the same scenario (about 1/7 of the runtime) and could share one set of runs. `--budget-min 20` gives a 30-35 min batch on a shared laptop.
+
+**Still running:** A5, the demo precompute.
+
+## Sat 08:05: Morning summary (read this first)
+
+**On `main`, by workstream (every check passes):**
+- **A (lead):**
+  - Done: the API with routers and the `tools/check_all.py` merge gate; the tracer page with a Gemini first pass (it walks a model chain when one model is out of quota); batch endpoints; the Gemini client, report card (`/api/report`) and `decide`/`decide_batch`. API runs carry smoke exposure.
+  - Running: A5, the demo precompute (rerun).
+  - Open: A6 (Devpost, video, slides), A9 (UMass trace; needs a decision), A10 (personas and the all-LLM showcase; limited by the Gemini quota).
+- **B (Jaya), plan complete:** IFC import, normalizer hardening, overrides and validation, the building index, AI room tidy, tracer showcase assets, and every public building validated. The **NIBS office** has readable exit names, the 250-occupant kitchen scenario and clear door widths. The **NIBS clinic** is CC BY 4.0: cite BSI (2020) and list changes.
+- **C (Althan), plan complete:**
+  - stair transfer between floors;
+  - exit choice that weighs queues, visible smoke and unfamiliar exits;
+  - the fire keep-out, early start on fire and smoke cues, and waiting beside the stair flow with per-profile metrics;
+  - the LLM brain and the all-LLM crowd mode;
+  - the robustness sweep and the clinic at 300 agents;
+  - flow and walking-speed-in-smoke validation (`data/calibration.json`), seed ranges, smaller run files.
+- **D (Aidan):**
+  - Done: the smoke-front fire model, metrics, the batch runner, ranking and risk map, RSET/ASET, exit criticality, smoke exposure, the paired what-if sweep, fire-aware chokepoints, measured suggested fixes, seed ranges with top-3 stability, batch timing.
+  - The runner went quiet at 04:24. The lead took over D14b (merged) and **D15, the office demo batch, now running**.
+  - Open: D17–D21 (sensitivity, headline pack, refresh after C14, run cache, clinic batch).
+- **E (Donovan), plan complete:** the full app:
+  - 3D replay with smoke, heatmap and queue rings; dashboard; live runs; risk map and weak spots; what-if split screen; report card; credibility panel;
+  - guided demo mode, About with QR and phone layout, agent's-eye view, deep links, printable report and PNG export;
+  - accessibility pass and results, measured fixes, honest ranges, headline pack, clinic-scale performance, headless visual QA (`npm run qa`).
+
+**Demo buildings:** the synthetic example (2 floors), the NIBS office (2 floors, 99 rooms), the NIBS clinic (2 floors, 252 rooms).
+
+**Overnight findings:**
+- Propping the stair doors barely changes evacuation time but raises smoke exposure by about 22%, so the what-if leads with exposure.
+- Fixed sim bugs:
+  - people routed through flames;
+  - wheelchair waits blocking a stair;
+  - stair-arrival crashes;
+  - a keep-out slot in the clinic;
+  - a doorless clinic stair people walked down while it burned.
+
+**Decisions waiting for the lead:**
+1. **Gemini billing.** The free tier allows 20 requests per day per model (it resets around 3 AM ET). Enable billing for daytime testing and the live demo, or rely on precomputed reports.
+2. **The public Netlify deploy** of the static demo. A5 prepares it; nothing is published without the lead's OK.
+3. **Devpost, video and slides (A6).** Credits: NIBS Common BIM Files (ERDC-CERL), buildingSMART (clinic, CC BY 4.0), JuPedSim, three.js / React Three Fiber.
+4. **The UMass Student Union trace (A9):** yes or no. Its results stay private either way.
+
+**10 AM sync focus:**
+- Run the guided demo end to end on the office: judge's fire → propped stair door → risk map → measured fixes.
+- Review the report card text and pick the hero building.
+- Split the rest of the day: Devpost and video, demo rehearsal, D17–D21, polish.
+
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
 ## Sat 06:50: integration
