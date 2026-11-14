@@ -45,6 +45,8 @@ def main() -> None:
                              [1, round(mx + 0.5, 2), round(my + 0.5, 2), 0, 1]]}
         for k in range(10)
     ]
+    # Establish positions before movement so all ten queue frames have known speed.
+    frames.insert(0, {"t": -0.5, "a": [[*row[:4], 0] for row in frames[0]["a"]]})
     run = {
         "version": "run/v0", "id": "hand-made", "buildingId": building["id"], "frameInterval": 0.5,
         "floors": [f["id"] for f in building["floors"]], "frames": frames,
@@ -54,7 +56,7 @@ def main() -> None:
     json.dumps(m)  # must be plain JSON
     assert m["agents"] == 2, "compute must keep the sim's metrics"
     door = next(d for d in m["doors"] if d["id"] == "D101")
-    assert door["floor"] == f1["id"] and door["flow"] is None
+    assert door["floor"] == f1["id"] and door["flow"] == 0.0 and door["crossed"] == 0
     assert door["peakQueue"] == 2, door
     assert door["waitPersonSeconds"] == 10.0, door
     assert len(m["doors"]) == sum(len(f["doors"]) for f in building["floors"])

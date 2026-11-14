@@ -158,3 +158,50 @@ test pass; smoke frames have interval 2 s and heat release is nondecreasing.
 - Each scenario has one ignition point. Stair links and closed-door penalties
   approximate smoke transport rather than solving airflow.
 - Front arrival is tabulated for 1800 s after ignition; farther nodes stay clear.
+
+## Replay metrics (D5)
+
+`compute(run, building, scenario=None)` returns a copy of the simulator metrics,
+keeping all existing and unknown keys, plus `doors` and `heatmaps`. The optional
+scenario is reserved for room margins. Run
+`python -m fire.metrics data/runs/ws-d-coupled.json contracts/building.example.json`
+to print five doors ranked by waiting, including flow in distinct people/minute.
+
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `QUEUE_RADIUS_M` | 2 m | Maximum distance to the opening segment for a queue |
+| `QUEUE_SPEED_MS` | 0.3 m/s | Queue speed must be strictly below this |
+| `DOOR_BOX_M` | 3 m | Expand the opening bounds to filter candidate agents |
+| `CROSS_SIDE_M` | 1 m | Both crossing observations must be this close to the door line |
+| `CROSS_MARGIN_M` | 0.3 m | Allowed projection beyond either end of the opening |
+| `FLOW_MIN_SPAN_S` | 30 s | Minimum first-to-last-crossing span for flow |
+
+Every door, including stair and exit doors, receives a result. A queue counts
+status-1 agents on that floor with known speed below the threshold and within
+the opening radius. Speed is displacement divided by elapsed time since the
+agent's previous appearance. First sightings and floor changes have unknown
+speed and do not queue. `peakQueue` is the maximum frame count;
+`waitPersonSeconds` sums frame counts times `frameInterval`. The standing-agent
+smoke fixture starts with a status-0 observation, then ten known-speed frames,
+retaining its expected peak 2 and wait 10.0 person-seconds.
+
+A crossing requires opposite signed sides of the door line in consecutive
+frames on the same floor, with both observations inside the side-distance and
+projection limits. `crossed` counts distinct agents, even if someone crosses
+repeatedly. `flow` is that count times 60 divided by the span from the first to
+last qualifying crossing, with a minimum span of 30 s; no crossings give 0.0.
+An observation exactly on the line is not an opposite-side pair. Disappearing
+agents have no inferred crossing; replay sampling can miss fast crossings.
+
+Heatmaps count status-1 agent-frames, excluding unstarted occupants. Their
+headers come from `fire.grid.grid_specs`, so origins, cell sizes and dimensions
+match smoke, including coarsened large buildings. Each floor is normalized to
+its own busiest cell (100), then encoded as row-major base64 Uint8; empty runs
+produce zero queues, flow and heatmaps. Positions outside grid bounds are
+excluded. These are occupancy counts, not time-weighted exposure estimates.
+
+A/E integration handoff: `doors[].flow` is now numeric people/minute and
+`doors[].crossed` is a distinct-agent count. Heatmaps count moving agents and
+share smoke grid headers. No contract fields were renamed or removed.
+D5 verification: `python -m fire.smoke_test` prints `fire checks OK`; the coupled
+run CLI prints five rows, led by D104 (peak 3, wait 55.5, flow 10.00/min).

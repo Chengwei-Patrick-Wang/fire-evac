@@ -267,6 +267,81 @@ def check_tuning():
                 assert model.blocked_doors() == set(), (preset, t, model.blocked_doors())
 
 
+
+def check_metrics():
+    from fire.metrics import compute
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    floor = building["floors"][0]
+    door = next(d for d in floor["doors"] if d["id"] == "D101")
+    start, end = np.asarray(door["a"]), np.asarray(door["b"])
+    midpoint = (start + end) / 2
+    tangent = (end - start) / np.linalg.norm(end - start)
+    normal = np.array([-tangent[1], tangent[0]])
+
+    def row(idx, point, status=1, fi=0):
+        return [idx, *map(float, point), fi, status]
+
+    frames = []
+    for k in range(10):
+        # Two stationary queuers, a 1 m/s walker, and an unstarted occupant.
+        occupants = [row(0, midpoint - normal * 0.5), row(1, midpoint + normal * 0.5),
+                     row(2, midpoint + normal * (k * 0.5 - 2.25)),
+                     row(3, midpoint + tangent * 3, status=0)]
+        frames.append({"t": k * 0.5, "a": occupants})
+    frames.insert(0, {"t": -0.5, "a": [row(0, midpoint - normal * 0.5, 0),
+                                        row(1, midpoint + normal * 0.5, 0)]})
+    run = {"floors": [f["id"] for f in building["floors"]], "frames": frames,
+           "frameInterval": 0.5, "metrics": {"t90": 42, "exitCounts": {"E1": 1}, "custom": 7}}
+    result = compute(run, building)
+    measured = next(d for d in result["doors"] if d["id"] == "D101")
+    assert measured["peakQueue"] == 2 and measured["waitPersonSeconds"] == 10, measured
+    assert measured["crossed"] == 1 and measured["flow"] == 2.0, measured
+    assert result["t90"] == 42 and result["custom"] == 7 and result["exitCounts"] == {"E1": 1}
+    assert "doors" not in run["metrics"]
+    json.dumps(result)
+    for heatmap, spec in zip(result["heatmaps"], grid_specs(building)):
+        assert all(heatmap[key] == value for key, value in spec.items())
+        raw = base64.b64decode(heatmap["d"])
+        assert len(raw) == heatmap["cols"] * heatmap["rows"]
+    empty = compute({**run, "frames": []}, building)
+    assert all(d["peakQueue"] == d["waitPersonSeconds"] == d["flow"] == d["crossed"] == 0
+               for d in empty["doors"])
+    assert all(not any(base64.b64decode(h["d"])) for h in empty["heatmaps"])
+
+    # Unknown speed on first appearance / a floor transfer; a missing frame
+    # still uses elapsed time for speed but cannot imply a door crossing.
+    sparse = [{"t": 0, "a": [row(4, midpoint - normal * 0.25)]},
+              {"t": 1, "a": []},
+              {"t": 2, "a": [row(4, midpoint + normal * 0.25)]},
+              {"t": 3, "a": [row(4, midpoint + normal * 0.25, fi=1)]},
+              {"t": 4, "a": [row(4, midpoint + normal * 0.25)]}]
+    measured = next(d for d in compute({**run, "frames": sparse}, building)["doors"]
+                    if d["id"] == "D101")
+    assert measured["waitPersonSeconds"] == 0.5 and measured["crossed"] == 0, measured
+
+    # Repeated crossings by one agent count once, and a >30 s span sets flow.
+    crossings = [{"t": t, "a": [row(5, midpoint + normal * side)]}
+                 for t, side in ((0, -0.25), (1, 0.25), (40, -0.25), (61, 0.25))]
+    measured = next(d for d in compute({**run, "frames": crossings}, building)["doors"]
+                    if d["id"] == "D101")
+    assert measured["crossed"] == 1 and measured["flow"] == 1.0, measured
+
+    # Queue distance is to the opening segment, including a wide door's ends.
+    wide = fixture_building()
+    wide["floors"][0]["doors"][0].update(a=[10.1, 0], b=[10.1, 6])
+    standing = [[0, 10, 0.2, 0, 1]]
+    wide_run = {"floors": ["F1"], "frameInterval": 0.5,
+                "frames": [{"t": 0, "a": standing}, {"t": 1, "a": standing}]}
+    assert compute(wide_run, wide)["doors"][0]["peakQueue"] == 1
+    # Coarsened heatmap headers match smoke, and unstarted agents add no heat.
+    large = big_fixture()
+    large_run = {"floors": ["F1"], "frames": [{"t": 0, "a": [[0, 5, 5, 0, 0]]}]}
+    heatmap = compute(large_run, large)["heatmaps"][0]
+    assert heatmap["cell"] > 0.5 and not any(base64.b64decode(heatmap["d"]))
+
+
 def check_coupled_slow():
     # Import only for --slow: the ordinary model checks do not need JuPedSim.
     from sim.run import run
