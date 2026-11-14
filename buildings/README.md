@@ -81,3 +81,11 @@ add assumed connections from the mechanical room to the corridor and from the
 electrical room to storage. These are modeling assumptions, not verified doors.
 Regenerate with `python -m buildings.ifc data/raw/team-downloads/Office_A_20110811.ifc data/raw/office.plan.json --id office --name "NIBS Office" --credits "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"`, then `python -m buildings.normalize data/raw/office.plan.json data/buildings/office.json`.
 Create a scenario with `python -m buildings.make_scenario data/buildings/office.json data/buildings/office.scenario.json` (optional `--total`).
+
+## Tidying AI-proposed rooms
+
+Call `tidy_floor(floor, grid=0.25, min_area=1.0, min_width=0.6)` after
+sanitizing a proposed floor. It returns a cleaned copy and notes describing
+squaring, merges, trims and dropped rooms; doors and other metadata are kept.
+Run `python -m buildings.tidy IN OUT` to process a floor or every floor in a
+plan and print the notes. This cleanup is geometric and does not verify doors.

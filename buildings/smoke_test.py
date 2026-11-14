@@ -1,4 +1,4 @@
-"""Smoke test for the normalizer: python -m buildings.smoke_test
+﻿"""Smoke test for the normalizer: python -m buildings.smoke_test
 
 Normalizes contracts/plan.example.json, writes debug/building.example.json,
 and checks the review-focus geometry (rooms separated by walls, exits, stairs).
@@ -259,6 +259,7 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_tidy()
     check_traced()
     check_one_door()
     check_hard()
@@ -281,5 +282,34 @@ def main() -> int:
     return 0
 
 
+
+
+
+def check_tidy():
+    import copy
+    from buildings.tidy import tidy_floor
+    floor = json.loads((ROOT / "buildings/fixtures/ai_floor.json").read_text(encoding="utf-8-sig"))
+    original = copy.deepcopy(floor)
+    cleaned, notes = tidy_floor(floor)
+    expected = {
+        "AI1": [[0,0],[6,0],[6,4],[0,4]],
+        "AI2": [[6,0],[14,0],[14,2],[8,2],[8,6],[6,6]],
+        "AI3": [[0,7],[4,7],[4,10],[0,10]],
+        "AI5": [[8,2],[12,2],[12,5],[8,5]],
+        "AI8": [[20,0],[23,3],[20,6],[17,3]],
+    }
+    assert {r["id"]: r["polygon"] for r in cleaned["rooms"]} == expected
+    assert any("AI4: merged into AI1" in n for n in notes)
+    assert any("AI5: trimmed" in n for n in notes)
+    assert all(any(f"{rid}: dropped" in n for n in notes) for rid in ("AI6", "AI7", "AI9"))
+    polygons = [Polygon(r["polygon"]) for r in cleaned["rooms"]]
+    assert all(abs(c * 4 - round(c * 4)) < 1e-8 for r in cleaned["rooms"] for point in r["polygon"] for c in point)
+    assert all(a.intersection(b).area <= 0.01 for i, a in enumerate(polygons) for b in polygons[i+1:])
+    assert tidy_floor(cleaned) == (cleaned, [])
+    assert floor == original
+    plan_to_building({"version": "plan/v0", "id": "ai", "source": "trace", "floors": [cleaned]})
+
+
 if __name__ == "__main__":
     sys.exit(main())
+
