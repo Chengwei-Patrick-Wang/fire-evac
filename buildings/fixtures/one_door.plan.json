@@ -1,0 +1,7 @@
+﻿{
+  "version": "plan/v0", "id": "one-door", "name": "Door calibration",
+  "source": "synthetic", "credits": "Synthetic calibration geometry",
+  "floors": [{"id": "F1", "level": 0, "elevation": 0, "height": 3.5,
+    "rooms": [{"id": "R1", "name": "Lobby", "type": "lobby", "polygon": [[0,0],[14,0],[14,10],[0,10]]}],
+    "doors": [{"id": "D1", "name": "Test door", "a": [14,4.5], "b": [14,5.5], "width": 1.0, "fireDoor": false, "state": "open"}]}]
+}

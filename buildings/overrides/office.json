@@ -1,0 +1,8 @@
+{
+  "rooms": {"remove": ["R124"]},
+  "doors": {"add": [
+    {"floor": "F1", "id": "DFIX-MECH", "a": [40.0, 21.6], "b": [41.0, 21.6], "width": 1.0, "fireDoor": false, "state": "open"},
+    {"floor": "F1", "id": "DFIX-ELEC", "a": [46.85, 8.0], "b": [46.85, 9.0], "width": 1.0, "fireDoor": false, "state": "open"}
+  ]}
+}
+
