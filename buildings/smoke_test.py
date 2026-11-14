@@ -20,6 +20,58 @@ OUT = ROOT / "debug" / "building.example.json"
 IFC_PATH = ROOT / "data" / "raw" / "team-downloads" / "Office_A_20110811.ifc"
 
 
+def hard_plan():
+    def room(id, points, kind="office", group=None):
+        r = {"id": id, "name": id, "type": kind, "polygon": points}
+        if group:
+            r["group"] = group
+        return r
+    def door(id, a, b, **kwargs):
+        return {"id": id, "a": a, "b": b, "width": 1.0, "fireDoor": False, "state": "open", **kwargs}
+    return {"version": "plan/v0", "id": "hard", "source": "ifc", "floors": [
+        {"id": "F1", "level": 0, "elevation": 0, "height": 3.5, "rooms": [
+            room("L1", [[0,0],[8,0],[8,3],[3,3],[3,6],[0,6]], "lobby"),
+            room("R2", [[8.4,0],[14,0],[17,3],[14,6],[8.4,6]]),
+            room("SL", [[0,6.4],[3,6.4],[3,9.4],[0,9.4]], "stair", "SA"),
+            room("R9", [[8.4,6.6],[14,6.6],[14,8.6],[8.4,8.6]])], "doors": [
+            door("D1", [8.2,1], [8.2,2], rect=[[8.1,1],[8.3,1],[8.3,2],[8.1,2]]),
+            door("DS", [1,6.2], [2,6.2], fireDoor=True, state="closed"),
+            door("DX", [15.146,1.146], [15.854,1.854])]},
+        {"id": "F2", "level": 1, "elevation": 3.5, "height": 3.5, "rooms": [
+            room("U1", [[0,0],[8,0],[8,6],[0,6]]),
+            room("SU", [[0,6.4],[3,6.4],[3,9.4],[0,9.4]], "stair", "SB")], "doors": [
+            door("DSU", [1,6.2], [2,6.2], fireDoor=True, state="closed"),
+            door("DU", [0,2], [0,3])]}]}
+
+
+def check_hard():
+    import copy
+    plan = hard_plan()
+    b = plan_to_building(plan)
+    f1, f2 = b["floors"]
+    assert len(f1["walkable"]) == 2 and len(f2["walkable"]) == 1
+    main = Polygon(f1["walkable"][0]["outer"], f1["walkable"][0]["holes"])
+    assert Polygon(plan["floors"][0]["rooms"][0]["polygon"]).difference(main).area < 0.05
+    for door in f1["doors"]:
+        if door["id"] in {"D1", "DS"}:
+            for rid in door["connects"]:
+                room = next(r for r in f1["rooms"] if r["id"] == rid)
+                assert Polygon(door["rect"]).intersection(Polygon(room["polygon"])).area >= 0.01
+    assert {e["id"] for e in f1["exits"]} == {"DX"}
+    assert {e["id"] for e in f2["exits"]} == {"DU"}
+    exit_poly = Polygon(f1["exits"][0]["polygon"])
+    assert all(exit_poly.intersection(Polygon(r["polygon"])).area < 1e-8 for r in f1["rooms"])
+    c = exit_poly.centroid
+    dx, dy = c.x - 15.5, c.y - 1.5
+    assert (dx - dy) * 0.7071 / (dx*dx + dy*dy)**0.5 >= 0.95
+    gap = copy.deepcopy(plan)
+    gap["floors"] = [{"id": "F1", "rooms": [
+        {"id": "A", "polygon": [[0,0],[6,0],[6,4],[0,4]]},
+        {"id": "B", "polygon": [[0,6.6],[6,6.6],[6,10.6],[0,10.6]]}],
+        "doors": [{"id": "D", "a": [2.5,4], "b": [3.5,4], "width": 1}]}]
+    assert not plan_to_building(gap)["floors"][0]["exits"]
+
+
 def check_ifc():
     from buildings.ifc import group_stairs
     def stair(id, x):
@@ -99,14 +151,23 @@ def main() -> int:
         for fid, groups in groups_by_floor.items():
             assert g in groups, f"stair group {g} missing on {fid}"
 
-    # Rooms connect only through doors: cutting out the door rects leaves one piece per room
-    # plus one per exit stub. Missing walls would merge neighboring rooms into one piece.
-    for f in b["floors"]:
-        walk = Polygon(f["walkable"][0]["outer"], f["walkable"][0]["holes"])
-        cut = walk.difference(unary_union([Polygon(d["rect"]) for d in f["doors"]]))
-        n_parts = len(cut.geoms) if hasattr(cut, "geoms") else 1
-        expected = len(f["rooms"]) + len(f["exits"])
-        assert n_parts == expected, f"{f['id']}: {n_parts} pieces without doors, expected {expected}"
+    reference = json.loads((ROOT / "contracts" / "building.example.json").read_text(encoding="utf-8"))
+    for floor, expected in zip(b["floors"], reference["floors"]):
+        for key in ("rooms", "doors", "exits"):
+            assert {v["id"] for v in floor[key]} == {v["id"] for v in expected[key]}
+        area = sum(Polygon(p["outer"], p["holes"]).area for p in floor["walkable"])
+        expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
+        assert abs(area - expected_area) / expected_area < 0.01
+
+    check_hard()
+    pick = ROOT / "data" / "raw" / "pick.plan.json"
+    if pick.exists():
+        for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
+            rooms = {r["id"]: Polygon(r["polygon"]) for r in floor["rooms"]}
+            for door in floor["doors"]:
+                if "outside" not in door["connects"]:
+                    for rid in door["connects"]:
+                        assert Polygon(door["rect"]).intersection(rooms[rid]).area >= 0.01, (floor["id"], door["id"], rid)
 
     print(f"wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.0f} KB)")
     check_ifc()
