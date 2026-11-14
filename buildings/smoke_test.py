@@ -333,6 +333,7 @@ def main() -> int:
     check_problems()
     check_clinic()
     check_office()
+    check_door_widths()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
@@ -375,7 +376,7 @@ def check_summary():
     office_path = folder / "office.json"
     office = summarize(json.loads(office_path.read_text(encoding="utf-8")), str(office_path))
     expected = {"floors": 2, "rooms": 109, "doors": 104, "exits": 6,
-                "stairGroups": ["S1", "S2"], "walkableArea": 3479.5,
+                "stairGroups": ["S1", "S2"], "walkableArea": 3478.0,
                 "vertices": 1173, "size": [54.2, 38.4],
                 "shortCredit": "NIBS Common BIM File, US Army ERDC/CERL, free download"}
     for key, value in expected.items():
@@ -388,6 +389,25 @@ def check_summary():
                       if json.loads(p.read_text(encoding="utf-8")).get("version") == "building/v0"
                       and not json.loads(p.read_text(encoding="utf-8")).get("private", False)}
     assert {b["file"] for b in index["buildings"]} == expected_files
+
+
+def check_door_widths():
+    from statistics import median
+    from buildings.door_widths import clear_width, cut_width, leaves
+    assert [leaves(s) for s in ('DOUBLE_DOOR_SINGLE_SWING', 'SINGLE_SWING_LEFT',
+                                 'DOUBLE_SWING_RIGHT', 'NOTDEFINED')] == [2, 1, 1, 0]
+    assert abs(clear_width(0.915, 'SINGLE_SWING_RIGHT', 0.051) - 0.864) < 1e-9
+    assert abs(clear_width(1.83, 'DOUBLE_DOOR_SINGLE_SWING', None) - 1.73) < 1e-9
+    for name in ('office', 'clinic'):
+        building = json.loads((ROOT / f'data/buildings/{name}.json').read_text(encoding='utf-8'))
+        doors = {d['id']: d for f in building['floors'] for d in f['doors']}
+        if name == 'office':
+            assert (doors['DrRS91$']['width'], doors['DrRS91$']['overallWidth'], doors['DrRS91$']['leaves']) == (1.73, 1.83, 2)
+            assert doors['D$77wwb']['width'] == 0.86
+        assert all(d['width'] <= d['overallWidth'] for d in doors.values() if 'overallWidth' in d)
+        diffs = [cut_width(f, d) - d['width'] for f in building['floors'] for d in f['doors']
+                 if 'outside' not in d['connects']]
+        assert 0 <= median(diffs) <= 0.05
 
 
 def check_tidy():
