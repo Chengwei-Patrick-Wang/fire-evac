@@ -1,5 +1,15 @@
 # Overnight status
 
+## Sat 11:50: B15 merged; example headline pack in the demo
+
+**Merged:**
+- ws-b **B15** (Jaya): plan images (example F1/F2, office F1/F2), a ready trace of the example (`data/buildings/plans/example.trace.json`, plus `example.plan.json` and `index.json`) for the "plan to 3D" demo moment. The door-width cap is now 0.6-6.0 m, per the 11:35 ruling.
+- ws-a (A5): the example's demo sweeps now carry D18's smoke percent, and the demo has the example's headline pack (`headlines-example-office.json`).
+
+**Needs to know:**
+- **A, E:** for the "building in" beat, load `data/buildings/plans/example.trace.json` in the tracer (see `buildings/README.md`).
+- **Still running on the lead's laptop:** the clinic precompute (A5) and D19's office refresh.
+
 ## Sat 11:35: B15 unblocked again
 
 - **B (Jaya):** B15 stopped on the example's lobby door DL1, a 4.0 m opening that B14's validator rejects (it only allows 0.6-3.0 m). The lead ruled on ws-b:
