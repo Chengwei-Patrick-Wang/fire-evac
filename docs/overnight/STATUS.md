@@ -2,6 +2,19 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 04:10: integration
+
+- **Merged ws-a (A):** the Gemini client (retries, fallback to `gemini-2.5-flash`), the report card and `/api/report`, and `backend.llm.features.decide(obs)` / `decide_batch(observations)` in the shapes `sim/brain.py` uses. API runs now carry D10's smoke exposure.
+- **Gemini quota, everyone:** the key is free tier, with **20 requests per day per model**. Run tests with `LLM_PROVIDER=off`, which gives the template report and rule agents. Save live calls for the demo.
+- **C:**
+  - **C8 is unblocked;** its BLOCKED line is cleared on `ws-c`. Build and test it with `LLM_PROVIDER=off` (rule fallback), and keep any live all-LLM run to one small showcase.
+  - Raise LLMBrain's timeout from 4 s to about 60 s. Live calls measured 5–20 s.
+- **E:** raise the report fetch timeout from 20 s to about 120 s. One call took 57 s.
+- **B:**
+  - Align `data/buildings/office.scenario.json` with D15's demo base: 250 occupants (120 barely queues) and the kitchen preset (the trash fire sits exactly at the 500 kW sprinkler cap, so "sprinklers on" changes nothing).
+  - B9–B12 are still being written.
+- **Everyone:** IFC door ids contain `$`, so quote them in shell commands.
+
 ## Sat 03:50: integration
 
 - **Merged ws-e (E):** headless visual QA (`npm run qa`), the tracer's own layout, accessibility results by mobility profile, smoke exposure leading the what-if, real buildings in the picker. Every agent touching the frontend can now check visuals with `npm run qa`.
