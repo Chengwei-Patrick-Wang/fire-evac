@@ -39,6 +39,10 @@ if (index) {
     const j = load(b.file, 'batch/v0')
     if (j && j.buildingId !== b.buildingId) fail(`batch ${b.id}: file buildingId ${j.buildingId} != ${b.buildingId}`)
     if (b.report) load(b.report)
+    if (b.headlines) {
+      const h = load(b.headlines, 'headlines/v0')
+      if (h && h.buildingId !== b.buildingId) fail(`batch ${b.id}: headlines buildingId ${h.buildingId} != ${b.buildingId}`)
+    }
   }
 }
 

@@ -356,6 +356,21 @@ try {
     })
     await tabShots(`open-${n + 1}-`)
   }
+  if (await page.evaluate(() => !!window.__app.getState().headlines)) {
+    await step('headlines-about', async () => {
+      await page.evaluate(() => window.__app.getState().setAbout(true))
+      await page.waitForTimeout(500)
+      await shot('open-about')
+      await page.keyboard.press('Escape')
+    })
+    for (const [scene, name] of [[3, 'open-scene4'], [4, 'open-scene5']])
+      await step(name, async () => {
+        await page.evaluate((i) => window.__tour.getState().go(i, false), scene)
+        await page.waitForTimeout(3000)
+        await shot(name)
+      })
+    await page.evaluate(() => window.__tour.getState().stop())
+  }
   if (opens.length > 0)
     await step('fixes', async () => {
       await page.locator('.results [role=tab]').nth(1).click()

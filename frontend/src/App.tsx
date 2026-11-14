@@ -22,6 +22,7 @@ import { useTour, useTourKeys } from './tour/tour'
 import ShareCard from './ui/ShareCard'
 import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
 import { findPrecomputedVariant } from './model/whatif'
+import { loadHeadlines, readPack } from './model/headlines'
 import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
 import type { LinkState } from './model/link'
 import type { DemoRun, DoorState } from './data/types'
@@ -58,6 +59,8 @@ async function selectBuilding(id: string) {
     useApp.getState().setBuilding(b)
     const batch = await loadBatch(b.id).catch(() => null)
     useApp.setState({ batch: batch && batch.buildingId === b.id ? batch : null })
+    const hp = await loadHeadlines(b.id)
+    if (useApp.getState().building?.id === b.id) useApp.setState({ headlines: hp })
     useApp.getState().setDraft(makeDraft(b, useApp.getState().batch?.base))
     const runs = await listDemoRuns(b.id)
     const first = runs.find((r) => r.whatIf === null)
@@ -186,10 +189,28 @@ async function startup() {
   }
 }
 
+// Parsed JSON when the file is a headlines/v0 pack, else undefined.
+async function headlinesFile(f: File): Promise<unknown> {
+  try {
+    const j = JSON.parse(await f.text())
+    return j?.version === 'headlines/v0' ? j : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function openFile(f: File) {
   const app = useApp.getState()
   app.setLoading(`Loading ${f.name}…`)
   try {
+    const pack = f.size < 1024 * 1024 ? await headlinesFile(f) : undefined
+    if (pack !== undefined) {
+      const s = useApp.getState()
+      const hp = s.building ? readPack(pack, s.building.id) : null
+      if (hp) useApp.setState({ headlines: hp })
+      else s.setNotice(`Headlines are for building ${(pack as { buildingId?: unknown }).buildingId}; loaded building is ${s.building?.id ?? 'none'}`)
+      return
+    }
     const o = await openLocalFile(f)
     if (o.kind === 'building') {
       useApp.getState().setBuilding(o.data)

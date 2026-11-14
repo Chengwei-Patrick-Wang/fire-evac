@@ -190,6 +190,30 @@ else if (copyFile(batch, 'batch.example.json')) {
   }
 }
 
+// Headline packs from --runs DIR: headlines-<buildingId>.json, named on that building's first batch entry
+{
+  const args = process.argv.slice(2)
+  const ri = args.indexOf('--runs')
+  const dir = ri >= 0 && args[ri + 1] ? resolve(process.cwd(), args[ri + 1]) : join(root, 'data', 'runs')
+  if (existsSync(dir)) {
+    for (const bl of index.buildings) {
+      const f = `headlines-${bl.id}.json`
+      const p = join(dir, f)
+      if (!existsSync(p)) continue
+      const entry = index.batches.find((x) => x.buildingId === bl.id)
+      if (!entry) { console.log(`skip ${f} (no batch entry for ${bl.id})`); continue }
+      let h
+      try { h = readJson(p) } catch { console.log(`skip ${f} (not valid JSON)`); continue }
+      if (h.version !== 'headlines/v0' || h.buildingId !== bl.id || isPrivate(p) || statSync(p).size > 1024 * 1024) {
+        console.log(`skip ${f} (not a public headlines/v0 for ${bl.id} under 1 MB)`)
+        continue
+      }
+      copyFile(p, f)
+      entry.headlines = f
+    }
+  }
+}
+
 const text = JSON.stringify(index, null, 2) + '\n'
 const changed = norm(oldText) !== text
 if (changed && !dry) writeFileSync(indexPath, text)
