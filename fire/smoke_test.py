@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from fire.metrics import compute
+from fire import checks
 from tools.toy_fire import ToyFire
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +85,7 @@ def main() -> None:
     assert not fire.untenable(fp["floor"], fp["x"], fp["y"]) and fire.blocked_doors() == set()
     assert abs(fire.hrr(60) - 0.04688 * 60 ** 2) < 1e-9 and fire.hrr(1000) == 1500.0
     print("ToyFire: visibility at the fire point after step(60) = %.2f m, hrr(60) = %.1f kW" % (vis, fire.hrr(60)))
-    print("OK")
+    checks.run_all()
 
 
 if __name__ == "__main__":
