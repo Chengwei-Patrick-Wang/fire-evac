@@ -3,6 +3,8 @@ import './App.css'
 import { useApp } from './store/app'
 import type { LoadedRun } from './store/app'
 import TopBar from './ui/TopBar'
+import Scene from './scene/Scene'
+import Toolbar3D from './ui/Toolbar3D'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
@@ -98,7 +100,7 @@ function s_notice(m: string) {
 }
 
 export default function App() {
-  const { view, building, activeRunKey, runs } = useApp()
+  const { view, building } = useApp()
   const onOpenBuilding = useCallback(async (id: string) => {
     useApp.getState().setBuildings(await listBuildings())
     useApp.getState().setView('replay')
@@ -109,7 +111,6 @@ export default function App() {
     void startup()
   }, [])
 
-  const active = activeRunKey ? runs[activeRunKey] : null
   return (
     <div className="app">
       <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
@@ -123,11 +124,10 @@ export default function App() {
             <TracerPage onOpenBuilding={(id) => void onOpenBuilding(id)} />
           </Suspense>
         ) : (
-          <div className="pad">
-            <h2>{building?.name ?? 'No building'}</h2>
-            <p className="dim">{active ? `Run: ${active.label} (${active.run.metrics.agents} agents)` : 'No run loaded'}</p>
-            <p className="dim">3D replay arrives in Task E2/E3.</p>
-          </div>
+          <>
+            <Scene />
+            <Toolbar3D />
+          </>
         )}
       </main>
       <aside className="right">

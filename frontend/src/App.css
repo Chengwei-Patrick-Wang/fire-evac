@@ -29,3 +29,5 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .notice { color: #fbbf24; font-size: 12px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .spinner { width: 16px; height: 16px; border: 2px solid #334155; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.toolbar3d { position: absolute; top: 8px; left: 8px; display: flex; gap: 10px; align-items: center; background: #111a2ecc; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+.toolbar3d button { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 2px 8px; cursor: pointer; }

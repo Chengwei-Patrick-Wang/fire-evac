@@ -13,6 +13,16 @@ export interface LoadedRun {
 
 export type View = 'replay' | 'tracer'
 
+export interface Layers {
+  rooms: boolean
+  labels: boolean
+  smoke: boolean
+  fire: boolean
+  heatmap: boolean
+  queues: boolean
+  risk: boolean
+}
+
 interface AppState {
   mode: Mode
   view: View
@@ -23,6 +33,10 @@ interface AppState {
   runOrder: string[]
   activeRunKey: string | null
   notice: string | null
+  explode: number
+  visibleFloors: string[] | null
+  layers: Layers
+  topView: number
   setMode: (m: Mode) => void
   setView: (v: View) => void
   setLoading: (s: string | null) => void
@@ -43,12 +57,16 @@ export const useApp = create<AppState>((set) => ({
   runOrder: [],
   activeRunKey: null,
   notice: null,
+  explode: 0,
+  visibleFloors: null,
+  layers: { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
+  topView: 0,
   setMode: (mode) => set({ mode }),
   setView: (view) => set({ view }),
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set({ building, runs: {}, runOrder: [], activeRunKey: null }),
+  setBuilding: (building) => set({ building, visibleFloors: null, runs: {}, runOrder: [], activeRunKey: null }),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => ({
