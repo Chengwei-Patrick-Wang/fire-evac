@@ -419,16 +419,17 @@
     - Every demo batch now has real what-ifs, so qa's `a11y` step (axe, wcag2aa, every results tab) reports 2 color-contrast problems and `npm run qa` exits 1.
     - The high-contrast theme (`index.css`) and the print view (`.printreport .page .dim`, #475569 on white) lose contrast to the same opacity.
   - **Produces:** the same muted colour, at full opacity.
-- [ ] **Step 1: CSS.**
+- [x] **Step 1: CSS.**
   - Change the rule to `.whatif-headline .dim { font-size: var(--fs-sm); }`: no opacity. The colour stays `var(--muted)`.
   - If qa then names another color-contrast element, fix it the same way (a colour token, no opacity) and name it in the commit body.
-- [ ] **Step 2: Verify.**
+- [x] **Step 2: Verify.**
   - `npm run build` passes.
   - `npm run qa` exits 0, and no axe line for any tab mentions `color-contrast`.
   - `qa/tab-report.png` and `qa/tab-results.png` still show the what-if notes muted grey and readable.
-- [ ] **Step 3: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): readable what-if notes (axe color contrast)"` (no attribution lines).
+- [x] **Step 3: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): readable what-if notes (axe color contrast)"` (no attribution lines).
 
 ### Task E33 (P1 · Sat 4 PM): Static mode: the Sprinklers box says it needs the backend and quotes the measured sprinkler what-if
+BLOCKED: taken over by the lead's machine at 14:21; skip
 - **Files:** Modify `frontend/src/ui/WhatIfCard.tsx`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes:**
@@ -458,6 +459,7 @@
 - [ ] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
 
 ### Task E34 (P1 · Sat 6 PM): Fix lines show trade-offs, and no list names a spot by its raw id
+BLOCKED: taken over by the lead's machine at 14:21; skip
 - **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes, from E28:**
