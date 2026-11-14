@@ -175,7 +175,6 @@ Decision: `{"target":"E1","action":"go","reason":"start: estimated travel and qu
 
 ### Task C8: Every agent an LLM (P2 stretch, target Sun 2 AM; only if C1–C7 are done)
 
-BLOCKED: A's `backend.llm.features.decide_batch` provider is absent on this branch (`backend/llm/` contains only `__init__.py`), so the required live-backend showcase run cannot be verified. A must supply the provider before C8 can be completed; backend changes are outside WS-C. Stopped per overnight instructions, leaving implementation boxes unchecked.
 
 **Files:** Modify `sim/brain.py`, `sim/run.py`, `sim/smoke_test.py`.
 
