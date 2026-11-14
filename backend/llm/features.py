@@ -109,6 +109,13 @@ _NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
 _LENGTH_UNIT = re.compile(r"\s?(?:m|cm|mm|ft|in|meters?|metres?|feet|foot|inch(?:es)?)\b", re.I)
 
 
+def _exit_name(name) -> str | None:
+    """An exit's name when it reads as one. An IFC door family string ("M_Single-Flush:0915 x 2134mm:...:184259")
+    does not: it is dropped, as fire.batch.door_label drops it, and the card says "exit from STAIR (RS101)"."""
+    text = str(name or "").strip()
+    return text if text and ":" not in text and len(text) <= 30 else None
+
+
 def _num(x) -> float | None:
     """x as a finite float, else None (a bool is not a number)."""
     if isinstance(x, bool) or not isinstance(x, (int, float)):
@@ -195,7 +202,7 @@ class _Names:
         connects = self._connects(floor, sid)
         inside = [c for c in connects if c != "outside"]
         if "outside" in connects or kind == "exit":
-            name = (self.exits.get((floor, sid)) or {}).get("name")
+            name = _exit_name((self.exits.get((floor, sid)) or {}).get("name"))
             text = f"{name}, exit" if name else "exit"
             return text + (f" from {self.room_label(floor, inside[0])}" if inside else "") + " to outside"
         noun = "stair door" if kind == "stair" else "door"
@@ -211,7 +218,7 @@ class _Names:
         if kind == "corridor":
             return f"{self.room_label(floor, sid)}{on}"
         if kind == "exit":
-            name = (self.exits.get((floor, sid)) or {}).get("name")
+            name = _exit_name((self.exits.get((floor, sid)) or {}).get("name"))
             return f"exit {sid}" + (f" ({name})" if name else "") + on
         if kind == "stair":
             stair = next((self.rooms[floor, c].get("name") for c in self._connects(floor, sid)
