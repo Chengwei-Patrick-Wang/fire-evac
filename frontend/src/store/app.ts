@@ -1,3 +1,4 @@
+import type { BuildingSummary } from '../model/buildingIndex'
 import { create } from 'zustand'
 import type { Batch, Building, BuildingInfo, DoorState, Run, Scenario, Vec2 } from '../data/types'
 import type { Mode } from '../data/loader'
@@ -44,6 +45,7 @@ export interface Focus {
 }
 
 interface AppState {
+  summaries: Record<string, BuildingSummary>
   mode: Mode
   view: View
   loading: string | null
@@ -117,6 +119,7 @@ export const useApp = create<AppState>((set) => ({
   view: 'replay',
   loading: null,
   buildings: [],
+  summaries: {},
   building: null,
   runs: {},
   runOrder: [],

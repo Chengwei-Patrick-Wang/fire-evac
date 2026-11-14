@@ -3,6 +3,7 @@ import { useDialogFocus } from './a11y'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
 import { useTour } from '../tour/tour'
+import { creditParts } from '../model/buildingIndex'
 import { phoneReachable, shareUrl } from '../model/link'
 
 
@@ -28,6 +29,7 @@ export function shouldAutoOpenAbout(): boolean {
 export default function AboutOverlay() {
   const about = useApp((s) => s.about)
   const credits = useApp((s) => s.building?.credits)
+  const summaries = useApp((s) => s.summaries)
 
   const cardRef = useRef<HTMLDivElement>(null)
   useDialogFocus(cardRef, about)
@@ -68,7 +70,22 @@ export default function AboutOverlay() {
         </p>
         <h3>Credits</h3>
         <ul>
-          <li>IFC models: NIBS Common BIM Files, via buildingSMART</li>
+          {Object.values(summaries).length === 0 && <li>IFC models: NIBS Common BIM Files, via buildingSMART</li>}
+          {Object.values(summaries).map((b) => {
+            const cp = creditParts(b.credits, b.shortCredit)
+            return (
+              <li key={b.id}>
+                {b.name}: {cp.short}
+                {cp.license ? `, ${cp.license}, modified` : ''}
+                {cp.source && (
+                  <>
+                    {' · '}
+                    <a href={cp.source} target="_blank" rel="noreferrer">source</a>
+                  </>
+                )}
+              </li>
+            )
+          })}
           <li>Example building: synthetic, made by the team</li>
           {extra && <li>{extra}</li>}
           <li>Libraries: JuPedSim, three.js, React Three Fiber, Recharts</li>

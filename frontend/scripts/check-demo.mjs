@@ -42,6 +42,14 @@ if (index) {
   }
 }
 
+for (const [file, version] of [['calibration.json', 'calibration/v0'], ['buildings-index.json', 'buildings-index/v0']]) {
+  if (!existsSync(join(dir, file))) continue
+  const j = load(file, version)
+  if (!j) continue
+  if (version === 'calibration/v0' && !Array.isArray(j.points)) fail(`${file}: points is not an array`)
+  if (version === 'buildings-index/v0' && (j.buildings ?? []).some((b) => b.private === true)) fail(`${file}: lists a private building`)
+}
+
 const priv = join(dir, 'private')
 if (existsSync(priv) && readdirSync(priv, { recursive: true }).some((f) => statSync(join(priv, f)).isFile()))
   fail('public/demo/private/ holds files; Vite would copy them into dist/')

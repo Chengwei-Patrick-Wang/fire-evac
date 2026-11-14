@@ -51,6 +51,17 @@ const building = join(contracts, 'building.example.json')
 const batch = join(contracts, 'batch.example.json')
 const isPrivate = (p) => /private/i.test(p.replace(root, ''))
 
+// Calibration
+{
+  const p = join(root, 'data', 'calibration.json')
+  if (existsSync(p)) {
+    let c = null
+    try { c = readJson(p) } catch { console.log('skip calibration.json (not valid JSON)') }
+    if (c?.version === 'calibration/v0' && !isPrivate(p)) copyFile(p, 'calibration.json')
+    else if (c) console.log('skip calibration.json (not calibration/v0)')
+  }
+}
+
 const indexPath = join(demo, 'index.json')
 const oldText = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : ''
 const index = oldText ? JSON.parse(oldText) : { version: 'demo-index/v0', buildings: [], runs: [], batches: [] }
@@ -88,6 +99,11 @@ else if (copyFile(building, 'building.example.json') && existsSync(join(demo, 'b
       const p = join(dir, f)
       let b
       try { b = readJson(p) } catch { console.log(`skip ${f} (not valid JSON)`); continue }
+      if (b.version === 'buildings-index/v0') {
+        if ((b.buildings ?? []).some((e) => e.private === true) || /private/i.test(p.replace(root, ''))) console.warn(`sync-demo: ${f} lists a private building, not copied`)
+        else copyFile(p, 'buildings-index.json')
+        continue
+      }
       if (b.version !== 'building/v0') { console.log(`skip ${f} (not a building/v0 file)`); continue }
       if (b.private === true || /private/i.test(p.replace(root, ''))) { console.log(`skip ${f} (private)`); continue }
       const name = `building-${b.id}.json`

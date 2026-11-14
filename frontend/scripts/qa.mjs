@@ -176,6 +176,14 @@ try {
     await blankCheck('replay-60s')
   })
   await tabShots('')
+  await step('cred', async () => {
+    await page.locator('.results [role=tab]').nth(3).click()
+    await page.waitForTimeout(800)
+    const t = await page.locator('#results-panel').innerText()
+    if (!/0\.8 m door/.test(t) || !/Corridor/.test(t) || /EXAMPLE VALUES/.test(t)) problems.push('cred: calibration panel missing 0.8 m door / Corridor, or shows EXAMPLE VALUES')
+    await page.getByText('Known limits').first().scrollIntoViewIfNeeded()
+    await shot('cred-limits')
+  })
   await step('about', async () => {
     await page.locator('header.topbar button', { hasText: 'About' }).click()
     await page.locator('[role=dialog]').waitFor({ timeout: 10000 })

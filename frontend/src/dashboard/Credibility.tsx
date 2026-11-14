@@ -44,6 +44,57 @@ export function Limits() {
   )
 }
 
+type CalPoint = { label: string; simulated: number; references: { name: string; value: number }[] }
+
+function between(points: CalPoint[], noun: string) {
+  const c = { between: 0, below: 0, above: 0 }
+  for (const p of points) {
+    const v = p.references.map((r) => r.value)
+    if (!v.length) continue
+    if (p.simulated < Math.min(...v)) c.below++
+    else if (p.simulated > Math.max(...v)) c.above++
+    else c.between++
+  }
+  const n = points.length
+  const parts = (Object.keys(c) as (keyof typeof c)[]).filter((k) => c[k] > 0).map((k) => `${k} at ${c[k]} of ${n} ${noun}`)
+  return `Simulated vs references: ${parts.join(', ') || 'no references'}.`
+}
+
+function CalChart({ title, source, points, unit, id, noun }: { title: string; source: string; points: CalPoint[]; unit: string; id: string; noun: string }) {
+  const names = [...new Set(points.flatMap((p) => p.references.map((r) => r.name)))]
+  const rows = points.map((p) => {
+    const r: Record<string, number | string> = { label: p.label, simulated: p.simulated }
+    for (const ref of p.references) r[ref.name] = ref.value
+    return r
+  })
+  return (
+    <>
+      <h4>{title}</h4>
+      <div role="img" aria-label={title} aria-describedby={id} style={{ width: '100%', height: 220 }}>
+        <p id={id} className="sr-only">
+          {rows.map((r) => `${r.label}: Simulated ${r.simulated}, ${names.filter((n) => r[n] !== undefined).map((n) => `${n} ${r[n]}`).join(', ')}`).join('; ')}
+          {` (${unit.trim()}).`}
+        </p>
+        <ResponsiveContainer>
+          <BarChart accessibilityLayer={false} data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -10 }}>
+            <CartesianGrid stroke="#1e293b" />
+            <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} />
+            <YAxis stroke="#94a3b8" fontSize={11} unit={unit} />
+            <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #334155' }} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="simulated" name="Simulated" fill={COLORS[0]} isAnimationActive={false} />
+            {names.map((n, i) => (
+              <Bar key={n} dataKey={n} fill={COLORS[(i + 1) % COLORS.length]} isAnimationActive={false} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="dim">Source: {source}</p>
+      <p className="dim">{between(points, noun)}</p>
+    </>
+  )
+}
+
 export default function Credibility() {
   const [cal, setCal] = useState<{ data: Calibration; example: boolean } | null | undefined>(undefined)
 
@@ -55,42 +106,29 @@ export default function Credibility() {
     }
   }, [])
 
-  const names = cal ? [...new Set(cal.data.points.flatMap((p) => p.references.map((r) => r.name)))] : []
-  const rows = cal
-    ? cal.data.points.map((p) => {
-        const r: Record<string, number | string> = { label: p.label, simulated: p.simulated }
-        for (const ref of p.references) r[ref.name] = ref.value
-        return r
-      })
-    : []
+  const sd = cal?.data.speedDensity
+  const limits = cal?.data.limits
   return (
     <div className="cred">
       {cal === undefined && <p className="dim">Loading…</p>}
       {cal && (
         <>
-          <h4>{cal.data.title}</h4>
           {cal.example && <div className="stamp">EXAMPLE VALUES</div>}
-          <div role="img" aria-label="Calibration chart" aria-describedby="cred-summary" style={{ width: '100%', height: 220 }}>
-            <p id="cred-summary" className="sr-only">
-              {rows.map((r) => `${r.label}: Simulated ${r.simulated}, ${names.filter((n) => r[n] !== undefined).map((n) => `${n} ${r[n]}`).join(', ')}`).join('; ')}
-              {' (persons per second).'}
-            </p>
-            <ResponsiveContainer>
-              <BarChart accessibilityLayer={false} data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -10 }}>
-                <CartesianGrid stroke="#1e293b" />
-                <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} />
-                <YAxis stroke="#94a3b8" fontSize={11} unit=" p/s" />
-                <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #334155' }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="simulated" name="Simulated" fill={COLORS[0]} isAnimationActive={false} />
-                {names.map((n, i) => (
-                  <Bar key={n} dataKey={n} fill={COLORS[(i + 1) % COLORS.length]} isAnimationActive={false} />
+          <CalChart title={cal.data.title} source={cal.data.source} points={cal.data.points} unit=" p/s" id="cred-summary" noun="widths" />
+          {sd && Array.isArray(sd.points) && sd.points.length > 0 && (
+            <CalChart title={sd.title} source={sd.source} points={sd.points} unit=" m/s" id="cred-summary-speed" noun="densities" />
+          )}
+          <p className="dim">Illustrative: door flow and corridor speed only, not a validation of the whole model.</p>
+          {Array.isArray(limits) && limits.length > 0 && (
+            <>
+              <h4>Known limits of the crowd model</h4>
+              <ul className="limits">
+                {limits.map((l, i) => (
+                  <li key={i}>{l}</li>
                 ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="dim">Source: {cal.data.source}</p>
-          <p className="dim">Illustrative: door flow only, not a validation of the whole model.</p>
+              </ul>
+            </>
+          )}
         </>
       )}
       <Limits />
