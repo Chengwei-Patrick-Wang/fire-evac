@@ -2,6 +2,7 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Stats } from '@react-three/drei'
 import Building from './Building'
 import CameraRig from './CameraRig'
+import Agents from '../replay/Agents'
 
 export default function Scene({ runKey }: { runKey?: string }) {
   return (
@@ -13,6 +14,7 @@ export default function Scene({ runKey }: { runKey?: string }) {
         <OrbitControls makeDefault />
         <CameraRig />
         <Building runKey={runKey} />
+        <Agents runKey={runKey} />
         {import.meta.env.DEV && <Stats />}
       </Canvas>
     </div>

@@ -5,6 +5,8 @@ import type { LoadedRun } from './store/app'
 import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
 import Toolbar3D from './ui/Toolbar3D'
+import ClockDriver from './ui/ClockDriver'
+import Scrubber from './ui/Scrubber'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
@@ -84,7 +86,7 @@ async function openFile(f: File) {
         s.setNotice(`Run is for building ${o.data.buildingId}; loaded building is ${s.building?.id ?? 'none'}`)
       }
       const key = `file-${o.data.id}-${Date.now().toString(36)}`
-      const lr: LoadedRun = { key, label: o.data.id, run: o.data, doors: {} }
+      const lr: Omit<LoadedRun, 'index'> = { key, label: o.data.id, run: o.data, doors: {} }
       useApp.getState().addRun(lr)
     } else {
       s_notice(`${o.kind} file loaded (not used yet)`)
@@ -134,7 +136,8 @@ export default function App() {
         <h3>Results</h3>
         <p className="dim">Illustrative fire model. Not a compliance tool.</p>
       </aside>
-      <footer className="bottom">Bottom bar (scrubber)</footer>
+      <footer className="bottom"><Scrubber /></footer>
+      <ClockDriver />
       <div className="credits">{building?.credits ?? ''}</div>
     </div>
   )
