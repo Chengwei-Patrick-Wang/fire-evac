@@ -995,6 +995,50 @@ def check_exit_choice(building, fast):
           f"smoke reroutes {sum(e['type'] == 'reroute' and e['reason'].startswith('smoke:') for e in with_smoke['events'])}")
 
 
+def check_calibration(slow=False):
+    from shapely.geometry import box
+    from sim.calibrate import weidmann, sfpe, speed_density, door_flow, corridor_points, corridor_limits
+
+    assert abs(weidmann(1.0) - 1.058) < 0.005
+    assert abs(sfpe(1.0) - 1.028) < 0.005
+    # Two eligible people, one waiting-for-help person and one outside the area.
+    # One eligible person disappears: count them for density, not displacement.
+    frames = {"frames": [
+        {"t": 5, "a": [[0, 0.2, 0.5, 0, 1], [1, 0.5, 0.5, 0, 0],
+                        [2, 0.5, 0.5, 0, 2], [3, 3, 3, 0, 1]]},
+        {"t": 5.5, "a": [[0, 0.7, 0.5, 0, 1], [2, 0.5, 0.5, 0, 2],
+                          [3, 3, 3, 0, 1]]}]}
+    points = speed_density(frames, box(0, 0, 2, 1), min_samples=1)
+    assert len(points) == 1
+    assert points[0]["density"] == 1.0 and points[0]["simulated"] == 1.0
+    assert points[0]["samples"] == 1 and points[0]["label"] == "1.0–1.5 /m²"
+    assert speed_density(frames, box(0, 0, 2, 1)) == []
+    assert speed_density(frames, box(0, 0, 2, 1), t_min=6, min_samples=1) == []
+    assert corridor_limits([{"simulated": 1.0}, {"simulated": 0.8}, {"simulated": 0.5}]) == []
+    assert corridor_limits([{"simulated": 0.15}, {"simulated": 0.4}, {"simulated": 0.33}])
+    agents = 200 if slow else 30
+    result = door_flow(1.0, agents=agents)
+    assert result["evacuated"] == agents, result
+    lo, hi = (0.7, 1.3) if slow else (0.6, 1.5)
+    assert lo <= result["flow"] <= hi, result
+    assert 0.5 <= result["flow"] / (1.3 * 0.7) <= 2.0
+    print(f"calibration: {agents} agents, 1 m flow {result['flow']:.3f} persons/s")
+    if slow:
+        points = corridor_points()
+        assert len(points) >= 3, points
+        assert all(p["samples"] >= 5 and 0 <= p["simulated"] <= 1.5 for p in points), points
+        # C15's prescribed transient queue fails its free-flow trend expectation.
+        # Keep the actual data and explicitly disclose this failed comparison.
+        limits = corridor_limits(points)
+        meets_reference = (0.7 <= points[0]["simulated"] <= 1.5
+                           and points[-1]["simulated"] < 0.7 * points[0]["simulated"])
+        assert bool(limits) == (not meets_reference)
+        for limitation in limits:
+            print(f"LIMIT: {limitation}")
+        print(f"corridor: {len(points)} bins, speed {points[0]['simulated']:.2f} to "
+              f"{points[-1]['simulated']:.2f} m/s")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1008,6 +1052,7 @@ def main(argv=None) -> int:
         print(f"{label}: {time.perf_counter() - before:.1f} s", flush=True)
         return result
 
+    timed("calibration", check_calibration)
     timed("brain", check_brain)
     timed("floors", check_floors)
     timed("watch and geometry", check_watch_and_geometry)
@@ -1030,6 +1075,7 @@ def main(argv=None) -> int:
     timed("recording", check_recording, building, fast)
 
     if args.slow:
+        timed("full calibration", check_calibration, slow=True)
         timed("office blocked arrival", check_blocked_arrival, slow=True)
         timed("office scale", check_scale)
         core = timed("full core", check_core, building, scenario)
