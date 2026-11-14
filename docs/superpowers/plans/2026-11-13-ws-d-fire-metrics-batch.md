@@ -294,6 +294,7 @@ Verification note: office output has 213 successful runs and 3 excluded R203b fa
 - [x] **Commit** `test(fire): office label and width checks read the building file`.
 
 ### Task D17 (P2 · Sat 11 AM): Smoke-model sensitivity for the credibility panel
+BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Create `fire/sensitivity.py`; modify `fire/model.py`, `fire/checks.py`, `fire/README.md`; produce `data/runs/sensitivity-office.json` (gitignored).
 
@@ -346,6 +347,7 @@ Verification note: office output has 213 successful runs and 3 excluded R203b fa
 D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompute until 12:37): `C14 smoke-aware exit choice: yes; C13b stair arrivals: yes`. Example: 168 runs, none failed, 1,538 s; its current side reproduces D18's batch exactly, and C14 moves 4 of 31 compared numbers (the headline +25% -> +26%). Office: both sides complete at 12:50 after three `--resume` continuations (a worker died at 11:08; the laptop was in standby 12:14-12:29; the last stretch ran with 12 workers). 4 of 29 compared numbers changed: the third weak spot (Door DQnt_pi -> Exit Stair S2 (east)), the blocked-exit smoke percent (+60% -> +55%) and the second widened door (Door DQnt_pi with the terms off, Exit Stair S2 (east) with them on); the headline goes +49% -> +54%, and D15's batch is the current side, so D15 and D18 already included C14. New along the way: `retries` and `--resume` in `fire/refresh.py`, and the sprinkler fix reusing its what-if in `fire/fixes.py`. Smoke test and slow checks print `fire checks OK`.
 
 ### Task D20 (P1 · Sat noon): Run cache: reruns compute only what changed
+BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Create `fire/cache.py`; modify `fire/batch.py` (`_records`, `_ignitions`, `run_many`, `main()`), `fire/refresh.py` and, if D17 is in, `fire/sensitivity.py` (CLI `--fresh`), `fire/checks.py` (new checks; `check_timing`, `check_labels`), `fire/README.md`; produce `data/runs/cache/` (gitignored).
 
@@ -362,6 +364,7 @@ D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompu
 - [ ] **Step 7: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): per-run cache for incremental batches"` (no attribution lines). Handoff in the README for A (`fire.cache.enable()` before `run_many` in `tools/precompute_demo.py` reuses runs across precompute reruns on one machine) and the lead (D15's command now resumes where it stopped).
 
 ### Task D21 (P1 · Sat 2 PM): The clinic: budgeted batch, what-ifs, fixes and headlines on the second building
+BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Create `fire/demo.py`; modify `fire/batch.py` (`main(argv=None)`), `fire/checks.py`, `fire/README.md`; produce `data/runs/batch-clinic.json` and `data/runs/headlines-clinic.json` (gitignored).
 
@@ -380,6 +383,7 @@ D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompu
 > From the lead's demo review. P0 tasks fix things judges see; do them first, in order.
 
 ### Task D22 (P0 · Sat 3 PM): Trade-offs, not "helps": a fix that traps more people says so, and says where
+BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/fixes.py` (`VERDICT`, `verdict`, `restate`, `_why`, `_inverse`, `STAT_KEYS`, `add_fixes`), `fire/whatif.py` (`room_deltas`, `_why`, `add_whatif`), `fire/headlines.py` (`FIX_KEYS`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `data/runs/batch-example-tradeoff.json` and `debug/d22-restated-<id>.json` (gitignored).
 
@@ -463,6 +467,7 @@ D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompu
   - For E: E34 mirrors `VERDICT`. `tradeoff` and `costs` are optional, and `helps` now excludes trade-offs.
 
 ### Task D23 (P0 · Sat 4 PM): Readable names for unnamed interior doors
+BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/batch.py` (`door_label`, new `relabel`), `fire/fixes.py` (`widen_door` messages), `fire/headlines.py` (`build_headlines` relabels its input), `fire/checks.py` (`office_checks`, `check_labels`, new `check_door_names`), `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `debug/d23-relabeled-<id>.json` and `debug/d23-headlines-office.json` (gitignored).
 
@@ -516,6 +521,7 @@ D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompu
   - For E: text only changes. E34 shows the labels the files carry.
 
 ### Task D24 (P1 · Sat 6 PM): Tiny rooms: a fire in a room thinner than a smoke cell starts at the nearest reachable cell
+BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/grid.py` (`FloorGraph`, `BuildingGraph.__init__`, `node_at`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`.
 
