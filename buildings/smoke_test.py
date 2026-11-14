@@ -161,6 +161,17 @@ def check_building():
     assert groups and all(len(floors) >= 2 for floors in groups.values())
 
 
+def check_one_door():
+    fixture = ROOT / "buildings/fixtures/one_door.plan.json"
+    plan = json.loads(fixture.read_text(encoding="utf-8-sig"))
+    building = plan_to_building(plan)
+    assert len(building["floors"]) == 1
+    floor = building["floors"][0]
+    assert {e["id"] for e in floor["exits"]} == {"D1"}
+    exit_poly = Polygon(floor["exits"][0]["polygon"])
+    assert all(exit_poly.intersection(Polygon(r["polygon"])).area < 1e-8 for r in floor["rooms"])
+
+
 def main() -> int:
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
     b = plan_to_building(plan)
@@ -214,6 +225,7 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_one_door()
     check_hard()
     check_overrides()
     check_building()
