@@ -1,5 +1,14 @@
 # Overnight status
 
+## Sat 11:35: B15 unblocked again
+
+- **B (Jaya):** B15 stopped on the example's lobby door DL1, a 4.0 m opening that B14's validator rejects (it only allows 0.6-3.0 m). The lead ruled on ws-b:
+  - DL1 is correct, and the example contract stays as it is.
+  - Raise the cap in `buildings/validate.py` to 0.6-6.0 m, and add a smoke-test case where a 4.0 m door passes and a 7.0 m door is flagged.
+  - Then finish B15.
+
+  The plan images, traced example and index from 11:19 merge into main once B15 is done.
+
 ## Sat 11:20: office demo data merged
 
 **Merged:**
