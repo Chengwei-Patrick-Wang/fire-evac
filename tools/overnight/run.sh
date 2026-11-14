@@ -83,8 +83,14 @@ with_timeout() {
 }
 
 sync
-PLAN=$(ls docs/superpowers/plans/*-ws-"$WS"-*.md 2>/dev/null | head -1)
-[ -n "$PLAN" ] || { log "No plan for $BRANCH on main yet. Try again in a few minutes."; exit 1; }
+PLAN=""
+for _ in $(seq 1 30); do
+  PLAN=$(ls docs/superpowers/plans/*-ws-"$WS"-*.md 2>/dev/null | head -1)
+  [ -n "$PLAN" ] && break
+  log "no plan for $BRANCH on main yet; checking again in 2 min"
+  sleep 120; sync
+done
+[ -n "$PLAN" ] || { log "still no plan after an hour; stopping"; exit 1; }
 
 PROMPT="You are running unattended overnight on branch $BRANCH. Nobody will answer questions, so make reasonable calls and keep going.
 Read AGENTS.md, then docs/overnight/STATUS.md (integration notes from the lead, newest first), then your plan $PLAN.
