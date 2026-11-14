@@ -2404,6 +2404,82 @@ def check_door_names():
           "doors) and the headline pack checked", flush=True)
 
 
+def _tiny_rooms(building: dict) -> list:
+    """D24: (floor id, room) for each room with no grid node inside it, a room thinner than a smoke cell."""
+    graph = get_graph(building)
+    return [(floor["id"], room) for floor, grid in zip(building["floors"], graph.floors) for room in floor["rooms"]
+            if not shapely.contains_xy(shapely.Polygon(room["polygon"]), grid.xy[:, 0], grid.xy[:, 1]).any()]
+
+
+def check_tiny_room():
+    """D24: a fire in a room thinner than a smoke cell starts at the nearest node a straight walk reaches."""
+    from fire.model import FireModel
+
+    # The fixture: A ends at x = 10, a 0.2 m wall stands before B, and the grid's nodes sit at x = 9.75 and 10.25.
+    building = fixture_building()
+    graph = get_graph(building)
+    grid, in_a = graph.floors[0], shapely.Polygon(building["floors"][0]["rooms"][0]["polygon"])
+    side = _ring(box(9.9, 3, 9.99, 5))  # 0.09 x 2 m along A's east side: no node inside, one 0.15 m away in A
+    node = graph.node_at("F1", 9.945, 4, side)
+    assert in_a.contains(shapely.Point(*grid.xy[node])) and math.dist(grid.xy[node], (9.945, 4)) < 0.5, grid.xy[node]
+    assert graph.node_at("F1", 0, 0, side) == node  # a point off the room anchors at its representative point
+    walled = _ring(box(10.02, 3, 10.18, 5))  # inside the wall: every node beside it is behind a wall
+    try:
+        graph.node_at("F1", 10.1, 4, walled)
+    except ValueError as error:
+        assert str(error) == "No grid nodes inside or beside the requested room on F1", error
+    else:
+        raise AssertionError("a room inside a wall must raise ValueError")
+
+    # The office: each thin room gets a node within a cell of it, one a straight walk over walkable floor reaches.
+    office = load_office()
+    graph = get_graph(office)
+    tiny = _tiny_rooms(office)
+    for floor_id, room in tiny:
+        index, polygon = graph.floor_index[floor_id], shapely.Polygon(room["polygon"])
+        grid, anchor = graph.floors[index], polygon.representative_point()
+        xy = grid.xy[graph.node_at(floor_id, anchor.x, anchor.y, room["polygon"]) - graph.offset[index]]
+        assert polygon.distance(shapely.Point(*xy)) <= grid.spec["cell"], (room["id"], xy)
+        assert grid.walk.covers(shapely.LineString([xy, (anchor.x, anchor.y)])), (room["id"], xy)
+    r203b = next((r for f, r in tiny if (f, r["id"]) == ("F2", "R203b")), None)
+    if r203b and np.allclose(shapely.Polygon(r203b["polygon"]).bounds, (0.331, 23.818, 5.897, 24.026), atol=1e-3):
+        index = graph.floor_index["F2"]  # pinned: the node at (3.25, 23.75) in R201, 0.22 m from the room's point
+        xy = graph.floors[index].xy[graph.node_at("F2", 3.114, 23.922, r203b["polygon"]) - graph.offset[index]]
+        assert np.allclose(xy, (3.25, 23.75)), xy
+        scenario = json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8"))
+        scenario["fire"].update(type="kitchen", floor="F2", room="R203b", x=3.114, y=23.922)
+        assert np.allclose(FireModel(office, scenario).source_xy, (3.25, 23.75))
+    print(f"tiny rooms: fixture sliver, wall sliver, and {len(tiny)} thin office rooms "
+          f"({', '.join(r['id'] for _, r in tiny) or 'none'}) checked", flush=True)
+
+
+def check_tiny_room_slow():
+    """D24: a fire in the office's thin room runs to the end, and every room of the clinic has a node."""
+    from fire.batch import _init, _run_one, _tasks, apply_overrides
+
+    office = load_office()
+    tiny = _tiny_rooms(office)
+    pick = next((p for p in tiny if (p[0], p[1]["id"]) == ("F2", "R203b")), tiny[0] if tiny else None)
+    if pick:
+        base = apply_overrides(json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8")),
+                               60, "kitchen")
+        base["maxTime"] = 240
+        _init(office)
+        record = _run_one(_tasks(office, base, [{"floor": pick[0], "room": pick[1]["id"]}], (1,))[0])
+        assert record["ok"] is True, record
+        print(f"tiny rooms: {pick[1]['id']}, seed 1, 60 occupants: t90={record['t90']} trapped={record['trapped']}",
+              flush=True)
+    path = ROOT / "data/buildings/clinic.json"
+    if path.is_file():  # the clinic file is optional, as in check_door_names
+        clinic = json.loads(path.read_text(encoding="utf-8"))
+        graph = get_graph(clinic)
+        for floor in clinic["floors"]:
+            for room in floor["rooms"]:
+                point = shapely.Polygon(room["polygon"]).representative_point()
+                graph.node_at(floor["id"], point.x, point.y, room["polygon"])  # raises when the room has no node
+        print(f"tiny rooms: all {sum(len(f['rooms']) for f in clinic['floors'])} clinic rooms have a node", flush=True)
+
+
 def check_office_slow():
     from fire.batch import run_many
     root = Path(__file__).resolve().parents[1]

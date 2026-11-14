@@ -519,7 +519,6 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - For E: text only changes. E34 shows the labels the files carry.
 
 ### Task D24 (P1 · Sat 6 PM): Tiny rooms: a fire in a room thinner than a smoke cell starts at the nearest reachable cell
-BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/grid.py` (`FloorGraph`, `BuildingGraph.__init__`, `node_at`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`.
 
@@ -539,13 +538,13 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - A `node_at` fallback.
   - The error message `No grid nodes inside or beside the requested room on <floor>`.
 
-- [ ] **Step 1: Keep the polygon.** Store the per-floor polygon on `FloorGraph` as `walk`.
-- [ ] **Step 2: Fallback.** Only when no node lies inside the room polygon:
+- [x] **Step 1: Keep the polygon.** Store the per-floor polygon on `FloorGraph` as `walk`.
+- [x] **Step 2: Fallback.** Only when no node lies inside the room polygon:
   - The anchor is (x, y) if the room polygon covers it, else the polygon's `representative_point()`.
   - Candidates are nodes within one cell (`spec["cell"]`) of the room polygon whose straight segment to the anchor is covered by `walk`. The nearest to the anchor wins.
   - With no candidate, raise with the new message.
   - Rooms with a node inside behave exactly as today, so no other fire moves.
-- [ ] **Step 3: Checks.**
+- [x] **Step 3: Checks.**
   - **Fast `check_tiny_room()`:**
     - On `fixture_building()`, a 0.09 × 2 m room inside A along its east side (`box(9.9, 3, 9.99, 5)`) gets a node in A within 0.5 m.
     - A 0.16 × 2 m room inside the wall (`box(10.02, 3, 10.18, 5)`) still raises `ValueError` naming F1.
@@ -554,8 +553,8 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - **Slow `check_tiny_room_slow()`:**
     - `_run_one` for office R203b, seed 1, 60 occupants, `maxTime` 240 returns `ok: True`.
     - Every clinic room gets a node.
-- [ ] **Step 4: Verify:**
+- [x] **Step 4: Verify:**
   - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
   - `run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from `apply_overrides(office.scenario, 250, "kitchen")`, has 3 ok runs. Paste their t90 and trapped into a README section "Tiny rooms (D24)" that replaces D16's "Office limitation" paragraph.
-- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
+- [x] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
   - Handoff for A: R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs.
