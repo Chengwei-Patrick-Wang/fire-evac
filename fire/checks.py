@@ -240,6 +240,377 @@ def check_stairs():
     assert abs(graph.path_distance(low, {})[high] - 3) < 1e-6
     assert abs(graph.path_distance(high, {})[low] - 30) < 1e-6
 
+def check_tuning():
+    """Keep the example's illustrative severity targets visible and repeatable."""
+    from fire.model import FireModel
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    for preset in ("kitchen", "battery", "trash", "bedroom"):
+        model = FireModel(building, {**scenario, "fire": {**scenario["fire"], "type": preset}})
+        floor_index = model.graph.floor_index["F1"]
+        offset = model.graph.offset[floor_index]
+        count = model.graph.floors[floor_index].n
+        for t in range(1, 301):
+            model.step(t)
+            if preset == "kitchen" and t == 100:
+                visibility = model.visibility("F1", 7.5, 8)
+                assert visibility < 3, visibility
+            if t == 120 and preset in ("kitchen", "battery"):
+                fraction = float(model._untenable[offset:offset + count].mean())
+                assert fraction >= 0.30 if preset == "battery" else fraction <= 0.05, (preset, fraction)
+                print(f"{preset}: {fraction:.1%} of F1 nodes untenable at 120 s")
+            if preset == "kitchen" and t == 180:
+                assert model.blocked_doors() == {"D101"}, model.blocked_doors()
+            if preset in ("trash", "bedroom"):
+                assert model.blocked_doors() == set(), (preset, t, model.blocked_doors())
+
+
+
+def check_metrics():
+    from fire.metrics import compute
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    floor = building["floors"][0]
+    door = next(d for d in floor["doors"] if d["id"] == "D101")
+    start, end = np.asarray(door["a"]), np.asarray(door["b"])
+    midpoint = (start + end) / 2
+    tangent = (end - start) / np.linalg.norm(end - start)
+    normal = np.array([-tangent[1], tangent[0]])
+
+    def row(idx, point, status=1, fi=0):
+        return [idx, *map(float, point), fi, status]
+
+    frames = []
+    for k in range(10):
+        # Two stationary queuers, a 1 m/s walker, and an unstarted occupant.
+        occupants = [row(0, midpoint - normal * 0.5), row(1, midpoint + normal * 0.5),
+                     row(2, midpoint + normal * (k * 0.5 - 2.25)),
+                     row(3, midpoint + tangent * 3, status=0)]
+        frames.append({"t": k * 0.5, "a": occupants})
+    frames.insert(0, {"t": -0.5, "a": [row(0, midpoint - normal * 0.5, 0),
+                                        row(1, midpoint + normal * 0.5, 0)]})
+    run = {"floors": [f["id"] for f in building["floors"]], "frames": frames,
+           "frameInterval": 0.5, "metrics": {"t90": 42, "exitCounts": {"E1": 1}, "custom": 7}}
+    result = compute(run, building)
+    measured = next(d for d in result["doors"] if d["id"] == "D101")
+    assert measured["peakQueue"] == 2 and measured["waitPersonSeconds"] == 10, measured
+    assert measured["crossed"] == 1 and measured["flow"] == 2.0, measured
+    assert result["t90"] == 42 and result["custom"] == 7 and result["exitCounts"] == {"E1": 1}
+    assert "doors" not in run["metrics"]
+    json.dumps(result)
+    for heatmap, spec in zip(result["heatmaps"], grid_specs(building)):
+        assert all(heatmap[key] == value for key, value in spec.items())
+        raw = base64.b64decode(heatmap["d"])
+        assert len(raw) == heatmap["cols"] * heatmap["rows"]
+    empty = compute({**run, "frames": []}, building)
+    assert all(d["peakQueue"] == d["waitPersonSeconds"] == d["flow"] == d["crossed"] == 0
+               for d in empty["doors"])
+    assert all(not any(base64.b64decode(h["d"])) for h in empty["heatmaps"])
+
+    # Unknown speed on first appearance / a floor transfer; a missing frame
+    # still uses elapsed time for speed but cannot imply a door crossing.
+    sparse = [{"t": 0, "a": [row(4, midpoint - normal * 0.25)]},
+              {"t": 1, "a": []},
+              {"t": 2, "a": [row(4, midpoint + normal * 0.25)]},
+              {"t": 3, "a": [row(4, midpoint + normal * 0.25, fi=1)]},
+              {"t": 4, "a": [row(4, midpoint + normal * 0.25)]}]
+    measured = next(d for d in compute({**run, "frames": sparse}, building)["doors"]
+                    if d["id"] == "D101")
+    assert measured["waitPersonSeconds"] == 0.5 and measured["crossed"] == 0, measured
+
+    # Repeated crossings by one agent count once, and a >30 s span sets flow.
+    crossings = [{"t": t, "a": [row(5, midpoint + normal * side)]}
+                 for t, side in ((0, -0.25), (1, 0.25), (40, -0.25), (61, 0.25))]
+    measured = next(d for d in compute({**run, "frames": crossings}, building)["doors"]
+                    if d["id"] == "D101")
+    assert measured["crossed"] == 1 and measured["flow"] == 1.0, measured
+
+    # Queue distance is to the opening segment, including a wide door's ends.
+    wide = fixture_building()
+    wide["floors"][0]["doors"][0].update(a=[10.1, 0], b=[10.1, 6])
+    standing = [[0, 10, 0.2, 0, 1]]
+    wide_run = {"floors": ["F1"], "frameInterval": 0.5,
+                "frames": [{"t": 0, "a": standing}, {"t": 1, "a": standing}]}
+    assert compute(wide_run, wide)["doors"][0]["peakQueue"] == 1
+    # Coarsened heatmap headers match smoke, and unstarted agents add no heat.
+    large = big_fixture()
+    large_run = {"floors": ["F1"], "frames": [{"t": 0, "a": [[0, 5, 5, 0, 0]]}]}
+    heatmap = compute(large_run, large)["heatmaps"][0]
+    assert heatmap["cell"] > 0.5 and not any(base64.b64decode(heatmap["d"]))
+
+
+def check_margins():
+    from fire.metrics import compute
+    from fire.model import FireModel, aset_by_room
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    available = aset_by_room(building, scenario, scenario["maxTime"])
+    assert 150 <= available["R101"] <= 200, available
+    assert available["R102"] is None, available
+    assert aset_by_room(building, scenario, 1)["R101"] is None  # exclude flame footprint
+    model = FireModel(building, scenario)
+    model.step(1)
+    assert model._footprint.any() and not model._smoke_untenable.any()
+    assert np.array_equal(model._untenable, model._footprint | model._smoke_untenable)
+    delayed = {**scenario, "fire": {**scenario["fire"], "start": 20}}
+    assert aset_by_room(building, delayed, 220)["R101"] == available["R101"] + 20
+
+    run = {"agents": [{"idx": 0, "room": "R101"}, {"idx": 1, "room": "R101"},
+                      {"idx": 2, "room": "R102"}],
+           "frames": [], "events": [{"type": "exit", "idx": 0, "t": 40},
+                                     {"type": "exit", "idx": 1, "t": 60},
+                                     {"type": "exit", "idx": 2, "t": 50}],
+           "metrics": {"t90": 60, "custom": "preserved"}}
+    def measured():
+        result = compute(run, building, scenario)
+        assert result["t90"] == 60 and result["custom"] == "preserved"
+        json.dumps(result, allow_nan=False)
+        return {room["id"]: room for room in result["rooms"]}
+
+    rooms = measured()
+    assert set(rooms) == {"R101", "R102"}  # omit unoccupied rooms
+    assert rooms["R101"]["rset"] == 60 and rooms["R101"]["margin"] > 100
+    assert rooms["R102"]["aset"] is None and rooms["R102"]["margin"] is None
+    run["events"][1]["t"] = 400
+    assert measured()["R101"]["margin"] < 0
+    run["events"][1]["type"] = "stair"  # v0 stair-sink fallback
+    assert measured()["R101"]["rset"] == 400
+    run["events"].append({"type": "exit", "idx": 1, "t": 410})
+    assert measured()["R101"]["rset"] == 410  # full exit supersedes stair entry
+    run["events"] = [event for event in run["events"] if event["idx"] != 1]
+    rooms = measured()
+    assert rooms["R101"]["rset"] is None and rooms["R101"]["margin"] is None
+    assert "rooms" not in compute(run, building)
+    assert "rooms" not in run["metrics"]
+    print(f"margins: R101 smoke ASET={available['R101']:g} s; positive/negative/null margins OK")
+
+
+def check_coupled_slow():
+    # Import only for --slow: the ordinary model checks do not need JuPedSim.
+    from sim.run import run
+    from fire.model import FireModel
+    from fire.stub import NoFire
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    scenario["maxTime"] = 240
+    baseline = run(building, scenario, NoFire(building, scenario))
+    coupled = run(building, scenario, FireModel(building, scenario))
+    smoke = next((entry for entry in coupled["smoke"] if entry["floor"] == "F1"), None)
+    assert smoke is not None and smoke["frames"] and smoke["interval"] == 2
+    hrr = coupled["fire"]["hrr"]
+    assert hrr and all(a[1] <= b[1] for a, b in zip(hrr, hrr[1:])), hrr
+    for label, result in (("NoFire", baseline), ("FireModel", coupled)):
+        metrics = result["metrics"]
+        print(f"{label}: " + " ".join(f"{key}={metrics[key]}" for key in ("t50", "t90", "t100", "trapped")),
+              flush=True)
+    assert baseline["metrics"] != coupled["metrics"], "sim ignores fire or smoke is too weak"
+    out = root / "data/runs/ws-d-coupled.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(coupled, separators=(",", ":")), encoding="utf-8")
+    print(f"wrote {out.relative_to(root)}", flush=True)
+
+
+def check_batch_setup():
+    from copy import deepcopy
+    from fire.batch import _ignitions, _tasks, _init, _run_one, run_many
+
+    building = fixture_building()
+    base = {"id": "batch-check", "seed": 7, "brain": "llm",
+            "fire": {"type": "bedroom", "growth": "slow", "start": 12}}
+    original = deepcopy(base)
+    ignitions = _ignitions(building, base)
+    tasks = _tasks(building, base, ignitions, (1, 3))
+    assert len(tasks) == 4 and base == original
+    for task in tasks:
+        scenario = task["scenario"]
+        room = next(r for r in building["floors"][0]["rooms"] if r["id"] == task["ignition"]["room"])
+        assert shapely.Polygon(room["polygon"]).contains(shapely.Point(scenario["fire"]["x"], scenario["fire"]["y"]))
+        assert scenario["brain"] == "rules"
+        assert all(scenario["fire"][key] == base["fire"][key] for key in ("type", "growth", "start"))
+    large = deepcopy(building)
+    large["floors"][0]["rooms"] = [{"id": f"R{i}", "type": "office", "polygon": room["polygon"]}
+                                       for i in range(60)]
+    selected = _ignitions(large, base)
+    assert len(selected) == 40 and selected == _ignitions(large, base)
+    assert [int(i["room"][1:]) for i in selected] == sorted(int(i["room"][1:]) for i in selected)
+    assert len(_ignitions(large, base, 4)) == 4
+    large["floors"][0]["rooms"][0]["type"] = "corridor"
+    large["floors"][0]["rooms"][1]["type"] = "stair"
+    assert len(_ignitions(large, base, 100)) == 58
+    empty = run_many(building, base, [], progress=False)
+    assert empty["runs"] == empty["failed"] == [] and empty["base"] == base
+    empty["base"]["fire"]["type"] = "trash"
+    assert base == original
+    # Bad worker input is returned as JSON data, never as an exception object.
+    _init(building)
+    error = _run_one({"scenario": {"id": "invalid"}, "ignition": {}})
+    assert error["ok"] is False and error["scenarioId"] == "invalid" and isinstance(error["error"], str)
+    json.dumps(error)
+
+
+def check_aggregate():
+    from copy import deepcopy
+    from fire.batch import aggregate
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    records = []
+    for index, (room, t90, trapped) in enumerate((("R101", 100, 1), ("R101", None, 3),
+                                               ("R102", None, 0))):
+        records.append({"ok": True, "scenarioId": f"hand-{index}", "seed": index,
+                        "ignition": {"floor": "F1", "room": room}, "t90": t90,
+                        "t100": None, "trapped": trapped,
+                        "doors": [{"id": door, "floor": "F1", "peakQueue": peak,
+                                   "waitPersonSeconds": wait}
+                                  for door, peak, wait in (("E1", 2, 100), ("DSB1", 10, 40),
+                                                           ("D101", 1, 80))],
+                        "heatmaps": [{"floor": "F1", "origin": [0, 0], "cell": 0.5,
+                                      "cols": 2, "rows": 1,
+                                      "d": base64.b64encode(bytes(([100, 0], [0, 100], [0, 100])[index])).decode("ascii")}]})
+    original = deepcopy(records)
+    result = aggregate(building, base, records + [{"ok": False, "error": "ignored"}])
+    assert records == original
+    assert result["rooms"][0]["riskT90"] == (100 + base["maxTime"]) / 2
+    assert result["rooms"][0]["riskTrapped"] == 2 and result["rooms"][0]["n"] == 2
+    assert result["rooms"][1]["riskT90"] is None
+    scores = {door["id"]: door["score"] for door in result["doors"]}
+    assert scores == {"E1": 76.0, "DSB1": 58.0, "D101": 59.0}, scores
+    top = result["top"]
+    assert 3 <= len(top) <= 5 and top == sorted(top, key=lambda item: -item["score"])
+    assert {item["id"]: item["kind"] for item in top if item["kind"] != "room"} == {
+        "E1": "exit", "DSB1": "stair", "D101": "door"}
+    assert all(item["why"].isascii() and any(c.isdigit() for c in item["why"]) for item in top)
+    assert "Stair SB door" in next(item["why"] for item in top if item["id"] == "DSB1")
+    heatmap = result["heatmaps"][0]
+    raw = base64.b64decode(heatmap["d"])
+    assert len(raw) == heatmap["cols"] * heatmap["rows"] and list(raw) == [50, 100]
+    assert aggregate(building, base, []) == {"rooms": [], "doors": [], "heatmaps": [], "top": []}
+    zeros = deepcopy(records[:1])
+    for door in zeros[0]["doors"]:
+        door.update(peakQueue=0, waitPersonSeconds=0)
+    zeros[0]["heatmaps"][0]["d"] = base64.b64encode(bytes(2)).decode("ascii")
+    zero_result = aggregate(building, base, zeros)
+    assert all(d["score"] == 0 for d in zero_result["doors"])
+    assert base64.b64decode(zero_result["heatmaps"][0]["d"]) == bytes(2)
+    censored = aggregate(building, base, records[2:])
+    assert "not out by" in next(item["why"] for item in censored["top"] if item["kind"] == "room")
+    invalid = deepcopy(records[:1])
+    invalid[0]["heatmaps"][0]["d"] = ""
+    try:
+        aggregate(building, base, invalid)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("malformed heatmap must fail")
+    example_path = root / "contracts/batch.example.json"
+    if example_path.exists():
+        from fire.batch import run_many
+        batch = run_many(building, base, [], progress=False)
+        batch.update(result, runs=[{k: v for k, v in records[0].items()
+                                    if k in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped")}])
+        example = json.loads(example_path.read_text())
+        assert set(batch) >= set(example) - {"placeholder"}
+        assert isinstance(batch["base"], type(example["base"]))
+        for key in ("runs", "rooms", "doors", "top"):
+            assert set(batch[key][0]) >= set(example[key][0]), key
+    json.dumps(result, allow_nan=False)
+
+
+def check_batch_pool_slow():
+    from copy import deepcopy
+    from fire.batch import run_many
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 120
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    original = deepcopy(base)
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    started = time.perf_counter()
+    parallel = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert len(parallel["runs"]) == 2 and parallel["failed"] == [], parallel["failed"]
+    assert time.perf_counter() - started < 240
+    serial = run_many(building, base, ignitions, seeds=(1,), workers=1)
+    assert parallel["runs"] == serial["runs"], (parallel["runs"], serial["runs"])
+    assert base == original
+    # Kill a spawned batch before any simulation can finish; don't hang shutdown.
+    started = time.perf_counter()
+    expired = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=0.001, progress=False)
+    assert expired["runs"] == [] and len(expired["failed"]) == 2
+    assert time.perf_counter() - started < 10
+    print("batch: 2 spawned runs match inline runs; timeout records both failures", flush=True)
+
+
+def check_exit_comparison():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.batch import add_exit_criticality
+
+    building = {"floors": [{"id": "F1", "exits": [{"door": "E1"}, {"door": "E2"}]}]}
+    base = {"maxTime": 120, "doors": {"D1": "propped"}}
+
+    def record(room, seed, t90, trapped):
+        return {"ignition": {"floor": "F1", "room": room}, "seed": seed,
+                "t90": t90, "trapped": trapped}
+
+    batch = {"rooms": [{"id": "A", "floor": "F1", "riskT90": 60},
+                        {"id": "B", "floor": "F1", "riskT90": None}],
+             "runs": [record("A", 1, 60, 0), record("B", 1, None, 1), record("B", 2, 80, 0)],
+             "top": [{"kind": "exit", "id": "E2", "floor": "F1", "score": 30, "why": "old"}]}
+    original = deepcopy(batch)
+
+    def rerun(b, sc, ignitions, seeds, workers, timeout):
+        assert ignitions == [{"floor": "F1", "room": "B"}] and seeds == [1, 2]
+        assert sc["doors"]["D1"] == "propped" and timeout == 12 and workers == 1
+        if sc["doors"].get("E1") == "blocked":
+            return {"runs": [record("B", 1, None, 3), record("B", 2, None, 2)]}
+        # Seed 1 failed: compare only seed 2 on both sides.
+        return {"runs": [record("B", 2, 90, 1)]}
+
+    with patch("fire.batch.run_many", side_effect=rerun):
+        result = add_exit_criticality(building, base, batch, workers=1, timeout_s=12, top_rooms=1)
+    assert result["exits"] == [
+        {"id": "E1", "floor": "F1", "dT90": 20, "dTrapped": 2, "n": 2},
+        {"id": "E2", "floor": "F1", "dT90": 10, "dTrapped": 1, "n": 1}]
+    assert [item["score"] for item in result["top"]] == [100, 50]
+    assert batch == original and base["doors"] == {"D1": "propped"}
+    assert "mean of 2 fires" in result["top"][0]["why"]
+    with patch("fire.batch.run_many", return_value={"runs": []}):
+        empty = add_exit_criticality(building, base, batch, top_rooms=0)
+    assert all(e["n"] == 0 and e["dT90"] == 0 for e in empty["exits"])
+    assert empty["top"] == batch["top"]
+
+
+def check_exits_slow():
+    from copy import deepcopy
+    from fire.batch import run_many, add_exit_criticality
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 120
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    original = deepcopy(base)
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert len(batch["runs"]) == 2 and not batch["failed"]
+    result = add_exit_criticality(building, base, batch, workers=2, timeout_s=240)
+    assert {e["id"] for e in result["exits"]} == {"E1", "E2"}
+    assert all(np.isfinite(e["dT90"]) and np.isfinite(e["dTrapped"]) and e["n"] == 2
+               for e in result["exits"])
+    assert len(result["top"]) <= 5 and base == original and "exits" not in batch
+    print("exits: E1/E2 blocked comparisons completed with two matched runs each", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

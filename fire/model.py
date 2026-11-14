@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+import shapely
 
 from fire.grid import CLOSED_DOOR_M, get_graph
 from fire.presets import fire_params, hrr_kw
@@ -72,8 +73,9 @@ class FireModel:
         self._density = np.clip(100 * min(1.0, q / Q_REF_KW) * self.params["smokeFactor"]
                                 * self._attenuation * (-np.expm1(-age / RISE_S)), 0, 100)
         self._hold = np.where(self._density >= UNTENABLE_D, self._hold + dt, 0.0)
-        footprint = (q > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(q / Q_REF_KW))
-        self._untenable = (self._hold >= UNTENABLE_HOLD_S) | footprint
+        self._footprint = (q > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(q / Q_REF_KW))
+        self._smoke_untenable = self._hold >= UNTENABLE_HOLD_S
+        self._untenable = self._smoke_untenable | self._footprint
         self._blocked = {key for offset, floor in zip(self.graph.offset, self.graph.floors)
                          for key, nodes in floor.door_nodes.items()
                          if self._untenable[offset + nodes].any()}
@@ -125,6 +127,32 @@ class FireModel:
         grid[floor.mask] = np.rint(density).clip(0, 100).astype(np.uint8)
         return {**floor.spec, "origin": list(floor.spec["origin"]),
                 "d": base64.b64encode(grid.tobytes()).decode("ascii")}
+
+
+def aset_by_room(building: dict, scenario: dict, t_max: float) -> dict[str, float | None]:
+    """First smoke-untenable room cell, sampled each second of scenario time.
+
+    Flame footprints still trap agents but do not define this smoke-only ASET.
+    None means no threshold crossing observed within the supplied horizon.
+    """
+    if not math.isfinite(t_max) or t_max < 0:
+        raise ValueError("ASET horizon must be finite and non-negative")
+    model = FireModel(building, scenario)
+    pending = {}
+    for floor, grid, offset in zip(building["floors"], model.graph.floors, model.graph.offset):
+        for room in floor.get("rooms", []):
+            inside = shapely.contains_xy(shapely.Polygon(room["polygon"]), grid.xy[:, 0], grid.xy[:, 1])
+            pending[room["id"]] = offset + np.flatnonzero(inside)
+    result = dict.fromkeys(pending)
+    for t in range(1, math.floor(t_max) + 1):
+        model.step(t)
+        reached = [key for key, nodes in pending.items() if model._smoke_untenable[nodes].any()]
+        for key in reached:
+            result[key] = float(t)
+            del pending[key]
+        if not pending:
+            break
+    return result
 
 
 def main():
