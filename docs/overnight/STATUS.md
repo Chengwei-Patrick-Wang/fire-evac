@@ -1,5 +1,15 @@
 # Overnight status
 
+## Sat 13:20: report labels and D19 finished
+
+**Merged:**
+- ws-a: report cards show readable labels and no raw IFC ids. For example, "Exit Stair S1 (west)", and "Door between PHYSICAL EXAM (R1C18a) and PROVIDER CUBICLES (R1D16)" for an unnamed interior door. Template and live Gemini cards share the fix (`backend/llm/features.py`).
+- ws-d: **D19 is complete.** The office runs ran clean with C14's terms off. Only 4 of 29 office numbers change with C14 on (see `fire/README.md`), and the headline is +49% with it off, +54% with it on.
+
+**Still shows raw ids** (fix tasks are coming for D and E): weak-spot labels in `headlines-*.json` (from D's `door_label`), and the measured-fixes list in the app (E).
+
+**Netlify:** the dry run passes (`python tools/deploy_demo.py`): the build and privacy scan are clean, and the demo is 13.8 MB, 1.5 MB gzipped. The live deploy waits on the lead.
+
 ## Sat 12:45: D19 merged; lunch-hour work
 
 **Merged:** ws-d **D19** (lead takeover): `fire/refresh.py` reruns the same fires with C14's smoke-aware exit choice off and on, then lists which headline numbers changed.
