@@ -1,5 +1,7 @@
 """Small executable checks: python -m fire.checks [--slow]."""
 import argparse
+import base64
+import json
 import time
 
 import numpy as np
@@ -97,6 +99,79 @@ def check_grid():
     floor["walkable"] = [{"outer": r["polygon"], "holes": []} for r in floor["rooms"]]
     graph = BuildingGraph(disconnected)
     assert np.isinf(graph.path_distance(graph.node_at("F1", 5, 3), {})[graph.node_at("F1", 15, 3)])
+
+
+def check_model():
+    from fire.model import FireModel
+
+    building = fixture_building()
+    scenario = {"fire": {"floor": "F1", "room": "A", "x": 8, "y": 5,
+                         "type": "kitchen", "start": 0},
+                "sprinklers": False, "doors": {}}
+    model = FireModel(building, scenario)
+    assert abs(model.hrr(60) - 168.8) < 0.5
+    assert model.hrr(200) == 1500
+    assert model.snapshot("F1") is None
+    x, y = model.source_xy
+    west = (float(x - 3), float(y))
+    far = (float(x - 7.5), float(y))
+    model.step(1)
+    assert model.untenable("F1", x, y)
+    previous = 30.0
+    for t in range(10, 201, 10):
+        model.step(t)
+        visibility = model.visibility("F1", *west)
+        assert visibility <= previous, (t, visibility, previous)
+        previous = visibility
+        if t == 10:
+            assert visibility == 30
+        if t == 60:
+            assert visibility < 30
+            snap = model.snapshot("F1")
+            raw = base64.b64decode(snap["d"])
+            assert len(raw) == snap["cols"] * snap["rows"] and max(raw) <= 100
+            json.dumps(snap)
+            grid = np.frombuffer(raw, dtype=np.uint8).reshape(snap["rows"], snap["cols"])
+            assert not grid[~model.graph.floors[0].mask].any()
+        if t == 100:
+            assert model.visibility("F1", x, y) < 3
+        if t in (100, 160):
+            assert not model.untenable("F1", *west), t
+    assert model.untenable("F1", *west)
+    jump = FireModel(building, scenario)
+    jump.step(200)
+    seconds = FireModel(building, scenario)
+    for t in range(1, 201):
+        seconds.step(t)
+    assert np.array_equal(jump._untenable, seconds._untenable)
+    assert np.array_equal(jump._untenable, model._untenable)
+    assert np.array_equal(jump._density, seconds._density)
+    for t in range(201, 401):
+        model.step(t)
+        assert not model.untenable("F1", *far), t
+    assert model.visibility("F1", -50, -50) == 30
+    assert not model.untenable("F1", -50, -50)
+    model.step(400)  # repeated times are allowed
+    try:
+        model.step(399)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("decreasing fire time must raise ValueError")
+    for x, y in ((-50, -50), (10.1, 3.0)):
+        sc = {**scenario, "fire": {**scenario["fire"], "x": x, "y": y}}
+        snapped = FireModel(building, sc)
+        assert shapely.contains_xy(shapely.Polygon(building["floors"][0]["rooms"][0]["polygon"]),
+                                   *snapped.source_xy)
+    delayed = FireModel(building, {**scenario, "fire": {**scenario["fire"], "start": 50}})
+    delayed.step(49)
+    assert delayed.hrr(49) == 0 and delayed.snapshot("F1") is None
+    assert not delayed.untenable("F1", *delayed.source_xy)
+    delayed.step(110)
+    reference = FireModel(building, scenario)
+    reference.step(60)
+    assert delayed.snapshot("F1") == reference.snapshot("F1")
+    assert delayed.blocked_doors() == set()
 
 
 def run_all(slow: bool = False):

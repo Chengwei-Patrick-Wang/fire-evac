@@ -1,0 +1,165 @@
+"""Illustrative smoke front; run as a module to write debug PNGs."""
+import argparse
+import base64
+import json
+import math
+from pathlib import Path
+
+import numpy as np
+
+from fire.grid import get_graph
+from fire.presets import fire_params, hrr_kw
+
+V_BASE_MS = 0.25
+V_PER_MW = 0.5
+V_MAX_MS = 1.0
+DECAY_M = 40.0
+RISE_S = 30.0
+Q_REF_KW = 1000.0
+VIS_MAX_M = 30.0
+UNTENABLE_D = 90.0
+UNTENABLE_HOLD_S = 30.0
+FOOT_BASE_M = 0.5
+FOOT_PER_SQRT_MW_M = 1.0
+TABLE_S = 1800
+
+
+class FireModel:
+    def __init__(self, building: dict, scenario: dict):
+        self.building = building
+        self.scenario = scenario
+        fire = scenario["fire"]
+        self.start = float(fire.get("start", 0))
+        self.params = fire_params(fire, scenario.get("sprinklers", False))
+        self.graph = get_graph(building)
+        floor_index = self.graph.floor_index.get(fire["floor"])
+        if floor_index is None:
+            raise ValueError(f"Unknown floor {fire['floor']!r}")
+        polygon = None
+        if fire.get("room") is not None:
+            room = next((r for r in building["floors"][floor_index]["rooms"]
+                         if r["id"] == fire["room"]), None)
+            if room is None:
+                raise ValueError(f"Unknown fire room {fire['room']!r}")
+            polygon = room["polygon"]
+        source = self.graph.node_at(fire["floor"], fire["x"], fire["y"], polygon)
+        self.source_xy = self.graph.floors[floor_index].xy[source - self.graph.offset[floor_index]].copy()
+        self.dist = self.graph.path_distance(source, {})
+        times = np.arange(0, TABLE_S + 0.25, 0.25)
+        q = np.array([hrr_kw(self.params, t) for t in times])
+        speed = np.clip(V_BASE_MS + V_PER_MW * q / Q_REF_KW, V_BASE_MS, V_MAX_MS)
+        reach = np.r_[0.0, np.cumsum((speed[:-1] + speed[1:]) * 0.125)]
+        self.arrival = np.interp(self.dist, reach, times, right=np.inf)
+        self._attenuation = np.exp(-self.dist / DECAY_M)
+        self._density = np.zeros(self.graph.n)
+        self._hold = np.zeros(self.graph.n)
+        self._untenable = np.zeros(self.graph.n, dtype=bool)
+        self._time = 0.0
+        self._update(0.0, 0.0)
+
+    def hrr(self, t: float) -> float:
+        return float(hrr_kw(self.params, t - self.start))
+
+    def _update(self, t: float, dt: float) -> None:
+        q = self.hrr(t)
+        age = np.maximum(0.0, t - self.start - self.arrival)
+        self._density = np.clip(100 * min(1.0, q / Q_REF_KW) * self.params["smokeFactor"]
+                                * self._attenuation * (-np.expm1(-age / RISE_S)), 0, 100)
+        self._hold = np.where(self._density >= UNTENABLE_D, self._hold + dt, 0.0)
+        footprint = (q > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(q / Q_REF_KW))
+        self._untenable = (self._hold >= UNTENABLE_HOLD_S) | footprint
+
+    def step(self, t: float) -> None:
+        t = float(t)
+        if not math.isfinite(t) or t < self._time:
+            raise ValueError("Fire time must be finite and must not decrease")
+        while self._time < t:
+            end = min(t, self._time + 1.0)
+            self._update(end, end - self._time)
+            self._time = end
+
+    def _node(self, floor_id: str, x: float, y: float) -> int:
+        index = self.graph.floor_index.get(floor_id)
+        if index is None or not (math.isfinite(x) and math.isfinite(y)):
+            return -1
+        floor = self.graph.floors[index]
+        spec = floor.spec
+        col = math.floor((x - spec["origin"][0]) / spec["cell"])
+        row = math.floor((y - spec["origin"][1]) / spec["cell"])
+        if not (0 <= col < spec["cols"] and 0 <= row < spec["rows"]):
+            return -1
+        local = int(floor.snap[row, col])
+        return self.graph.offset[index] + local if local >= 0 else -1
+
+    def visibility(self, floor_id: str, x: float, y: float) -> float:
+        node = self._node(floor_id, x, y)
+        d = self._density[node] if node >= 0 else 0.0
+        return float(min(VIS_MAX_M, 100.0 / d)) if d > 0 else VIS_MAX_M
+
+    def untenable(self, floor_id: str, x: float, y: float) -> bool:
+        node = self._node(floor_id, x, y)
+        return bool(self._untenable[node]) if node >= 0 else False
+
+    def blocked_doors(self) -> set[str]:
+        return set()
+
+    def snapshot(self, floor_id: str) -> dict | None:
+        index = self.graph.floor_index.get(floor_id)
+        if index is None:
+            return None
+        floor = self.graph.floors[index]
+        offset = self.graph.offset[index]
+        density = self._density[offset:offset + floor.n]
+        if density.max() < 0.5:
+            return None
+        grid = np.zeros(floor.mask.shape, dtype=np.uint8)
+        grid[floor.mask] = np.rint(density).clip(0, 100).astype(np.uint8)
+        return {**floor.spec, "origin": list(floor.spec["origin"]),
+                "d": base64.b64encode(grid.tobytes()).decode("ascii")}
+
+
+def main():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("building", type=Path)
+    parser.add_argument("scenario", type=Path)
+    parser.add_argument("--tag", default="")
+    parser.add_argument("--times", default="30,60,120,180")
+    args = parser.parse_args()
+    model = FireModel(json.loads(args.building.read_text()), json.loads(args.scenario.read_text()))
+    Path("debug").mkdir(exist_ok=True)
+    # Keep the tag a filename component even when invoked unattended.
+    tag = "_" + Path(args.tag).name if args.tag else ""
+    for t in sorted(float(v) for v in args.times.split(",")):
+        model.step(t)
+        for floor, graph_floor in zip(model.building["floors"], model.graph.floors):
+            spec = graph_floor.spec
+            snap = model.snapshot(floor["id"])
+            grid = (np.frombuffer(base64.b64decode(snap["d"]), dtype=np.uint8)
+                    .reshape(spec["rows"], spec["cols"]) if snap else np.zeros(graph_floor.mask.shape))
+            index = model.graph.floor_index[floor["id"]]
+            offset = model.graph.offset[index]
+            maximum = float(model._density[offset:offset + graph_floor.n].max())
+            print(f"t={t:g} Q={model.hrr(t):.0f} kW {floor['id']} max d={maximum:.1f}")
+            x, y = spec["origin"]
+            fig, ax = plt.subplots()
+            image = ax.imshow(grid, origin="lower", extent=(x, x + spec["cols"] * spec["cell"],
+                              y, y + spec["rows"] * spec["cell"]), vmin=0, vmax=100, cmap="Greys")
+            for walkable in floor["walkable"]:
+                for ring in [walkable["outer"], *walkable.get("holes", [])]:
+                    points = np.asarray([*ring, ring[0]])
+                    ax.plot(points[:, 0], points[:, 1], color="steelblue", linewidth=0.7)
+            if floor["id"] == model.scenario["fire"]["floor"]:
+                ax.plot(*model.source_xy, "r*")
+            ax.set(title=f"{floor['id']} t={t:g} s Q={model.hrr(t):.0f} kW max d={maximum:.1f}",
+                   xlabel="x (m)", ylabel="y (m)", aspect="equal")
+            fig.colorbar(image, ax=ax, label="Illustrative smoke density")
+            fig.savefig(Path("debug") / f"smoke_{floor['id']}_t{t:03.0f}{tag}.png")
+            plt.close(fig)
+
+
+if __name__ == "__main__":
+    main()

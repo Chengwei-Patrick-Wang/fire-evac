@@ -56,3 +56,47 @@ when a path enters a door region, rather than for every cell inside it.
 Unreachable nodes have infinite distance. Floors remain separate until the D3
 stair links are added. `get_graph` retains at most four graphs by building object
 identity; callers must treat a building as immutable after caching it.
+
+## Smoke front (D2)
+
+`FireModel(building, scenario)` implements the `NoFire` query API without changing
+the stub. This stage propagates on the ignition floor, with no door penalties or
+stair links yet. `blocked_doors()` remains empty until D3.
+
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `V_BASE_MS` | 0.25 m/s | Minimum front speed |
+| `V_PER_MW` | 0.5 m/s per MW | Front-speed increase with heat release |
+| `V_MAX_MS` | 1.0 m/s | Maximum front speed |
+| `DECAY_M` | 40 m | Density attenuation distance |
+| `RISE_S` | 30 s | Density rise time after front arrival |
+| `Q_REF_KW` | 1000 kW | Heat-release reference for density and speed |
+| `VIS_MAX_M` | 30 m | Clear-air visibility cap |
+| `UNTENABLE_D` | 90 | Density threshold for smoke untenability |
+| `UNTENABLE_HOLD_S` | 30 s | Required continuous exposure above the threshold |
+| `FOOT_BASE_M` | 0.5 m | Initial flame footprint path radius, only while Q > 0 |
+| `FOOT_PER_SQRT_MW_M` | 1 m per sqrt(MW) | Footprint growth with heat release |
+| `TABLE_S` | 1800 s | Front-reach table horizon after ignition |
+| Reach integration interval | 0.25 s | Trapezoidal integration of front speed |
+| Maximum update interval | 1 s | Substep for continuous-density hold accounting |
+| Snapshot threshold | 0.5 | Suppress output before a floor reaches this density |
+
+The ignition snaps to the nearest node inside its named room. Unknown rooms or
+floors raise `ValueError`. The reach table maps graph distances to arrival times;
+nodes beyond the table's reach stay clear. Density is clipped to 0–100, visibility
+is `min(30, 100/d)`, and the growing flame footprint follows graph paths rather
+than crossing walls. Time is the simulation clock; growth starts at `fire.start`.
+Time must be finite and nondecreasing. Queries outside the grid are clear and
+tenable. Snapshots encode row-major Uint8 densities in base64, leaving masked
+cells zero and rounding to the nearest integer.
+
+Run `python -m fire.model contracts/building.example.json contracts/scenario.example.json`
+from the repo root. It uses the headless Agg backend and writes per-floor PNGs to
+`debug/`, with walkable outlines and the snapped fire marker. Use
+`--times 30,60,120,180 --tag example` to choose times and a filename suffix.
+The CLI prints unrounded model maxima; the image uses rounded snapshot bytes.
+
+Example verification at 60 s: F1 max density is 14.6 (kitchen R101); F2 is
+clear. R102 has max density 5.8 at this stage because D2 deliberately passes no
+door penalties. The plan's expectation that R102 stays completely clear depends
+on the closed-door delays scheduled for D3; no constants were tuned to hide it.
