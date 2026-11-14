@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "check-demo": "node scripts/check-demo.mjs",
-    "prebuild": "node scripts/check-demo.mjs",
+    "sync-demo": "node scripts/sync-demo.mjs",
+    "predev": "node scripts/sync-demo.mjs",
+    "prebuild": "node scripts/sync-demo.mjs && node scripts/check-demo.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"

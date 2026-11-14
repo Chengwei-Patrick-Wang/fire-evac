@@ -57,8 +57,13 @@ export default function WeakSpots() {
           <RiskLegend />
           <h4>Weak spots</h4>
           <p className="dim">
-            {batch.runs.length} fires simulated{batch.failed?.length ? `, ${batch.failed.length} failed` : ''}; {batch.base.occupants.total} occupants,
-            alarm at {batch.base.alarmTime ?? '?'} s.
+            {batch.runs.length} fires simulated{batch.failed?.length ? (
+              <span title={(batch.failed as unknown as { scenarioId: string; error: string }[])
+                .slice(0, 3).map((f) => `${f.scenarioId}: ${f.error}`).join('\n')}>
+                {`, ${batch.failed.length} failed`}
+              </span>
+            ) : ''}; {batch.base?.occupants?.total ?? '?'} occupants,
+            alarm at {batch.base?.alarmTime ?? '?'} s.
           </p>
           {batch.top.length === 0 && <p className="dim">No weak spots listed.</p>}
           <ol className="spots">
