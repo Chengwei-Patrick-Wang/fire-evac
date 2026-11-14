@@ -145,7 +145,7 @@
 - **Interfaces:** Consumes the `runKey` prop of every replay component (E3 to E5) and `useClock`. Produces `<SplitView leftKey rightKey />`, `useCameraSync` (`{position, target, from}`), `useApp.split`.
 - [x] **Step 1: Split.** A "Split" toggle (enabled when two or more runs of this building are loaded) renders two `<Scene runKey>` panes side by side (baseline left, active what-if right), each captioned with its run label and t90; both read the same `useClock`, whose duration is the longer run.
 - [x] **Step 2: Camera sync.** Each pane's `OrbitControls` writes `{position, target, from: paneId}` from `onChange` only between `onStart` and `onEnd` (user-driven moves, not `flyTo`); the other pane copies it in `useFrame` when `from !== me`; a `syncing` flag prevents feedback loops. Turning Split off unmounts the second Canvas.
-- [ ] **Step 3: Verify.** (`npm run build` passes; browser checks not done unattended, still to eyeball.) `npm run build` passes. `npm run dev`: orbiting one pane moves the other, the scrubber drives both, the panes differ where the runs differ, `<Stats />` holds 30+ fps on the example, toggling Split on and off leaves no console errors.
+- [x] **Step 3: Verify.** (`npm run build` passes; browser checks not done unattended, still to eyeball.) `npm run build` passes. `npm run dev`: orbiting one pane moves the other, the scrubber drives both, the panes differ where the runs differ, `<Stats />` holds 30+ fps on the example, toggling Split on and off leaves no console errors.
 - [x] **Step 4: Commit and push** `feat(frontend): synced split screen`.
 
 ### Task E12: Credibility panel (P1 · Sun 2 AM)
