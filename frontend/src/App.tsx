@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { useApp } from './store/app'
+import { useClock } from './store/clock'
 import type { LoadedRun } from './store/app'
 import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
@@ -27,6 +28,9 @@ import {
   loadDemoRun,
   openLocalFile,
 } from './data/loader'
+
+if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
+  Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour })
 
 const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
