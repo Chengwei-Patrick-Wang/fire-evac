@@ -2,25 +2,33 @@
 
 All routes live under /api. Buildings are files (contracts example, data/buildings,
 data/private); runs go through the process pool in jobs.py and land in data/runs/.
+Shared helpers are in store.py; batch.py, report.py and trace.py each hold one router,
+registered once at the bottom of this file.
 """
+import io
 import json
-import re
+import sys
+import threading
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, redirect_stderr
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import jobs
+from . import batch, jobs, report, trace
+from .store import (
+    BUILDINGS_DIR,
+    PRIVATE_DIR,
+    ROOT,
+    SAFE_ID,
+    building_or_404,
+    json_response,
+    load_buildings,
+)
 
-ROOT = Path(__file__).resolve().parents[2]
-BUILDING_EXAMPLE = ROOT / "contracts" / "building.example.json"
-BATCH_EXAMPLE = ROOT / "contracts" / "batch.example.json"
-BUILDINGS_DIR = ROOT / "data" / "buildings"
-PRIVATE_DIR = ROOT / "data" / "private"  # gitignored; also where from-plan buildings are saved
-SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+WARNING_PREFIX = "WARNING (normalize):"  # what buildings.normalize prints to stderr
 
 
 @asynccontextmanager
@@ -41,55 +49,7 @@ app.add_middleware(  # dev: allow every origin
 router = APIRouter(prefix="/api")
 
 
-def _json(obj: Any) -> Response:
-    """Plain json.dumps is much faster than FastAPI's encoder on big coordinate lists."""
-    return Response(json.dumps(obj, separators=(",", ":")), media_type="application/json")
-
-
 # ---------------------------------------------------------------- buildings
-
-_cache: dict[Path, tuple[int, dict]] = {}  # path -> (mtime_ns, parsed building)
-
-
-def _load_building(path: Path) -> dict | None:
-    try:
-        mtime = path.stat().st_mtime_ns
-        hit = _cache.get(path)
-        if hit and hit[0] == mtime:
-            return hit[1]
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None  # missing, half-written or not JSON: skip it
-    ok = (
-        isinstance(data, dict)
-        and "id" in data
-        and isinstance(data.get("floors"), list)
-        and str(data.get("version", "building/v0")).startswith("building/")
-    )
-    if not ok:
-        return None
-    _cache[path] = (mtime, data)
-    return data
-
-
-def _buildings() -> dict[str, tuple[dict, bool]]:
-    """id -> (building, private). Later sources override earlier ones with the same id."""
-    sources = [(BUILDING_EXAMPLE, False)]
-    sources += [(p, False) for p in sorted(BUILDINGS_DIR.glob("*.json"))]
-    sources += [(p, True) for p in sorted(PRIVATE_DIR.glob("*.json"))]
-    found: dict[str, tuple[dict, bool]] = {}
-    for path, private in sources:
-        building = _load_building(path)
-        if building is not None:
-            found[str(building["id"])] = (building, private)
-    return found
-
-
-def _building_or_404(building_id: str) -> dict:
-    hit = _buildings().get(building_id)
-    if hit is None:
-        raise HTTPException(404, f"building {building_id!r} not found")
-    return hit[0]
 
 
 @router.get("/health")
@@ -100,7 +60,7 @@ def health():
 @router.get("/buildings")
 def list_buildings():
     out = []
-    for b, private in _buildings().values():
+    for b, private in load_buildings().values():
         item = {
             "id": b["id"],
             "name": b.get("name") or b["id"],
@@ -115,32 +75,65 @@ def list_buildings():
 
 @router.get("/buildings/{building_id}")
 def get_building(building_id: str):
-    return _json(_building_or_404(building_id))
+    return json_response(building_or_404(building_id))
+
+
+_normalize_lock = threading.Lock()  # redirect_stderr swaps the process-wide sys.stderr
+
+
+def _normalize(plan_to_building, plan: dict, wall: float | None) -> tuple[dict, list[str]]:
+    """plan_to_building(plan, wall) -> (building, the normalizer's 'WARNING (normalize):' lines)."""
+    buf = io.StringIO()
+    try:
+        with _normalize_lock, redirect_stderr(buf):
+            building = plan_to_building(plan, wall)
+    finally:
+        text = buf.getvalue()
+        if text:
+            sys.stderr.write(text)  # captured, but still in the server log
+    return building, [ln for ln in text.splitlines() if ln.startswith(WARNING_PREFIX)]
 
 
 @router.post("/buildings/from-plan")
-def building_from_plan(plan: dict[str, Any] = Body(...), wall: float | None = None):
-    """plan/v0 in, building/v0 saved to data/private/{id}.json, {id} out."""
+def building_from_plan(
+    plan: dict[str, Any] = Body(...), wall: float | None = None, public: bool = False
+):
+    """plan/v0 in, building/v0 saved, {id, warnings} out.
+
+    The building goes to data/private/{id}.json, which is gitignored, so a traced UMass plan
+    can never be committed by accident; public=true saves it to data/buildings/{id}.json
+    instead. warnings are the normalizer's "WARNING (normalize):" stderr lines.
+    """
+    if plan.get("version") != "plan/v0":
+        raise HTTPException(422, f"plan.version must be 'plan/v0', got {plan.get('version')!r}")
     try:
         from buildings.normalize import plan_to_building  # lazy: may not have landed yet
     except ImportError as e:
         raise HTTPException(501, f"buildings.normalize is not available yet: {e}")
-    plan.setdefault("id", "plan-" + uuid.uuid4().hex[:8])
+    if not plan.get("id"):
+        plan["id"] = "plan-" + uuid.uuid4().hex[:8]
     try:
-        building = plan_to_building(plan, wall)
+        building, warnings = _normalize(plan_to_building, plan, wall)
     except Exception as e:
         raise HTTPException(422, f"could not normalize plan: {type(e).__name__}: {e}")
     building_id = str(building.get("id") or plan["id"])
     if not SAFE_ID.match(building_id):
         raise HTTPException(422, "plan id may only use letters, digits, '.', '-' and '_'")
     building["id"] = building_id
-    # data/private/ is gitignored, so a traced UMass plan can never be committed by accident
-    PRIVATE_DIR.mkdir(parents=True, exist_ok=True)
-    final = PRIVATE_DIR / f"{building_id}.json"
-    tmp = PRIVATE_DIR / f"{building_id}.json.tmp"
+
+    folder = BUILDINGS_DIR if public else PRIVATE_DIR
+    other = (PRIVATE_DIR if public else BUILDINGS_DIR) / f"{building_id}.json"
+    if other.is_file():  # the listing lets data/private win, so say which copy is served
+        warnings.append(
+            f"WARNING (store): {other.relative_to(ROOT).as_posix()} has the same id; "
+            f"/api/buildings serves the data/private copy"
+        )
+    folder.mkdir(parents=True, exist_ok=True)
+    final = folder / f"{building_id}.json"
+    tmp = folder / f"{building_id}.json.tmp"
     tmp.write_text(json.dumps(building, separators=(",", ":")), encoding="utf-8")
     tmp.replace(final)
-    return {"id": building_id}
+    return {"id": building_id, "warnings": warnings}
 
 
 # --------------------------------------------------------------------- runs
@@ -152,7 +145,7 @@ def post_run(scenario: dict[str, Any] = Body(...)):
     building_id = scenario.get("buildingId")
     if not building_id:
         raise HTTPException(422, "scenario.buildingId is required")
-    building = _building_or_404(str(building_id))
+    building = building_or_404(str(building_id))
     return {"runId": jobs.submit(building, scenario)}
 
 
@@ -167,35 +160,10 @@ def get_run(run_id: str):
     return state
 
 
-# ----------------------------------------------------- placeholders (batch etc.)
-
-
-def _example_batch() -> bytes:
-    try:
-        return BATCH_EXAMPLE.read_bytes()
-    except OSError:
-        raise HTTPException(404, "contracts/batch.example.json has not been generated yet")
-
-
-@router.post("/batch")
-def post_batch():
-    """Placeholder until fire.batch lands: every batch is the example batch."""
-    return {"batchId": json.loads(_example_batch()).get("id", "example-batch")}
-
-
-@router.get("/batch/{batch_id}")
-def get_batch(batch_id: str):
-    return Response(_example_batch(), media_type="application/json")
-
-
-@router.post("/report")
-def post_report():
-    raise HTTPException(501, "not implemented yet")
-
-
-@router.post("/trace/propose")
-def post_trace_propose():
-    raise HTTPException(501, "not implemented yet")
-
+# Batch, report and the tracer's first pass: one router each (placeholders until A4, A7 and A8
+# fill them in). This is the only place that registers them.
+router.include_router(batch.router)
+router.include_router(report.router)
+router.include_router(trace.router)
 
 app.include_router(router)
