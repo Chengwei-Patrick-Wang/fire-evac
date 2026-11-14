@@ -1,7 +1,8 @@
 """Demo precompute: the runs, batches and report cards the static site shows (spec 8, task A5).
 
     python tools/precompute_demo.py --building example-office --propped-door DSA1 --rooms R101,R102
-    python tools/precompute_demo.py --all --thin          every public building with its demo defaults
+    python tools/precompute_demo.py --all --thin          every public building with its demo defaults (PRESETS)
+    python tools/precompute_demo.py --building office --thin --resume    reuse the saved batch and sweeps: minutes
     python tools/precompute_demo.py --building office --batch data/runs/batch-office.json
                                                           D's finished batch instead of a batch of our own
     python tools/precompute_demo.py --live-reports        new report cards with Gemini, no simulation
@@ -10,10 +11,13 @@
 Per building it makes
     1. one batch (fire.batch.run_many): a fire in every room that is not a corridor or a stair
        (--max-rooms N keeps N evenly spaced ones), seeds 1, 2, 3, rule-based agents;
-    2. the what-if sweep and the measured fixes on the worst rooms (--sweep-rooms N, --no-sweeps);
+    2. the what-if sweep and the measured fixes on the worst rooms (--sweep-rooms N, --no-sweeps); sweeps made
+       before D18 get its baseSmokeSeconds and smokePct from the batch's own runs, so the card and the
+       headline can say "+31%" and not only person-seconds;
     3. a baseline and a "propped" run for each of the 4 highest-riskT90 rooms plus the first kitchen (a
        building with no kitchen room, like the NIBS office, gets the room its scenario file lights the fire
-       in) or the --rooms you name: same seed and same people, scenario doors that differ only in --propped-door,
+       in) or the --rooms you name (the presets pin a few rooms to keep the payload near 15 MB: office R143, R203c,
+       R237b; clinic R1AC1; --top N goes back to the risk ranking): same seed and same people, scenario doors that differ only in --propped-door,
        closed against propped (default: the stair door with the highest batch score, never an
        exterior one). The index lists the pair whose propped run adds the most person-seconds in smoke
        first, because the demo's tour plays a building's first baseline and its propped partner as the
@@ -47,10 +51,12 @@ private is refused: "skipped private: ID".
 
 --thin keeps every 2nd agent frame (frameInterval 1.0) and every 3rd smoke frame (interval 6).
 --resume reuses the raw batch (data/runs/precompute-ID-batch.json) and the sweeps (precompute-ID-sweeps.json)
-of an earlier run when they were made from the same building file, scenario, seeds and rooms. Those are the slow
+of an earlier run when they were made from the same building (a digest of it without name and credits; older
+checkpoints: its file time), scenario, seeds and rooms. Those are the slow
 parts: with them a new --propped-door, --rooms or --top takes minutes. A batch that loses more than 3% of its
 fires (a pool whose workers died, for example out of memory) is repeated with half the processes, or refused;
---workers defaults to cores - 2, at most 10, because the sim is memory bound.
+--workers defaults to cores - 2, at most 10, because the sim is memory bound; the tool sets one-thread BLAS
+(OPENBLAS_NUM_THREADS and friends) itself, 33 MB a worker instead of 515 MB, with identical results.
 A10 adds --llm-showcase here: write_run() is what it should call for its one brain: "llm" run.
 """
 from __future__ import annotations
