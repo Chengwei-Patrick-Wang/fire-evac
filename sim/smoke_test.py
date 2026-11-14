@@ -33,6 +33,61 @@ def load_building() -> dict:
     return plan_to_building(json.loads((ROOT / "contracts" / "plan.example.json").read_text(encoding="utf-8")))
 
 
+def check_llm(building, scenario, baseline):
+    from unittest.mock import patch
+    from sim.brain import LLMBrain
+
+    observations = []
+    def farthest(obs):
+        observations.append(deepcopy(obs))
+        return {"target": max(obs["options"], key=lambda o: o["dist"])["id"],
+                "action": "go", "reason": "stub"}
+
+    mixed = dict(scenario, brain="mixed")
+    with patch("sim.run.load_llm_decider", return_value=farthest):
+        result = run(building, mixed, NoFire(building, mixed))
+    flagged = {a["idx"] for a in result["agents"] if a.get("llm")}
+    assert 10 <= len(flagged) <= 20
+    logs = [e for e in result["events"] if e["type"] == "llm"]
+    assert logs and len(logs) == len(observations)
+    last = {}
+    for event, obs in zip(logs, observations):
+        assert event["idx"] in flagged and event["reason"] == "stub"
+        assert event["target"] == max(obs["options"], key=lambda o: o["dist"])["id"]
+        assert event["t"] - last.get(event["idx"], -100) >= 10
+        last[event["idx"]] = event["t"]
+        if obs["current"] is not None and obs["current"] != event["target"]:
+            assert any(e["type"] == "reroute" and e["idx"] == event["idx"]
+                       and e["t"] == event["t"] and e["to"] == event["target"]
+                       for e in result["events"])
+    assert result["metrics"]["evacuated"] == len(result["agents"])
+    with patch("sim.run.load_llm_decider", return_value=lambda obs: None):
+        fallback = run(building, mixed, NoFire(building, mixed))
+    assert {a["idx"] for a in fallback["agents"] if a.get("llm")} == flagged
+    assert all(e.get("fallback") for e in fallback["events"] if e["type"] == "llm")
+    assert fallback["metrics"]["evacuated"] == len(fallback["agents"])
+    obs = observations[0]
+    def slow(obs):
+        time.sleep(1)
+        return farthest(obs)
+    started = time.perf_counter()
+    slow_brain = LLMBrain(RuleBrain(scenario["seed"]), slow, timeout=0.2)
+    assert slow_brain.decide(obs)["fallback"]
+    assert time.perf_counter() - started < 0.7
+    assert slow_brain.decide(obs)["fallback"]  # no queued call while provider is busy
+    slow_brain.pending.result(timeout=2)
+    def broken(obs):
+        raise RuntimeError("offline")
+    for provider in (broken, lambda obs: {"target": "missing", "action": "go", "reason": "bad"}):
+        assert LLMBrain(RuleBrain(scenario["seed"]), provider).decide(obs)["fallback"]
+    rules = dict(scenario, brain="rules")
+    with patch("sim.run.load_llm_decider", side_effect=AssertionError("rules imported provider")):
+        explicit = run(building, rules, NoFire(building, rules))
+    assert explicit["events"] == baseline["events"]
+    assert not any(e["type"] == "llm" for e in explicit["events"])
+    print(f"mixed LLM OK: {len(flagged)} flagged, {len(logs)} decisions; timeout and rules fallback OK")
+
+
 def check_floors() -> None:
     building = load_building()
     net = StairNet(building)
@@ -456,6 +511,7 @@ def main() -> int:
     check_fire(building, scenario, r)
     check_300(building, scenario)
     check_mobility(building, scenario)
+    check_llm(building, scenario, r)
     from tools.toy_fire import ToyFire
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
     recorded = run(building, sampled, ToyFire(building, sampled))

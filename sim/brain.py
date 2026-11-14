@@ -78,3 +78,49 @@ class RuleBrain:
             self.switches[idx] = self.switches.get(idx, 0) + 1
         return {"target": chosen["id"], "action": "go" if current is None else "reroute",
                 "reason": f"{obs['trigger']}: estimated travel and queue time {costs[candidate]:.1f} s"}
+
+
+class LLMBrain:
+    """Bounded model calls; a timed-out call is never queued behind another.
+
+    Python cannot interrupt a running thread. The backend must also enforce its
+    network timeout; shutdown here never waits for a slow provider.
+    """
+    def __init__(self, rule, decide, timeout=4.0):
+        self.rule = rule
+        self.provider = decide
+        self.timeout = timeout
+        self.pending = None
+
+    def decide(self, obs):
+        from concurrent.futures import ThreadPoolExecutor
+        from copy import deepcopy
+
+        result = None
+        if self.provider is not None and (self.pending is None or self.pending.done()):
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                self.pending = pool.submit(self.provider, deepcopy(obs))
+                result = self.pending.result(timeout=self.timeout)
+            except Exception:
+                pass
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+        if (isinstance(result, dict) and result.get("action") in ("go", "reroute", "wait")
+            and result.get("target") in [o["id"] for o in obs["options"]]
+            and isinstance(result.get("reason"), str)):
+            return {key: result[key] for key in ("target", "action", "reason")}
+        result = self.rule.decide(obs)
+        return dict(result or {"target": obs["current"], "action": "wait",
+                               "reason": "rules: keep current target"}, fallback=True)
+
+
+def load_llm_decider():
+    """Optional backend dependency, imported only for showcase runs."""
+    try:
+        from backend.llm.features import decide
+        return decide
+    except ImportError:
+        import warnings
+        warnings.warn("LLM decisions unavailable; using rules", RuntimeWarning)
+        return None

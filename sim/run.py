@@ -31,7 +31,7 @@ import shapely
 from shapely.geometry import Polygon
 
 from fire.stub import NoFire
-from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options
+from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider
 from sim.profiles import PROFILES
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
@@ -287,6 +287,19 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     agents = place_occupants(building, scenario, rng, walkable)
     net.check({a["floor"] for a in agents})
     n = len(agents)
+    mode = scenario.get("brain", "rules")
+    if mode not in {"rules", "mixed", "llm"}:
+        raise ValueError("brain must be rules, mixed or llm")
+    flagged = set()
+    if mode == "mixed":
+        count = min(n, max(10, min(20, round(0.08 * n))))
+        flagged = set(np.random.default_rng([seed, 2]).choice(n, count, replace=False).tolist())
+    elif mode == "llm":
+        # C8 adds batched showcase decisions; C7 supplies individual decisions.
+        flagged = set(range(n))
+    llm = LLMBrain(brain, load_llm_decider()) if flagged else None
+    last_llm = {}
+    seen_smoke = set()
 
     floors = building["floors"]
     sims = [_FloorSim(f, i, net, blocked) for i, f in enumerate(floors)]
@@ -371,9 +384,29 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                "profile": agents[i]["profile"], "visibility": fire.visibility(fs.id, *pos),
                "speed": agents[i]["v0"] if speed is None else speed,
                "current": current, "trigger": trigger, "options": options}
-        decision = brain.decide(obs)
-        if decision is None:
-            return target[i]
+        llm_trigger = trigger if trigger in {"start", "arrive", "blocked"} else None
+        if i in flagged and trigger == "tick":
+            if obs["visibility"] < 5 and i not in seen_smoke:
+                llm_trigger = "smoke"
+            elif any(o["id"] == current and o["queue"] / o["flow"] > 30 for o in options):
+                llm_trigger = "queue"
+        if i in flagged and llm_trigger and t - last_llm.get(i, -math.inf) >= 10:
+            obs["trigger"] = llm_trigger
+            last_llm[i] = t
+            if obs["visibility"] < 5:
+                seen_smoke.add(i)
+            decision = llm.decide(obs)
+            events.append({"t": t, "type": "llm", "idx": i, "floor": fs.id, **decision})
+            # Keep rule hysteresis aware of accepted model changes.
+            if not decision.get("fallback") and decision["action"] != "wait":
+                brain.last_choice[i] = t
+                if current is not None and current != decision["target"]:
+                    brain.left[i, fs.id, current] = t
+                    brain.switches[i] = brain.switches.get(i, 0) + 1
+        else:
+            decision = brain.decide(obs)
+        if decision is None or decision["action"] == "wait":
+            return target[i] if current is not None else None
         st = next(st for st in fs.stages if st["id"] == decision["target"])
         if current is not None and st["id"] != current:
             reason = decision["reason"]
@@ -569,7 +602,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "seed": seed,
         "frameInterval": frame_interval,
         "floors": [f["id"] for f in floors],
-        "agents": [{key: a[key] for key in ("idx", "profile", "floor", "room", "v0", "startDelay")} for a in agents],
+        "agents": [{**{key: a[key] for key in ("idx", "profile", "floor", "room", "v0", "startDelay")},
+                    **({"llm": True} if a["idx"] in flagged else {})} for a in agents],
         "frames": frames,
         "smoke": list(smoke.values()),
         "fire": {"floor": fire_cfg.get("floor"), "x": fire_cfg.get("x"), "y": fire_cfg.get("y"), "hrr": hrr},
