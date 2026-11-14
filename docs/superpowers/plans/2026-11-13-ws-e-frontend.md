@@ -410,6 +410,7 @@
 > Lead note: the what-if door dropdown also shows raw door ids. Cover it in E34: show the door's readable label and keep the id as the value.
 
 ### Task E32 (P0 · Sat 2 PM): Readable what-if notes: axe color contrast
+BLOCKED: taken over by the lead's machine at 14:21; skip
 - **Files:** Modify `frontend/src/App.css`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes:**
@@ -429,6 +430,7 @@
 - [ ] **Step 3: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): readable what-if notes (axe color contrast)"` (no attribution lines).
 
 ### Task E33 (P1 · Sat 4 PM): Static mode: the Sprinklers box says it needs the backend and quotes the measured sprinkler what-if
+BLOCKED: taken over by the lead's machine at 14:21; skip
 - **Files:** Modify `frontend/src/ui/WhatIfCard.tsx`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes:**
@@ -458,6 +460,7 @@
 - [ ] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
 
 ### Task E34 (P1 · Sat 6 PM): Fix lines show trade-offs, and no list names a spot by its raw id
+BLOCKED: taken over by the lead's machine at 14:21; skip
 - **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes, from E28:**
