@@ -18,8 +18,8 @@
     "S2",
     "S3"
    ],
-   "walkableArea": 3912.5,
-   "vertices": 2577,
+   "walkableArea": 3910.3,
+   "vertices": 2587,
    "size": [
     56.4,
     57.5
@@ -32,8 +32,8 @@
      "doors": 145,
      "exits": 9,
      "stairs": 3,
-     "walkableArea": 2280.4,
-     "vertices": 1501
+     "walkableArea": 2278.8,
+     "vertices": 1505
     },
     {
      "id": "F2",
@@ -42,8 +42,8 @@
      "doors": 91,
      "exits": 0,
      "stairs": 3,
-     "walkableArea": 1632.1,
-     "vertices": 1076
+     "walkableArea": 1631.5,
+     "vertices": 1082
     }
    ]
   },
@@ -63,7 +63,7 @@
     "S1",
     "S2"
    ],
-   "walkableArea": 3479.5,
+   "walkableArea": 3478.0,
    "vertices": 1173,
    "size": [
     54.2,
@@ -77,7 +77,7 @@
      "doors": 68,
      "exits": 6,
      "stairs": 2,
-     "walkableArea": 1756.6,
+     "walkableArea": 1755.3,
      "vertices": 715
     },
     {
@@ -87,7 +87,7 @@
      "doors": 36,
      "exits": 0,
      "stairs": 2,
-     "walkableArea": 1723.0,
+     "walkableArea": 1722.8,
      "vertices": 458
     }
    ]
