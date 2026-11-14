@@ -4,12 +4,14 @@ import ExitBars from '../dashboard/ExitBars'
 import RunStats from '../dashboard/RunStats'
 
 import ReportCard from '../dashboard/ReportCard'
+import Credibility from '../dashboard/Credibility'
 import WeakSpots from '../dashboard/WeakSpots'
 
 const TABS = [
   { id: 'results', label: 'Results' },
   { id: 'risk', label: 'Risk map' },
   { id: 'report', label: 'Report' },
+  { id: 'cred', label: 'Credibility' },
 ]
 
 export default function ResultsPanel() {
@@ -35,6 +37,7 @@ export default function ResultsPanel() {
       )}
       {tab === 'risk' && <WeakSpots />}
       {tab === 'report' && <ReportCard />}
+      {tab === 'cred' && <Credibility />}
       <p className="dim foot">Illustrative fire model. Not a compliance tool. One seed is one possible night.</p>
     </div>
   )
