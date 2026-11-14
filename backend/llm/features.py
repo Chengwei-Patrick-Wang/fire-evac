@@ -278,8 +278,15 @@ def _whatifs(batch: dict, runs: list[dict]) -> list[dict]:
     for w in batch.get("whatIf") or []:
         if not isinstance(w, dict):
             continue
+        label = str(w.get("label") or w.get("id") or "What-if")
+        sprinklers = str(w.get("id")) == "sprinklers" or "sprinkler" in label.lower()
         smoke, dosed = _num(w.get("dSmokeSeconds")), _num(w.get("dDosed"))
         dt90, dtrapped = _num(w.get("dT90")), _num(w.get("dTrapped"))
+        if sprinklers:
+            # The sim drops trapped people from the frames, so their time in smoke stops counting: with sprinklers
+            # fewer people are trapped, more stay in the frames, and smoke time (and dose) can go UP. A sprinkler
+            # what-if is shown by people trapped and 90% out only (D15's finding, STATUS Sat 09:15).
+            smoke = dosed = None
         smoke_text = t90_text = None
         if smoke is not None:
             base = _base_smoke(w, runs)
@@ -293,12 +300,16 @@ def _whatifs(batch: dict, runs: list[dict]) -> list[dict]:
         parts = [smoke_text] if smoke_text else []
         if dosed is not None:
             parts.append(f"{dosed:+.1f} people per fire at an illustrative smoke dose of 1")
+        if sprinklers and dtrapped is not None:
+            parts.append("no change in people trapped" if abs(dtrapped) < 0.05
+                         else f"{abs(dtrapped):.1f} {'fewer' if dtrapped < 0 else 'more'} people trapped per fire")
         parts += [t90_text] if t90_text else []
-        if dtrapped is not None:
+        if dtrapped is not None and not sprinklers:
             parts.append(f"trapped {dtrapped:+.1f} per fire")
+        if sprinklers and parts:
+            parts.append("smoke time is not compared: people who become trapped drop out of the frames")
         if parts:
-            out.append({"label": str(w.get("label") or w.get("id") or "What-if"), "smoke": smoke_text,
-                        "t90": t90_text, "parts": parts})
+            out.append({"label": label, "smoke": smoke_text, "t90": t90_text, "parts": parts})
     return out
 
 
