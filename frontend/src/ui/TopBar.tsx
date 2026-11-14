@@ -48,6 +48,7 @@ export default function TopBar({
       >
         {touring ? 'Stop demo' : 'Demo'}
       </button>
+      <button onClick={() => useApp.getState().setAbout(true)}>About</button>
       <label className="file">
         Open file
         <input
@@ -61,7 +62,7 @@ export default function TopBar({
           }}
         />
       </label>
-      <span className="mode">{mode}</span>
+      <span className="mode mode-label">{mode}</span>
       {loading && <span className="spinner" aria-label="loading" />}
       {notice && <span className="notice">{notice}</span>}
     </header>

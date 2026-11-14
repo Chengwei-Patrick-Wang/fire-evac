@@ -65,7 +65,7 @@ export default function Toolbar3D() {
         <button
           key={n}
           title="Lens: highlight this profile"
-          className={lens.every(Boolean) || !lens[i] ? '' : 'on'}
+          className={'lens ' + (lens.every(Boolean) || !lens[i] ? '' : 'on')}
           onClick={() =>
             set((s) => {
               const all = s.lens.every(Boolean)
@@ -79,7 +79,7 @@ export default function Toolbar3D() {
           {n}
         </button>
       ))}
-      <button disabled={nRuns < 2} className={split ? 'on' : ''} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
+      <button disabled={nRuns < 2} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
     </div>
   )

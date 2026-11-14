@@ -68,6 +68,8 @@ interface AppState {
   focus: Focus | null
   batchRunning: string | null
   batchError: string | null
+  about: boolean
+  setAbout: (b: boolean) => void
   resultsTab: ResultsTab
   setResultsTab: (t: ResultsTab) => void
   activeSpot: string | null
@@ -125,6 +127,8 @@ export const useApp = create<AppState>((set) => ({
   focus: null,
   batchRunning: null,
   batchError: null,
+  about: false,
+  setAbout: (about) => set({ about }),
   resultsTab: 'results',
   setResultsTab: (resultsTab) => set({ resultsTab }),
   activeSpot: null,

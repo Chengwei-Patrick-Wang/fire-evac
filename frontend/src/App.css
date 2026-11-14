@@ -70,9 +70,24 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
     height: auto;
     min-height: 100vh;
     grid-template-columns: 1fr;
-    grid-template-rows: 44px 60vh auto auto auto 24px;
-    grid-template-areas: 'top' 'center' 'left' 'right' 'bottom' 'credits';
+    grid-template-rows: auto 55vh auto auto auto auto 24px;
+    grid-template-areas: 'top' 'center' 'toggles' 'left' 'right' 'bottom' 'credits';
   }
+  .collapsed { display: none; }
+  .toggles { grid-area: toggles; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 6px 12px; background: #111a2e; }
+  .toggles button { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; cursor: pointer; }
+  .toggles button.on { background: #2563eb; border-color: #3b82f6; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 4px 12px; }
+  .topbar .file, .topbar .mode-label { display: none; }
+  .topbar .tabs { overflow-x: auto; max-width: 100%; }
+  .toolbar3d { flex-wrap: wrap; right: 8px; }
+  .toolbar3d .lens, .toolbar3d .split { display: none; }
+  .scrubber .opt { display: none; }
+  .scrubber .time { min-width: 0; }
+  .scrubber .track input { height: 28px; }
+  button { min-height: 36px; }
+  .scrubber .mark { min-height: 10px; }
+  html, body { overflow-x: hidden; }
   .left, .right { border: 0; border-top: 1px solid #1e293b; overflow: visible; }
   .bottom { position: sticky; bottom: 0; z-index: 5; }
 }
@@ -91,3 +106,16 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .tourcap button:disabled { opacity: 0.4; cursor: default; }
 .tourbar { height: 3px; background: #3b82f6; margin-top: 8px; width: 0; animation: tourfill linear forwards; }
 @keyframes tourfill { to { width: 100%; } }
+
+.about-backdrop { position: fixed; inset: 0; z-index: 100; background: #000a; display: flex; align-items: center; justify-content: center; padding: 12px; }
+.about-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 20px 24px; max-width: 560px; width: 100%; max-height: 90vh; overflow: auto; }
+.about-card h2 { margin: 0 0 6px; }
+.about-card h3 { margin: 14px 0 4px; font-size: 14px; }
+.about-card .pitch { font-size: 17px; margin: 6px 0; }
+.about-card .aboutnote { background: #422006; border: 1px solid #a16207; border-radius: 6px; padding: 8px 12px; }
+.about-card .qr { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+.about-card .qrtile { background: #fff; padding: 8px; border-radius: 4px; line-height: 0; }
+.about-card a { color: #93c5fd; word-break: break-all; }
+.aboutbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.aboutbtns button { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+.aboutbtns button:first-child { background: #2563eb; border-color: #3b82f6; }
