@@ -250,7 +250,6 @@ D13 completed: smoke test and slow checks both printed `fire checks OK`. The bud
 
 ### Task D15 (P0 · Sat 7 AM): Real office demo batch: readable labels, design occupancy, budgeted what-ifs and fixes
 
-BLOCKED: WS-C sim/run.py:602 rejects stair arrivals near the blocked office stair exit D$77wwb (R106, seed 2, 250 occupants, kitchen): agent (0.36, 22.81) within 0.2 m of geometry boundary. Baseline and propped sweep completed; stopped blocked-exit sweep. Fire-side steps and smoke/slow checks pass; reproduction and handoff in fire/README.md. Needs simulator arrival-region clearance fix before Step 4/6 can finish.
 
 **Files:** Modify `fire/batch.py`, `fire/whatif.py`, `fire/fixes.py`, `fire/checks.py`, `fire/README.md`; produce `data/runs/batch-office.json` (gitignored: the lead regenerates it with the command recorded here).
 
