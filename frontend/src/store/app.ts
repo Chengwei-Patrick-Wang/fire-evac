@@ -4,6 +4,8 @@ import type { Mode } from '../data/loader'
 import { buildRunIndex } from '../replay/runIndex'
 import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
+import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startRun } from '../data/loader'
+import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
 
 export interface LoadedRun {
   key: string
@@ -43,6 +45,15 @@ interface AppState {
   visibleFloors: string[] | null
   layers: Layers
   topView: number
+  draft: Scenario | null
+  placing: boolean
+  running: string | null
+  runError: string | null
+  runNote: string | null
+  setDraft: (d: Scenario | null) => void
+  patchDraft: (p: Partial<Scenario>) => void
+  setPlacing: (b: boolean) => void
+  runScenario: (s: Scenario) => Promise<void>
   setMode: (m: Mode) => void
   setView: (v: View) => void
   setLoading: (s: string | null) => void
@@ -69,12 +80,61 @@ export const useApp = create<AppState>((set) => ({
   visibleFloors: null,
   layers: { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
   topView: 0,
+  draft: null,
+  placing: true,
+  running: null,
+  runError: null,
+  runNote: null,
+  setDraft: (draft) => set({ draft }),
+  patchDraft: (p) => set((s) => (s.draft ? { draft: { ...s.draft, ...p } } : {})),
+  setPlacing: (placing) => set({ placing }),
+  runScenario: async (scenario) => {
+    const st = useApp.getState()
+    const b = st.building
+    if (!b || st.running) return
+    set({ running: 'Running…', runError: null, runNote: null })
+    const sc: Scenario = { ...scenario, buildingId: b.id, occupants: { ...scenario.occupants, mix: normalizeMix(scenario.occupants.mix) } }
+    const loadNearest = async () => {
+      const entries = await listDemoRuns(b.id)
+      const hit = nearestPrecomputedRun(entries, sc.fire)
+      if (!hit) throw new ApiError('No precomputed run for this building')
+      const { entry, distance } = hit
+      if (!useApp.getState().runs[entry.id]) {
+        const run = await loadDemoRun(entry)
+        useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {} })
+      } else useApp.getState().switchRun(entry.id)
+      const here = sc.fire.x !== undefined ? `, ${distance.toFixed(1)} m from your click` : ''
+      set({ runNote: `Static mode: nearest precomputed run, fire in ${entry.fire.room}${here}` })
+    }
+    try {
+      if (useApp.getState().mode === 'live') {
+        try {
+          const id = 'ui-' + Date.now().toString(36)
+          sc.id = id
+          const runId = await startRun(sc)
+          const run = await pollRun(runId, (el) => set({ running: `Running… ${el} s` }))
+          useApp.getState().addRun({ key: id, label: `Your run ${id.slice(3, 7)}`, run, doors: sc.doors ?? {}, scenario: sc })
+          return
+        } catch (e) {
+          const unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
+          if (!unreachable) throw e
+          setLoaderMode('static')
+          set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
+        }
+      }
+      await loadNearest()
+    } catch (e) {
+      set({ runError: e instanceof Error ? e.message : String(e) })
+    } finally {
+      set({ running: null })
+    }
+  },
   setMode: (mode) => set({ mode }),
   setView: (view) => set({ view }),
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set({ building, visibleFloors: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] }),
+  setBuilding: (building) => set({ building, draft: null, runNote: null, runError: null, visibleFloors: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] }),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

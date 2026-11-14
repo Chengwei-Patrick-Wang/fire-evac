@@ -7,6 +7,7 @@ import Smoke from '../replay/Smoke'
 import Fire from '../replay/Fire'
 import Heatmap from '../replay/Heatmap'
 import QueueRings from '../replay/QueueRings'
+import FirePicker from './FirePicker'
 
 export default function Scene({ runKey }: { runKey?: string }) {
   return (
@@ -23,6 +24,7 @@ export default function Scene({ runKey }: { runKey?: string }) {
         <Fire runKey={runKey} />
         <Heatmap runKey={runKey} />
         <QueueRings runKey={runKey} />
+        {!runKey && <FirePicker />}
         {import.meta.env.DEV && <Stats />}
       </Canvas>
     </div>

@@ -42,3 +42,13 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .results .legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .results .stats td { padding: 2px 8px 2px 0; }
 .results .foot { font-size: 11px; margin-top: 16px; }
+
+.scenario { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.scenario label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.scenario label.check { justify-content: flex-start; }
+.scenario input[type=number] { width: 80px; background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 3px; }
+.scenario .doorrow { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
+.scenario button { background: #1e293b; color: inherit; border: 1px solid #334155; border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+.scenario button.run { background: #f97316; color: #0b1220; font-weight: 600; }
+.scenario button:disabled { opacity: 0.6; cursor: default; }
+.scenario .err { color: #f87171; }

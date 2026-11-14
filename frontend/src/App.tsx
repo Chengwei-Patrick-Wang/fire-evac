@@ -6,14 +6,17 @@ import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
 import Toolbar3D from './ui/Toolbar3D'
 import ClockDriver from './ui/ClockDriver'
+import ScenarioPanel from './ui/ScenarioPanel'
 import ResultsPanel from './ui/ResultsPanel'
 import Scrubber from './ui/Scrubber'
+import { makeDraft } from './model/scenarioDraft'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
   detectMode,
   listBuildings,
   listDemoRuns,
+  loadBatch,
   loadBuilding,
   loadDemoRun,
   openLocalFile,
@@ -32,6 +35,9 @@ async function selectBuilding(id: string) {
     const forceSample = new URLSearchParams(location.search).has('sample')
     const b = forceSample && id === SAMPLE_BUILDING.id ? SAMPLE_BUILDING : await loadBuilding(id)
     useApp.getState().setBuilding(b)
+    const batch = await loadBatch(b.id).catch(() => null)
+    useApp.setState({ batch: batch && batch.buildingId === b.id ? batch : null })
+    useApp.getState().setDraft(makeDraft(b, useApp.getState().batch?.base))
     const runs = await listDemoRuns(b.id)
     const first = runs.find((r) => r.whatIf === null)
     if (first) {
@@ -67,6 +73,7 @@ async function startup() {
     const id = list.find((b) => b.id === want)?.id ?? list[0].id
     if (id === SAMPLE_BUILDING.id) {
       useApp.getState().setBuilding(SAMPLE_BUILDING)
+      useApp.getState().setDraft(makeDraft(SAMPLE_BUILDING))
       useApp.getState().setLoading(null)
     } else await selectBuilding(id)
   } finally {
@@ -81,6 +88,7 @@ async function openFile(f: File) {
     const o = await openLocalFile(f)
     if (o.kind === 'building') {
       useApp.getState().setBuilding(o.data)
+      useApp.getState().setDraft(makeDraft(o.data))
     } else if (o.kind === 'run') {
       const s = useApp.getState()
       if (!s.building || s.building.id !== o.data.buildingId) {
@@ -119,7 +127,7 @@ export default function App() {
       <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
       <aside className="left">
         <h3>Scenario</h3>
-        <p className="dim">Scenario panel arrives in a later task.</p>
+        <ScenarioPanel />
       </aside>
       <main className="center">
         {view === 'tracer' ? (
