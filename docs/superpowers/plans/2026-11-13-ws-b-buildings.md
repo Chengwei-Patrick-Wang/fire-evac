@@ -143,6 +143,8 @@ BLOCKED: No supplied IFC candidate satisfies B1, so B2–B5 cannot produce the e
 
 ### Task B7: Door-flow calibration (P1, target Sat 4 PM)
 
+BLOCKED: The required data/calibration.json artifact is outside workstream B's permitted buildings/ folder.
+
 **Files:** Create `buildings/fixtures/one_door.plan.json`, `buildings/calibrate_doors.py`; generate `data/calibration.json`; modify `buildings/smoke_test.py`.
 
 **Interfaces:** Consumes `plan_to_building` and `sim.run.run(building, scenario) -> run/v0` (`events` hold `{t, type: "exit", idx, exit}`). Produces `python -m buildings.calibrate_doors [--agents 200]`, which prints a table and writes `data/calibration.json` in the `calibration/v0` shape that E's credibility chart reads (E12; persons/s): `{"version": "calibration/v0", "title": "Door flow: simulation against published values", "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 200 agents, seed 1", "points": [{"label": "1.0 m door", "width": 1.0, "simulated": <flow>, "references": [{"name": "IMO 1.3 persons/(m·s) × width", "value": 1.3 × width}, {"name": "Hydraulic 1.3 × (width − 0.3)", "value": 1.3 × (width − 0.3)}]}]}` for widths 0.8, 1.0, 1.2 and 1.6 m, with the same reference names in every point.
