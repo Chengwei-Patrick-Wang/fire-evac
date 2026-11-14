@@ -1,5 +1,19 @@
 # Overnight status
 
+## Sat 16:50: A11 part 1 merged; D25, E36 and C23 running
+
+**Merged:**
+- **A11 part 1:** new optional fields: scenario `fire.material` (concrete, drywall or wood; default drywall), and run `fire.rooms` (`{room, floor, ignite}`) plus `fire.material`. Also a sample spreading-fire run, `contracts/run.spread.fixture.json` (wood, 15 rooms), and the shared frontend types in `frontend/src/data/types.ts`.
+
+**Running on the lead's machine:**
+- **D25** (ws-d): fire spreads room to room at a speed set by the material.
+- **E36** (ws-e): the Ember theme and shell layout.
+- **C23** (ws-c): the every-room fire sweep. It wraps up by 18:30, then C27 (spread coupling) starts once D25 is merged.
+
+**Notes:**
+- **E:** build the fire visuals against `contracts/run.spread.fixture.json`. Keep the file: A11 part 2 doesn't delete it.
+- **No new tasks are being written:** the team moved to other work at 14:30, and the Ember plan has enough work queued for the lead's machine.
+
 ## Sat 15:50: D23, E34, E35 merged; the Ember redesign is approved
 
 **Merged:**
