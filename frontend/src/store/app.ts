@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Building, BuildingInfo, DoorState, Run, Scenario } from '../data/types'
+import type { Batch, Building, BuildingInfo, DoorState, Run, Scenario } from '../data/types'
 import type { Mode } from '../data/loader'
 import { buildRunIndex } from '../replay/runIndex'
 import type { RunIndex } from '../replay/runIndex'
@@ -37,6 +37,7 @@ interface AppState {
   runOrder: string[]
   activeRunKey: string | null
   notice: string | null
+  batch: Batch | null
   explode: number
   visibleFloors: string[] | null
   layers: Layers
@@ -61,6 +62,7 @@ export const useApp = create<AppState>((set) => ({
   runOrder: [],
   activeRunKey: null,
   notice: null,
+  batch: null,
   explode: 0,
   visibleFloors: null,
   layers: { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },

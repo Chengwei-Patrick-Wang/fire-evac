@@ -7,6 +7,8 @@ export default function Toolbar3D() {
   const labels = useApp((s) => s.layers.labels)
   const smoke = useApp((s) => s.layers.smoke)
   const fire = useApp((s) => s.layers.fire)
+  const heatmap = useApp((s) => s.layers.heatmap)
+  const queues = useApp((s) => s.layers.queues)
   if (!building) return null
   const set = useApp.setState
   const isOn = (id: string) => !visible || visible.includes(id)
@@ -34,14 +36,19 @@ export default function Toolbar3D() {
         />{' '}
         Labels
       </label>
-      {(['smoke', 'fire'] as const).map((k) => (
+      {([
+        ['smoke', 'Smoke', smoke],
+        ['fire', 'Fire', fire],
+        ['heatmap', 'Heatmap', heatmap],
+        ['queues', 'Queues', queues],
+      ] as const).map(([k, name, val]) => (
         <label key={k}>
           <input
             type="checkbox"
-            checked={k === 'smoke' ? smoke : fire}
+            checked={val}
             onChange={(e) => set((s) => ({ layers: { ...s.layers, [k]: e.target.checked } }))}
           />{' '}
-          {k === 'smoke' ? 'Smoke' : 'Fire'}
+          {name}
         </label>
       ))}
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>

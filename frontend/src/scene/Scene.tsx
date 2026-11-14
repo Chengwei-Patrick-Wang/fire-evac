@@ -5,6 +5,8 @@ import CameraRig from './CameraRig'
 import Agents from '../replay/Agents'
 import Smoke from '../replay/Smoke'
 import Fire from '../replay/Fire'
+import Heatmap from '../replay/Heatmap'
+import QueueRings from '../replay/QueueRings'
 
 export default function Scene({ runKey }: { runKey?: string }) {
   return (
@@ -19,6 +21,8 @@ export default function Scene({ runKey }: { runKey?: string }) {
         <Agents runKey={runKey} />
         <Smoke runKey={runKey} />
         <Fire runKey={runKey} />
+        <Heatmap runKey={runKey} />
+        <QueueRings runKey={runKey} />
         {import.meta.env.DEV && <Stats />}
       </Canvas>
     </div>
