@@ -64,6 +64,9 @@ interface AppState {
   crowding: boolean
   lens: boolean[]
   trails: boolean
+  follow: number | null
+  pickAgent: boolean
+  setFollow: (i: number | null) => void
   selectedRoom: string | null
   focus: Focus | null
   batchRunning: string | null
@@ -123,6 +126,9 @@ export const useApp = create<AppState>((set) => ({
   crowding: false,
   lens: [true, true, true, true, true, true],
   trails: false,
+  follow: null,
+  pickAgent: false,
+  setFollow: (follow) => set({ follow, pickAgent: false }),
   selectedRoom: null,
   focus: null,
   batchRunning: null,
@@ -251,7 +257,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

@@ -79,7 +79,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
         k = lensOn && !lens[ix.profile[i]] ? 200 : out.trapped ? 100 : out.st === 0 ? 0 : out.st === 2 ? 2 : out.st === 3 ? 30 + ix.profile[i] : 10 + ix.profile[i]
         const w = toWorld(out.x, out.y, floorY(f, useApp.getState().explode) + 0.87)
         p.set(w[0], w[1], w[2])
-        const sc = k >= 30 && k < 100 ? 0.6 : 1
+        const sc = i === useApp.getState().follow ? 0 : k >= 30 && k < 100 ? 0.6 : 1
         s.set(sc, sc, sc)
       } else {
         p.set(0, 0, 0)
@@ -167,6 +167,12 @@ export default function Agents({ runKey }: { runKey?: string }) {
           if (e.instanceId !== undefined) setHover(e.instanceId)
         }}
         onPointerOut={() => setHover(null)}
+        onClick={(e) => {
+          if (!useApp.getState().pickAgent || e.instanceId === undefined) return
+          e.stopPropagation()
+          useApp.getState().setFollow(e.instanceId)
+          useApp.getState().setNotice(null)
+        }}
       >
         <capsuleGeometry args={[0.22, 1.3]} />
         <meshStandardMaterial />

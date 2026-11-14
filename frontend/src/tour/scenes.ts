@@ -29,6 +29,8 @@ export function resetStage() {
     explode: 0,
     autoRotate: false,
     trails: false,
+    follow: null,
+    pickAgent: false,
     crowding: false,
     riskMetric: 'riskT90',
     resultsTab: 'results',

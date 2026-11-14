@@ -65,7 +65,7 @@ export default function CameraRig() {
   }, [focus, building])
   useFrame((_, dt) => {
     const g = goal.current
-    if (!g) return
+    if (!g || useApp.getState().follow !== null) return
     if (until.current && performance.now() > until.current) {
       goal.current = null
       until.current = 0

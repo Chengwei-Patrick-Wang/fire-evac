@@ -6,6 +6,7 @@ import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
 import SplitView from './scene/SplitView'
 import Toolbar3D from './ui/Toolbar3D'
+import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import Scrubber from './ui/Scrubber'
@@ -174,6 +175,7 @@ export default function App() {
           <>
             {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
             <Toolbar3D />
+            <AgentReadout />
             <TourCaption />
           </>
         )}

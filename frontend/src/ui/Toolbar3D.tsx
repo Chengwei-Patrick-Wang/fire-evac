@@ -14,6 +14,8 @@ export default function Toolbar3D() {
   const split = useApp((s) => s.split)
   const lens = useApp((s) => s.lens)
   const trails = useApp((s) => s.trails)
+  const pick = useApp((s) => s.pickAgent)
+  const hasRun = useApp((s) => s.activeRunKey !== null)
   const nRuns =useApp((s) => s.runOrder.length)
   if (!building) return null
   const set = useApp.setState
@@ -79,6 +81,17 @@ export default function Toolbar3D() {
           {n}
         </button>
       ))}
+      <button
+        disabled={split || !hasRun}
+        className={pick ? 'on' : ''}
+        onClick={(e) => {
+          const on = !useApp.getState().pickAgent
+          set({ pickAgent: on, notice: on ? 'Click a person to see what they see' : null })
+          e.currentTarget.blur()
+        }}
+      >
+        Agent view
+      </button>
       <button disabled={nRuns < 2} className={'split ' + (split ? 'on' : '')} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
     </div>
