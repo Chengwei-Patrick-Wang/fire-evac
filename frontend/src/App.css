@@ -63,3 +63,16 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .spots li { padding: 6px; margin-bottom: 6px; border: 1px solid #1e293b; border-radius: 4px; cursor: pointer; font-size: 12px; }
 .spots li:hover { background: #1e293b; }
 .badge { background: #334155; border-radius: 3px; padding: 0 4px; font-size: 10px; text-transform: uppercase; }
+
+.center canvas { touch-action: none; }
+@media (max-width: 900px) {
+  .app {
+    height: auto;
+    min-height: 100vh;
+    grid-template-columns: 1fr;
+    grid-template-rows: 44px 60vh auto auto auto 24px;
+    grid-template-areas: 'top' 'center' 'left' 'right' 'bottom' 'credits';
+  }
+  .left, .right { border: 0; border-top: 1px solid #1e293b; overflow: visible; }
+  .bottom { position: sticky; bottom: 0; z-index: 5; }
+}

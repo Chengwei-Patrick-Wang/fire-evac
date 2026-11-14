@@ -7,7 +7,6 @@ import Scene from './scene/Scene'
 import Toolbar3D from './ui/Toolbar3D'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
-import ResultsPanel from './ui/ResultsPanel'
 import Scrubber from './ui/Scrubber'
 import { makeDraft } from './model/scenarioDraft'
 import { SAMPLE_BUILDING } from './model/sample'
@@ -22,6 +21,7 @@ import {
   openLocalFile,
 } from './data/loader'
 
+const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
 
 function msg(e: unknown) {
@@ -147,7 +147,9 @@ export default function App() {
         )}
       </main>
       <aside className="right">
-        <ResultsPanel />
+        <Suspense fallback={<div className="pad dim">Loading…</div>}>
+          <ResultsPanel />
+        </Suspense>
       </aside>
       <footer className="bottom"><Scrubber /></footer>
       <ClockDriver />
