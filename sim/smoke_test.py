@@ -1184,7 +1184,8 @@ def check_exit_choice(building, fast):
 
 def check_calibration(slow=False):
     from shapely.geometry import box
-    from sim.calibrate import weidmann, sfpe, speed_density, door_flow, corridor_points, corridor_limits
+    from sim.calibrate import (weidmann, sfpe, speed_density, door_flow, corridor_points,
+                               corridor_limits, steady_corridor, corridor_building, _pair_samples)
 
     assert abs(weidmann(1.0) - 1.058) < 0.005
     assert abs(sfpe(1.0) - 1.028) < 0.005
@@ -1201,8 +1202,25 @@ def check_calibration(slow=False):
     assert points[0]["samples"] == 1 and points[0]["label"] == "1.0–1.5 /m²"
     assert speed_density(frames, box(0, 0, 2, 1)) == []
     assert speed_density(frames, box(0, 0, 2, 1), t_min=6, min_samples=1) == []
-    assert corridor_limits([{"simulated": 1.0}, {"simulated": 0.8}, {"simulated": 0.5}]) == []
-    assert corridor_limits([{"simulated": 0.15}, {"simulated": 0.4}, {"simulated": 0.33}])
+    assert speed_density(frames, box(0, 0, 2, 1), t_max=5, min_samples=1) == []
+    assert speed_density(frames, box(0, 0, 2, 1), t_max=5.5, min_samples=1) == points
+    def reference_points(speeds):
+        return [{"density": density, "simulated": speed,
+                 "references": [{"name": "Weidmann (1993)", "value": ref},
+                                {"name": "SFPE", "value": ref}]}
+                for density, speed, ref in zip((0.2, 1.0, 2.0), speeds, (1.2, 1.0, 0.6))]
+    assert corridor_limits(reference_points((1.2, 1.0, 0.6))) == []
+    failed = corridor_limits(reference_points((0.15, 0.4, 0.33)))
+    assert "planned reference checks" in failed[0]
+    assert "lowest-density" in failed[0] and "strictly" in failed[0]
+    assert "2.00 persons/m2 (30% below" in corridor_limits(reference_points((1.2, 1.0, 0.42)))[0]
+    assert "above" in corridor_limits(reference_points((1.5, 1.0, 0.6)))[0]
+    assert "insufficient coverage" in corridor_limits([])[0]
+    building = corridor_building(length=60, width=3, door=2.6)
+    area = box(10, 0, 20, 3).intersection(floor_walkable(building["floors"][0]))
+    samples = list(_pair_samples(steady_corridor(0.5), area, 3, 15))
+    strip_speed = sum(v for _, v in samples) / len(samples)
+    assert 0.7 <= strip_speed <= 1.5, strip_speed
     agents = 200 if slow else 30
     result = door_flow(1.0, agents=agents)
     assert result["evacuated"] == agents, result
@@ -1212,14 +1230,14 @@ def check_calibration(slow=False):
     print(f"calibration: {agents} agents, 1 m flow {result['flow']:.3f} persons/s")
     if slow:
         points = corridor_points()
-        assert len(points) >= 3, points
-        assert all(p["samples"] >= 5 and 0 <= p["simulated"] <= 1.5 for p in points), points
-        # C15's prescribed transient queue fails its free-flow trend expectation.
-        # Keep the actual data and explicitly disclose this failed comparison.
+        assert len(points) >= 4, points
+        assert all(p["samples"] >= 5 for p in points), points
+        assert 0.7 <= points[0]["simulated"] <= 1.5, points
+        assert all(a["simulated"] > b["simulated"] for a, b in zip(points, points[1:])), points
         limits = corridor_limits(points)
-        meets_reference = (0.7 <= points[0]["simulated"] <= 1.5
-                           and points[-1]["simulated"] < 0.7 * points[0]["simulated"])
-        assert bool(limits) == (not meets_reference)
+        saved = json.loads((ROOT / "data/calibration.json").read_text(encoding="utf-8"))
+        assert points == saved["speedDensity"]["points"]
+        assert all(line in saved["limits"] for line in limits)
         for limitation in limits:
             print(f"LIMIT: {limitation}")
         print(f"corridor: {len(points)} bins, speed {points[0]['simulated']:.2f} to "
