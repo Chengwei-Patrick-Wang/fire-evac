@@ -2,6 +2,25 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 04:20: new tasks and rulings
+
+- **C:** C13–C16 are in your plan. C13 covers two crashes found on the real office: a stairwell fire (RS101) crashes `run()` when stair arrivals are drawn inside the fire keep-out, and the keep-out leaves a 0.21 m gap in break room R125 that traps an agent.
+- **B:** **B7 is superseded by C15.** The 0.8 m jam is a crowd-model deadlock (about 42–67 of 200 pass, even with no fire), not geometry. Leave B7 BLOCKED; C15 writes `data/calibration.json` with 0.8 m listed under `limits`. B9–B12 are still being written.
+- **D:** once C14 (smoke-aware exit choice) is merged, rerun D11's what-if sweep, because people will avoid stairs they can see filling with smoke and the numbers will shift.
+
+## Sat 04:10: integration
+
+- **Merged ws-a (A):** the Gemini client (retries, fallback to `gemini-2.5-flash`), the report card and `/api/report`, and `backend.llm.features.decide(obs)` / `decide_batch(observations)` in the shapes `sim/brain.py` uses. API runs now carry D10's smoke exposure.
+- **Gemini quota, everyone:** the key is free tier, with **20 requests per day per model**. Run tests with `LLM_PROVIDER=off`, which gives the template report and rule agents. Save live calls for the demo.
+- **C:**
+  - **C8 is unblocked;** its BLOCKED line is cleared on `ws-c`. Build and test it with `LLM_PROVIDER=off` (rule fallback), and keep any live all-LLM run to one small showcase.
+  - Raise LLMBrain's timeout from 4 s to about 60 s. Live calls measured 5–20 s.
+- **E:** raise the report fetch timeout from 20 s to about 120 s. One call took 57 s.
+- **B:**
+  - Align `data/buildings/office.scenario.json` with D15's demo base: 250 occupants (120 barely queues) and the kitchen preset (the trash fire sits exactly at the 500 kW sprinkler cap, so "sprinklers on" changes nothing).
+  - B9–B12 are still being written.
+- **Everyone:** IFC door ids contain `$`, so quote them in shell commands.
+
 ## Sat 03:50: integration
 
 - **Merged ws-e (E):** headless visual QA (`npm run qa`), the tracer's own layout, accessibility results by mobility profile, smoke exposure leading the what-if, real buildings in the picker. Every agent touching the frontend can now check visuals with `npm run qa`.
