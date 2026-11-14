@@ -4,7 +4,7 @@ import multiprocessing
 from statistics import median
 import time
 
-from sim.run import run
+from sim.run import BATCH_RECORDING, run
 
 
 KEYS = ("t50", "t90", "t100", "evacuated", "trapped")
@@ -26,7 +26,7 @@ def run_seeds(building, scenario, seeds, workers=1):
     """Return only metrics from workers, sorted by seed (including repeats)."""
     if not isinstance(workers, int) or workers < 1:
         raise ValueError("workers must be a positive integer")
-    tasks = [(building, dict(scenario, seed=seed, brain="rules")) for seed in seeds]
+    tasks = [(building, dict(BATCH_RECORDING, **scenario) | {"seed": seed, "brain": "rules"}) for seed in seeds]
     if workers == 1:
         rows = [_one(task) for task in tasks]
     elif tasks:

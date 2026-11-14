@@ -66,7 +66,8 @@
   ],
   "limits": [
     "0.8 m door: 57 of 200 passed by the run limit; last exit at 66.71 s. Narrow-opening deadlock is a known limit of this crowd model (0.4 m body diameter).",
-    "Corridor speed-density comparison does not meet the planned reference checks: lowest-density bin 0.15 m/s (expected 0.7–1.5), highest-density bin 0.33 m/s (expected below 70% of the lowest-bin speed). These are full-strip averages during a draining bottleneck queue, not a validated steady-state walking-speed curve; low average density can include slow people left behind as the queue drains."
+    "Corridor speed-density comparison does not meet the planned reference checks: lowest-density bin 0.15 m/s (expected 0.7–1.5), highest-density bin 0.33 m/s (expected below 70% of the lowest-bin speed). These are full-strip averages during a draining bottleneck queue, not a validated steady-state walking-speed curve; low average density can include slow people left behind as the queue drains.",
+    "Walking speed in smoke: the published rule is a model input; this curve checks that the simulator applies it as published, not independent validation."
   ],
   "speedDensity": {
     "title": "Corridor walking speed against density",
@@ -149,6 +150,97 @@
           {
             "name": "SFPE corridor 1.4·(1 − 0.266·D)",
             "value": 0.6142
+          }
+        ]
+      }
+    ]
+  },
+  "speedVisibility": {
+    "title": "Walking speed in smoke: simulation against the published rule",
+    "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 8 typical agents, seed 1; 30 × 3 m corridor, 1.2 m door; x = 2–24 m, t ≥ 1 s, immediate start",
+    "formula": "min(v0, max(0.2, v0 − 0.34·(3 − S)))",
+    "points": [
+      {
+        "label": "1 m visibility",
+        "visibility": 1.0,
+        "simulated": 0.4813,
+        "samples": 314,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 0.4843
+          }
+        ]
+      },
+      {
+        "label": "1.5 m visibility",
+        "visibility": 1.5,
+        "simulated": 0.6386,
+        "samples": 233,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 0.6632
+          }
+        ]
+      },
+      {
+        "label": "2 m visibility",
+        "visibility": 2.0,
+        "simulated": 0.8088,
+        "samples": 181,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 0.8352
+          }
+        ]
+      },
+      {
+        "label": "2.5 m visibility",
+        "visibility": 2.5,
+        "simulated": 0.9757,
+        "samples": 149,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.0066
+          }
+        ]
+      },
+      {
+        "label": "3 m visibility",
+        "visibility": 3.0,
+        "simulated": 1.1403,
+        "samples": 126,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.1779
+          }
+        ]
+      },
+      {
+        "label": "5 m visibility",
+        "visibility": 5.0,
+        "simulated": 1.1403,
+        "samples": 126,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.1779
+          }
+        ]
+      },
+      {
+        "label": "30 m visibility",
+        "visibility": 30.0,
+        "simulated": 1.1403,
+        "samples": 126,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.1779
           }
         ]
       }
