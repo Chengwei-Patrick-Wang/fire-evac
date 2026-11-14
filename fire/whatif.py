@@ -57,6 +57,21 @@ def compare(base: dict, baseline_runs: list[dict], variant_runs: list[dict]) -> 
     return result
 
 
+def smoke_base(baseline_runs: list[dict], variant_runs: list[dict], stats: dict) -> dict:
+    """baseSmokeSeconds and smokePct of one comparison, from the baseline side of its pairs.
+
+    The mean covers exactly the baseline runs that a successful variant run matches (the pairs
+    `compare` used); smokePct is null when that mean is 0. Empty without dSmokeSeconds.
+    """
+    if "dSmokeSeconds" not in stats:
+        return {}
+    baseline = {_key(r): r for r in baseline_runs if r.get("ok", True)}
+    matched = [baseline[_key(r)] for r in variant_runs if r.get("ok", True) and _key(r) in baseline]
+    mean = sum(r["smokeSeconds"] for r in matched) / len(matched)
+    return {"baseSmokeSeconds": mean,
+            "smokePct": 100 * stats["dSmokeSeconds"] / mean if mean > 0 else None}
+
+
 def _why(label, stats):
     if not stats["n"]:
         return f"{label}: no successful matched fires (0 pairs).".encode("ascii", "replace").decode("ascii")
@@ -65,7 +80,10 @@ def _why(label, stats):
             f"(slower in {stats['slower']} of {stats['n']} fires); ")
     clauses = []
     if "dSmokeSeconds" in stats:
-        clauses.append(f"{stats['dSmokeSeconds']:+,.0f} person-seconds in smoke")
+        clause = f"{stats['dSmokeSeconds']:+,.0f} person-seconds in smoke"
+        if stats.get("smokePct") is not None:
+            clause += f" ({round(stats['smokePct']):+d}%)"
+        clauses.append(clause)
     if "dDosed" in stats:
         clauses.append(f"{stats['dDosed']:+.1f} people at an illustrative smoke dose of 1")
     clauses.append(f"{stats['dTrapped']:+.1f} trapped per fire.")
@@ -97,5 +115,6 @@ def add_whatif(building: dict, base: dict, batch: dict, variants=None, rooms=Non
                         sprinklers=variant["sprinklers"])
         rerun = run_many(building, scenario, ignitions, seeds, workers, timeout_s, progress)
         stats = compare(base, baseline, rerun["runs"])
+        stats.update(smoke_base(baseline, rerun["runs"], stats))
         result["whatIf"].append({**deepcopy(variant), **stats, "why": _why(variant["label"], stats)})
     return result
