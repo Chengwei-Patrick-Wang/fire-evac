@@ -571,10 +571,13 @@ def check_decide():
 
 
 def check_llm_client():
-    """The client's retry and fallback rules on a stubbed Gemini call (no network): 503 is retried and
-    then the fallback model answers; a timeout, a 404 or invalid JSON go straight to the fallback; a
-    busy model is skipped for the cooldown; 401 stops at once; total failure is None and one stderr
-    line, which never shows the key; missing keys and an unknown provider give None."""
+    """The client's model chain and retry rules on a stubbed Gemini call (no network). The chain is
+    GEMINI_MODEL, GEMINI_FALLBACK_MODEL (default gemini-2.5-flash), gemini-3.6-flash, gemini-3.7-flash,
+    gemini-3.1-flash-lite. A 429 (a used-up quota or a rate limit) or a 503 goes straight to the next
+    model, and the log names the model that answered; 500 and 502 retry the same model; a timeout, a
+    404 or invalid JSON go to the next model; a busy model is skipped for the cooldown (a used-up
+    quota for an hour); 401 stops at once; total failure is None and one stderr line, which never
+    shows the key; missing keys and an unknown provider give None."""
     from backend.llm import client as llm
 
     class FakeAPIError(Exception):
@@ -610,16 +613,36 @@ def check_llm_client():
 
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
     ok = '{"ok": true}'
-    p, f = ["primary-model"], ["fallback-model"]
-    real_once, real_backoff = llm._gemini_once, llm.BACKOFF
-    llm._gemini_once, llm.BACKOFF = fake_once, 0.0
+    tail = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"]
+    with env(GEMINI_MODEL="primary-model", GEMINI_FALLBACK_MODEL=None):
+        assert llm._models() == ["primary-model", "gemini-2.5-flash"] + tail, llm._models()
+    with env(GEMINI_MODEL=None, GEMINI_FALLBACK_MODEL=None):
+        assert llm._models() == ["gemini-2.5-flash"] + tail, llm._models()
+    with env(GEMINI_MODEL="a, b", GEMINI_FALLBACK_MODEL="gemini-3.7-flash,c,a"):
+        assert llm._models() == ["a", "b", "gemini-3.7-flash", "c", "gemini-3.6-flash", "gemini-3.1-flash-lite"], llm._models()
+
+    p, f, t = ["primary-model"], ["fallback-model"], ["tail-model"]
+    real_once, real_backoff, real_tail = llm._gemini_once, llm.BACKOFF, llm.CHAIN_TAIL
+    llm._gemini_once, llm.BACKOFF, llm.CHAIN_TAIL = fake_once, 0.0, ("tail-model",)  # a short chain for the scripts
     try:
         with env(LLM_PROVIDER="gemini", GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY") or "smoke-not-a-key",
                  GEMINI_MODEL="primary-model", GEMINI_FALLBACK_MODEL="fallback-model"):
-            assert ask([FakeAPIError(503), FakeAPIError(429), ok], schema=schema)[:2] == ({"ok": True}, p * 3)
-            out, seen, log = ask([FakeAPIError(503)] * 3 + [ok], schema=schema)
-            assert (out, seen) == ({"ok": True}, p * 3 + f) and "answered by fallback-model" in log, (out, seen, log)
+            out, seen, log = ask([ok], schema=schema)
+            assert (out, seen) == ({"ok": True}, p) and "answered by primary-model" in log, (out, seen, log)
+            # 503 (busy) and 429 (quota or rate limit): the next model at once, no retry
+            out, seen, log = ask([FakeAPIError(503), ok], schema=schema)
+            assert (out, seen) == ({"ok": True}, p + f) and "answered by fallback-model" in log and "503" in log, (out, seen, log)
             assert ask([ok], cooled=True, schema=schema)[:2] == ({"ok": True}, f), "the busy model was not skipped"
+            assert ask([FakeAPIError(429), ok], schema=schema)[:2] == ({"ok": True}, p + f)
+            # down the chain: the primary's daily quota is used up (it rests for an hour, not 2
+            # minutes), the fallback is busy, the tail answers
+            out, seen, log = ask([FakeAPIError(429, "RESOURCE_EXHAUSTED", quota), FakeAPIError(503), ok], schema=schema)
+            assert (out, seen) == ({"ok": True}, p + f + t) and "answered by tail-model" in log, (out, seen, log)
+            assert "skipped for 3600 s" in log and log.count("\n") == 1, log
+            assert llm._cooldown["primary-model"] - time.monotonic() > 3500, llm._cooldown
+            # 500 and 502 retry the same model, then the next one
+            assert ask([FakeAPIError(500), FakeAPIError(502), ok], schema=schema)[:2] == ({"ok": True}, p * 3)
+            assert ask([FakeAPIError(500)] * 3 + [ok], schema=schema)[:2] == ({"ok": True}, p * 3 + f)
             assert ask([TimeoutError("read timed out"), ok], schema=schema)[:2] == ({"ok": True}, p + f)
             assert ask([FakeAPIError(404), ok], schema=schema)[:2] == ({"ok": True}, p + f)
             assert ask(["not json", ok], schema=schema)[:2] == ({"ok": True}, p + f)
@@ -627,16 +650,16 @@ def check_llm_client():
             assert ask(["plain text"])[:2] == ("plain text", p)
             out, seen, log = ask([FakeAPIError(401)], schema=schema)
             assert (out, seen) == (None, p) and log.count("\n") == 1, (out, seen, log)
-            out, seen, log = ask([FakeAPIError(404)] + [FakeAPIError(503)] * 3, schema=schema)
-            assert (out, seen) == (None, p + f * 3) and log.count("\n") == 1, (out, seen, log)
-            # a used-up daily quota: no retry, and the model rests for an hour instead of 2 minutes
-            out, seen, log = ask([FakeAPIError(429, "RESOURCE_EXHAUSTED", quota), ok], schema=schema)
-            assert (out, seen) == ({"ok": True}, p + f) and "skipped for 3600 s" in log, (out, seen, log)
-            assert llm._cooldown["primary-model"] - time.monotonic() > 3500, llm._cooldown
+            out, seen, log = ask([FakeAPIError(404), FakeAPIError(503), FakeAPIError(429)], schema=schema)
+            assert (out, seen) == (None, p + f + t) and log.count("\n") == 1 and "no answer" in log, (out, seen, log)
+            # a caller's own chain for one call (the tracer's first pass)
+            out, seen, log = ask([FakeAPIError(503), ok], schema=schema, models=["x-model", "y-model", "x-model"])
+            assert (out, seen) == ({"ok": True}, ["x-model", "y-model"]) and "answered by y-model" in log, (out, seen, log)
         with env(LLM_PROVIDER="gemini", GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY") or "smoke-not-a-key",
                  GEMINI_MODEL="primary-model", GEMINI_FALLBACK_MODEL="fallback-model, second-model,primary-model"):
             out, seen, log = ask([TimeoutError("slow"), FakeAPIError(404), ok], schema=schema)
             assert (out, seen) == ({"ok": True}, p + f + ["second-model"]), (out, seen, log)
+        llm.CHAIN_TAIL = ()
         with env(LLM_PROVIDER="gemini", GEMINI_API_KEY="smoke-secret-key-0123456789", GEMINI_MODEL="m1", GEMINI_FALLBACK_MODEL="m1"):
             out, seen, log = ask([FakeAPIError(400, "bad request for smoke-secret-key-0123456789")], schema=schema)
             assert out is None and seen == ["m1"] and "smoke-secret-key" not in log and "***" in log, log
@@ -651,7 +674,7 @@ def check_llm_client():
         assert "GEMINI_API_KEY is not set" in log.getvalue() and "APP_ANTHROPIC_API_KEY" in log.getvalue()
         assert not models, "a model was called without a key"
     finally:
-        llm._gemini_once, llm.BACKOFF = real_once, real_backoff
+        llm._gemini_once, llm.BACKOFF, llm.CHAIN_TAIL = real_once, real_backoff, real_tail
         llm._cooldown.clear()
 
 
