@@ -742,3 +742,88 @@ building files were changed here. Verification passed before this blocked commit
 `LLM_PROVIDER=off python -m fire.smoke_test` and
 `LLM_PROVIDER=off python -m fire.checks --slow` (including the new two-fire,
 250-occupant office check), both ending in `fire checks OK`.
+
+## Ranges across seeds (D16)
+
+Batches with at least two successful seeds include optional ranges. Room
+`riskT90Range`, `riskTrappedRange` and (when dose is available) `riskDosedRange`
+are `{min, median, max}` over that room's successful runs, using plain floats.
+A missing t90 counts as `base.maxTime`; when every t90 for a room is missing,
+`riskT90Range` is null, matching `riskT90`. These are observed ranges across the
+sampled runs, not confidence intervals. Failed runs are excluded.
+
+Door `scoreRange` and `meanWaitRange` summarize one aggregate per successful
+seed, over its ignition rooms. Scores are normalized separately within each
+seed, so score ranges describe relative ranking variation rather than absolute
+queue load. A door absent from a seed contributes zero. Different successful
+ignition subsets can affect the comparison if runs fail.
+
+`stability.seeds` lists the successful seeds; `top3` lists the first three door,
+stair or exit ids from the overall ranking (rooms are excluded). `heldIn` counts
+seeds with the same top-three set, regardless of order; `n` is the successful
+seed count and `stable` means `heldIn == n`. The text also reports how often the
+overall first door ranks first. If fewer than three doors queue, the comparison
+uses that smaller set. Each `top` entry has `seedsInTop3` and `seeds`: for a room,
+the former counts how often it is the seed's worst room. One-seed batches keep
+the existing shape, without ranges or stability fields. All results use the
+illustrative model.
+
+Verification commands (from the repository root with `.venv` active):
+
+```sh
+LLM_PROVIDER=off python -m fire.smoke_test
+LLM_PROVIDER=off python -m fire.checks --slow
+LLM_PROVIDER=off python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2,3 --out debug/batch-ranges.json
+LLM_PROVIDER=off python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 10 --out debug/batch-office-ranges.json > debug/office-ranges.log 2>&1
+```
+
+Handoff for E: show `riskT90Range` beside the mean, for example
+`95 s (88-104)`, and `stability.why` below the weak spots; handle null ranges.
+Handoff for A: regenerate the office batch so it carries these optional fields;
+`stability.why` can appear verbatim in the report card. No contracts or frontend
+files were changed.
+
+Measured results on macOS 14.5 arm64, 8 logical cores, 7 workers:
+
+```text
+Example: 6 rooms x 3 seeds = 18 runs, 0 failed.
+The top 3 weak spots hold in 2 of 3 seeds: Door DL1 (Lobby to Corridor 1), Exit East stair exit, Exit Main entrance. Door DL1 (Lobby to Corridor 1) ranks first in 3 of 3.
+pilot 9.7 s; budget 10 min, 7 workers, 3 seeds, 0 what-ifs -> 72 rooms (est. 10.0 min)
+Office: 72 rooms x 3 seeds = 216 attempted; 213 successful, 3 failed.
+The top 3 weak spots hold in 2 of 3 seeds: Stair S1 exit, Door D$77u2P (VEST/ENTRY to NOC), Stair S1 door. Stair S1 exit ranks first in 2 of 3.
+```
+
+Office timing (seconds):
+
+```json
+{
+  "runs": 216,
+  "failed": 3,
+  "workers": 7,
+  "wallS": 370.15573766618036,
+  "meanRunS": 11.789803746751407
+}
+```
+
+Three sampled office rooms (seconds for t90; people for trapped and dosed):
+
+| Room | riskT90Range (min / median / max) | riskTrappedRange | riskDosedRange |
+| --- | --- | --- | --- |
+| R102 | 132.02 / 134.38 / 135.09 | 1.00 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 |
+| R104 | 133.90 / 134.27 / 134.33 | 1.00 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 |
+| R105 | 132.22 / 135.45 / 139.44 | 1.00 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 |
+
+Both verification suites printed `fire checks OK`. Both CLI batches wrote
+their output files and printed the stability lines above. Output JSON and logs
+are gitignored; the commands above regenerate them.
+
+Office limitation: all three R203b seeds failed with
+`ValueError: No grid nodes inside the requested room on F2`.
+The room is an OPEN OFFICE fragment, 1.16 m² with bounds
+`(0.331, 23.818, 5.897, 24.026)`: only 0.208 m wide, below the 0.5 m
+smoke-grid spacing. The 71 other sampled rooms succeeded in all three seeds.
+Ranges and stability exclude those failures; R203b has no risk estimate.
+This is not the blocked-stair simulator failure recorded under D15.
+Handoff for B/A: inspect the narrow IFC room fragment before using this
+batch as a complete office survey. No geometry or grid-resolution changes
+are included in the ranges task.
