@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { loadCalibration, type Calibration } from '../data/loader'
 import { useApp } from '../store/app'
 import { readSeedRange, span } from '../model/ranges'
@@ -44,7 +44,7 @@ export function Limits() {
   )
 }
 
-type CalPoint = { label: string; simulated: number; references: { name: string; value: number }[] }
+type CalPoint = { label: string; width?: number; simulated: number; references: { name: string; value: number }[] }
 
 function between(points: CalPoint[], noun: string) {
   const c = { between: 0, below: 0, above: 0 }
@@ -57,40 +57,87 @@ function between(points: CalPoint[], noun: string) {
   }
   const n = points.length
   const parts = (Object.keys(c) as (keyof typeof c)[]).filter((k) => c[k] > 0).map((k) => `${k} at ${c[k]} of ${n} ${noun}`)
-  return `Simulated vs references: ${parts.join(', ') || 'no references'}.`
+  return `Our simulation vs references: ${parts.join(', ') || 'no references'}.`
 }
 
-function CalChart({ title, source, points, unit, id, noun }: { title: string; source: string; points: CalPoint[]; unit: string; id: string; noun: string }) {
+type ChartKind = 'door' | 'corridor'
+
+const SIM_DESCRIPTIONS = {
+  door: 'People passing through the door per second in our controlled simulation.',
+  corridor: 'Average walking speed measured in our controlled corridor simulation.',
+}
+
+function referenceLabel(name: string) {
+  if (/IMO/i.test(name)) return 'Clear-width estimate'
+  if (/Hydraulic/i.test(name)) return 'Effective-width estimate'
+  if (/SFPE/i.test(name)) return 'SFPE reference'
+  if (/Weidmann/i.test(name)) return 'Weidmann reference'
+  return name
+}
+
+function referenceDescription(name: string) {
+  if (/IMO/i.test(name)) return 'An IMO-based reference estimate using the full door opening.'
+  if (/Hydraulic/i.test(name)) return 'A hydraulic-flow reference estimate allowing 15 cm of unused space on each side of the opening.'
+  if (/SFPE/i.test(name)) return 'A Society of Fire Protection Engineers reference formula estimating walking speed as crowding increases.'
+  if (/Weidmann/i.test(name)) return 'A pedestrian-research reference curve relating crowd density to walking speed.'
+  return 'A reference value supplied with this calibration dataset.'
+}
+
+function CalChart({ points, id, kind }: { points: CalPoint[]; id: string; kind: ChartKind }) {
   const names = [...new Set(points.flatMap((p) => p.references.map((r) => r.name)))]
+  const title = kind === 'door' ? 'How many people can pass through?' : 'How crowding slows walking'
+  const xLabel = kind === 'door' ? 'Door width (m)' : 'Crowding (people/m²)'
+  const yLabel = kind === 'door' ? 'People per second' : 'Walking speed (m/s)'
   const rows = points.map((p) => {
-    const r: Record<string, number | string> = { label: p.label, simulated: p.simulated }
+    const r: Record<string, number | string> = { label: kind === 'door' ? p.width ?? p.label : p.label, simulated: p.simulated }
     for (const ref of p.references) r[ref.name] = ref.value
     return r
   })
+  const series = [
+    { name: 'Our simulation', description: SIM_DESCRIPTIONS[kind], color: COLORS[0] },
+    ...names.map((name, i) => ({ name: referenceLabel(name), description: referenceDescription(name), color: COLORS[(i + 1) % COLORS.length] })),
+  ]
   return (
-    <>
-      <h4>{title}</h4>
-      <div role="img" aria-label={title} aria-describedby={id} style={{ width: '100%', height: 220 }}>
+    <section className="cal-chart" aria-labelledby={`${id}-title`}>
+      <h4 id={`${id}-title`}>{title}</h4>
+      <div role="img" aria-label={title} aria-describedby={id} style={{ width: '100%', height: 260 }}>
         <p id={id} className="sr-only">
-          {rows.map((r) => `${r.label}: Simulated ${r.simulated}, ${names.filter((n) => r[n] !== undefined).map((n) => `${n} ${r[n]}`).join(', ')}`).join('; ')}
-          {` (${unit.trim()}).`}
+          {`${xLabel}; ${yLabel}. `}
+          {rows.map((r) => `${r.label}: Our simulation ${r.simulated}, ${names.filter((n) => r[n] !== undefined).map((n) => `${referenceLabel(n)} ${r[n]}`).join(', ')}`).join('; ')}
         </p>
         <ResponsiveContainer>
-          <BarChart accessibilityLayer={false} data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -10 }}>
+          <BarChart accessibilityLayer={false} data={rows} margin={{ top: 8, right: 12, bottom: 12, left: 12 }}>
             <CartesianGrid stroke="#1e293b" />
-            <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} />
-            <YAxis stroke="#94a3b8" fontSize={11} unit={unit} />
+            <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} height={44} label={{ value: xLabel, position: 'insideBottom', offset: 0, fill: '#94a3b8', fontSize: 11 }} />
+            <YAxis stroke="#94a3b8" fontSize={11} width={50} label={{ value: yLabel, angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 11, style: { textAnchor: 'middle' } }} />
             <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #334155' }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="simulated" name="Simulated" fill={COLORS[0]} isAnimationActive={false} />
+            <Bar dataKey="simulated" name="Our simulation" fill={COLORS[0]} isAnimationActive={false} />
             {names.map((n, i) => (
-              <Bar key={n} dataKey={n} fill={COLORS[(i + 1) % COLORS.length]} isAnimationActive={false} />
+              <Bar key={n} dataKey={n} name={referenceLabel(n)} fill={COLORS[(i + 1) % COLORS.length]} isAnimationActive={false} />
             ))}
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <p className="dim">Source: {source}</p>
-      <p className="dim">{between(points, noun)}</p>
+      <dl className="cal-legend" aria-label={`${title}: series descriptions`}>
+        {series.map((s) => (
+          <div key={s.name}>
+            <dt><span className="cal-swatch" style={{ backgroundColor: s.color }} aria-hidden="true" />{s.name}</dt>
+            <dd>{s.description}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="dim">{between(points, kind === 'door' ? 'widths' : 'densities')}</p>
+    </section>
+  )
+}
+
+function ChartMethods({ title, source, points }: { title: string; source: string; points: CalPoint[] }) {
+  const names = [...new Set(points.flatMap((p) => p.references.map((r) => r.name)))]
+  return (
+    <>
+      <h4>{title}</h4>
+      <p>Test conditions: {source}</p>
+      <ul>{names.map((name) => <li key={name}>{referenceLabel(name)}: {name}</li>)}</ul>
     </>
   )
 }
@@ -114,21 +161,36 @@ export default function Credibility() {
       {cal && (
         <>
           {cal.example && <div className="stamp">EXAMPLE VALUES</div>}
-          <CalChart title={cal.data.title} source={cal.data.source} points={cal.data.points} unit=" p/s" id="cred-summary" noun="widths" />
+          <CalChart points={cal.data.points} id="cred-summary" kind="door" />
           {sd && Array.isArray(sd.points) && sd.points.length > 0 && (
-            <CalChart title={sd.title} source={sd.source} points={sd.points} unit=" m/s" id="cred-summary-speed" noun="densities" />
+            <CalChart points={sd.points} id="cred-summary-speed" kind="corridor" />
           )}
-          <p className="dim">Illustrative: door flow and corridor speed only, not a validation of the whole model.</p>
-          {Array.isArray(limits) && limits.length > 0 && (
-            <>
-              <h4>Known limits of the crowd model</h4>
-              <ul className="limits">
-                {limits.map((l, i) => (
-                  <li key={i}>{l}</li>
-                ))}
-              </ul>
-            </>
-          )}
+          <p className="dim">Controlled movement tests; these comparisons do not validate the whole evacuation model.</p>
+          <p className="cal-limits-note">
+            {limits?.length ? `${limits.length} known model limitations. ` : ''}
+            Review <a href="#cred-methods">Methods and sources</a> below for test conditions and limitations.
+          </p>
+          <details id="cred-methods" className="cal-methods">
+            <summary>Methods and sources</summary>
+            <ChartMethods title={cal.data.title} source={cal.data.source} points={cal.data.points} />
+            <p>Our simulation measures door throughput between the 10th and 90th percentile exit events to reduce startup and finishing effects.</p>
+            <p>For door width W in metres, the clear-width estimate is 1.3 × W people/s. The effective-width estimate is 1.3 × (W − 0.3) people/s.</p>
+            <p>Door references: <a href="https://puc.overheid.nl/doc/PUC_1878_14/1">International Maritime Organization: simplified evacuation-analysis method</a>; <a href="https://files.thunderheadeng.com/femtc/2022_d2-12-arnott-paper.pdf">Arnott (2022), hydraulic model and counterflow, FEMTC</a>.</p>
+            {sd && Array.isArray(sd.points) && sd.points.length > 0 && (
+              <>
+                <ChartMethods title={sd.title} source={sd.source} points={sd.points} />
+                <p>Our simulation measures displacement between recorded positions divided by elapsed time, grouped by measured crowd density.</p>
+                <p>For density D in people/m², the implemented SFPE reference is max(0, 1.4 × (1 − 0.266 × max(D, 0.54))) m/s. The Weidmann reference is 1.34 × (1 − exp(−1.913 × (1/D − 1/5.4))) m/s for positive D, and 1.34 m/s at zero density.</p>
+                <p>Corridor references: the SFPE Handbook of Fire Protection Engineering, hydraulic movement model (<a href="https://www.sfpe.org/publications/fpemagazine/fpeextra/etarchives3/fpeetissue85">SFPE overview</a>); Weidmann, U. (1993), <cite>Transporttechnik der Fussgänger</cite>, ETH Zürich, IVT report 90.</p>
+              </>
+            )}
+            {Array.isArray(limits) && limits.length > 0 && (
+              <>
+                <h4>Known limits of the crowd model</h4>
+                <ul className="limits">{limits.map((l, i) => <li key={i}>{l}</li>)}</ul>
+              </>
+            )}
+          </details>
         </>
       )}
       <Limits />

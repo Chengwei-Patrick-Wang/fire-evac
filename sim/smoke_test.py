@@ -1431,6 +1431,88 @@ def check_smoke_walk(slow=False):
     print("smoke walking-speed measurements OK")
 
 
+def check_building_routes():
+    """A bisected corridor must detour upstairs, or report no route."""
+    from shapely.geometry import box
+    from sim.safe_routes import hazard_cut, pieces
+
+    def ring(poly):
+        return list(poly.exterior.coords)[:-1]
+
+    def floor(fid, level):
+        def room(rid, kind, bounds):
+            return dict(id=rid, name=rid, type=kind, polygon=ring(box(*bounds)))
+        return dict(id=fid, level=level, elevation=level * 3.5, height=3.5,
+            walkable=[dict(outer=ring(box(-2, 0, 30, 4)), holes=[])],
+            rooms=[room('C' + fid, 'corridor', (0, 0, 30, 4)),
+                   room('E' + fid, 'office', (20, 0, 24, 4)),
+                   room('SA' + fid, 'stair', (2, 0, 5, 4)),
+                   room('SB' + fid, 'stair', (25, 0, 28, 4))],
+            doors=[dict(id='exit', width=1.2, connects=['C' + fid, 'outside'],
+                        rect=ring(box(-0.1, 1, 0.1, 2.2)), a=[0, 1], b=[0, 2.2])],
+            stairs=[dict(id='SA' + fid, room='SA' + fid, group='A', polygon=ring(box(2, 0, 5, 4))),
+                    dict(id='SB' + fid, room='SB' + fid, group='B', polygon=ring(box(25, 0, 28, 4)))],
+            exits=[dict(id='exit', door='exit', polygon=ring(box(-2, 0.2, -1, 3.8)))] if level == 0 else [])
+
+    b = dict(version='building/v0', id='fire-detour', floors=[floor('F1', 0), floor('F2', 1)])
+    sc = dict(version='scenario/v0', id='detour', seed=3, buildingId=b['id'],
+              occupants=dict(perRoom={'EF1': 12}, mix={'typical': 1}),
+              premovement={'office': [0, 0]}, alarmTime=0, maxTime=400,
+              fire=dict(floor='F1', room='CF1', x=15, y=2, type='kitchen', start=0))
+
+    class HallFire(NoFire):
+        def hrr(self, t):
+            return 1000.0
+
+        def untenable(self, fid, x, y):
+            return fid == 'F1' and math.hypot(x - 15, y - 2) < 1
+
+    result = run(b, sc, HallFire(b, sc))
+    assert result['metrics']['evacuated'] == 12, result['metrics']
+    assert result['metrics']['remaining'] == result['metrics']['inStairs'] == 0
+    for agent in result['agents']:
+        flights = [e for e in result['events'] if e['type'] == 'stair' and e['idx'] == agent['idx']]
+        assert [(e['floor'], e['to'], e['group']) for e in flights] == [('F1', 'F2', 'B'), ('F2', 'F1', 'A')], flights
+        assert flights[0]['arrive'] - flights[0]['enter'] > flights[1]['arrive'] - flights[1]['enter']
+    assert all(math.hypot(x - 15, y - 2) >= 2.8 for fr in result['frames']
+               for _, x, y, fi, _ in fr['a'] if fi == 0)
+    assert len({fr['t'] for fr in result['frames']}) == len(result['frames'])
+    assert result['events'] == run(b, sc, HallFire(b, sc))['events']
+    # Model decisions cannot bypass the same feasible-route filter.
+    llm_sc = {**sc, 'brain': 'llm'}
+    llm_result = run(b, llm_sc, HallFire(b, llm_sc))
+    assert llm_result['metrics']['evacuated'] == 12, llm_result['metrics']
+    isolated = deepcopy(b)
+    isolated['floors'] = isolated['floors'][:1]
+    lost = run(isolated, sc, HallFire(isolated, sc))
+    assert lost['metrics']['trapped'] == 12 and lost['metrics']['evacuated'] == 0
+    assert all(e['reason'] == 'no route' for e in lost['events'] if e['type'] == 'trapped')
+    # A same-floor bypass is also a complete route, without changing exits.
+    bypass = deepcopy(isolated)
+    f = bypass['floors'][0]
+    from shapely.ops import unary_union
+    loop = unary_union([box(-2, 0, 30, 4), box(0, 0, 4, 9), box(26, 0, 30, 9), box(0, 6, 30, 9)])
+    f['walkable'] = [dict(outer=ring(loop), holes=[list(h.coords)[:-1] for h in loop.interiors])]
+    f['stairs'] = []
+    around = run(bypass, sc, HallFire(bypass, sc))
+    assert around['metrics']['evacuated'] == 12, around['metrics']
+    assert not any(e['type'] == 'stair' for e in around['events'])
+    assert any(y > 6 for fr in around['frames'] for _, _, y, _, _ in fr['a'])
+    blocked = {**sc, 'doors': {'exit': 'blocked'}}
+    closed = run(b, blocked, HallFire(b, blocked))
+    assert closed['metrics']['trapped'] == 12 and closed['metrics']['evacuated'] == 0
+    # A smaller disc with a slit cannot leave a point-sized shortcut.
+    walk = box(0, 0, 20, 4)
+    cut = hazard_cut(walk, 10, 2, 1.5)
+    assert len(pieces(cut)) == 2
+    net = StairNet(b, bidirectional=True)
+    rng = np.random.default_rng(4)
+    down = net.enter(0, 0, 'F2', 'A', rng, to='F1')
+    up = net.enter(1, 0, 'F1', 'A', rng, to='F2')
+    assert up['enter'] >= down['arrive'], (down, up)
+    print('building routes OK: upstairs crossover, no unsafe gap, no-route outcome, opposing stair flow')
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1448,6 +1530,7 @@ def main(argv=None) -> int:
     timed("smoke walk", check_smoke_walk)
     timed("brain", check_brain)
     timed("floors", check_floors)
+    timed("building routes", check_building_routes)
     timed("watch and geometry", check_watch_and_geometry)
     building = load_building()
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))

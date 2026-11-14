@@ -1,0 +1,112 @@
+"""Conservative fire clearance and complete routes between connected floor regions.
+
+The clearance is an illustrative scenario assumption, not a certified distance.
+Hazard geometry is reserved for the run (including delayed ignition); this is
+conservative global hazard knowledge, not a model of individual perception.
+"""
+import heapq
+import itertools
+import math
+
+from sim.floors import STAIR_UP_FACTOR
+import jupedsim as jps
+from shapely.geometry import Point
+
+
+def pieces(geometry):
+    if geometry.is_empty:
+        return []
+    if geometry.geom_type == 'Polygon':
+        return [geometry]
+    return sorted((p for g in geometry.geoms for p in pieces(g)),
+                  key=lambda p: (-p.area, p.bounds))
+
+
+def hazard_cut(walk, x, y, radius, clearance=0.35):
+    """Never shrink a fire to keep a corridor connected; close body-width slots.
+
+    Closing the excluded area against walls removes gaps too narrow for the
+    largest default body plus a small routing allowance. Retain every region.
+    """
+    if radius <= 0:
+        return walk
+    exclusion = Point(x, y).buffer(radius + clearance, quad_segs=8)
+    # Reserve the whole disc, including adjoining corridor/door openings.
+    # This is conservative near walls, not a claim about flame propagation.
+    safe = walk.difference(exclusion)
+    return safe.buffer(-clearance, join_style=2).buffer(clearance, join_style=2).intersection(safe)
+
+
+def path_length(walk, start, end, router=None):
+    """A failed geometric route is unavailable, never a straight line through fire."""
+    try:
+        points = (router or jps.RoutingEngine(walk)).compute_waypoints(start, end)
+        if not points or (len(points) == 1 and math.dist(start, end) > 1e-6):
+            return math.inf
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+    except Exception:
+        return math.inf
+
+
+class BuildingRoutes:
+    """Search complete exit routes, excluding regions already left by this agent."""
+    def __init__(self, sims):
+        self.sims = sims
+        self.by_floor = {}
+        for fs in sims:
+            self.by_floor.setdefault(fs.id, []).append(fs)
+        self.cache = {}
+        self.distances = {}
+        self.routers = {fs.key: jps.RoutingEngine(fs.walk) for fs in sims}
+
+    def destination(self, stage):
+        choices = [(stage['arrival'].intersection(fs.walk).area, fs)
+                   for fs in self.by_floor.get(stage['to'], [])]
+        return max(choices, key=lambda item: item[0])[1] if choices and max(a for a, _ in choices) > 0 else None
+
+    def distance(self, fs, pos, stage):
+        key = (fs.key, round(pos[0] * 2), round(pos[1] * 2), stage['id'])
+        if key not in self.distances:
+            goal = stage['poly'].representative_point()
+            self.distances[key] = path_length(fs.walk, pos, (goal.x, goal.y), self.routers[fs.key])
+        return self.distances[key]
+
+    def tail(self, stage, forbidden, blocked, speed, stair_speed, radius=0.2):
+        if stage['kind'] == 'exit':
+            return 0.0
+        key = (stage['origin'], stage['id'], frozenset(forbidden), frozenset(blocked), speed, stair_speed, radius)
+        if key in self.cache:
+            return self.cache[key]
+        serial = itertools.count()
+        queue, best = [], {}
+
+        def transfer(st, cost):
+            fs = self.destination(st)
+            if fs is None or fs.key in forbidden:
+                return
+            landing = st['arrival'].intersection(fs.walk).buffer(-(radius + 0.25))
+            if landing.is_empty:
+                return
+            point = landing.representative_point()
+            state = (fs.key, st['group'])
+            total = cost + st['length'] / (stair_speed * (STAIR_UP_FACTOR if st['direction'] == 'up' else 1.0))
+            if total < best.get(state, math.inf):
+                best[state] = total
+                heapq.heappush(queue, (total, next(serial), fs, (point.x, point.y), state))
+
+        transfer(stage, 0.0)
+        answer = math.inf
+        while queue:
+            cost, _, fs, pos, state = heapq.heappop(queue)
+            if cost != best[state]:
+                continue
+            for st in fs.stages:
+                if (fs.key, st['id']) in blocked:
+                    continue
+                value = cost + self.distance(fs, pos, st) / max(speed, 0.2)
+                if st['kind'] == 'exit':
+                    answer = min(answer, value)
+                elif value < answer:
+                    transfer(st, value)
+        self.cache[key] = answer
+        return answer

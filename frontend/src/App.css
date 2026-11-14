@@ -207,3 +207,14 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px 
 .aboutbtns button:first-child, .topbar .demo, .toggles button.on { color: #fff; }
 .results .stats th[scope=row] { text-align: left; font-weight: 400; padding: 2px 8px 2px 0; }
 .results .stats th[scope=col] { text-align: left; font-weight: 400; font-size: 11px; }
+
+/* Calibration series explanations stay visible for touch and keyboard users. */
+.cal-legend { margin: 8px 0; font-size: var(--fs-sm); }
+.cal-legend > div { margin: 0 0 10px; }
+.cal-legend dt { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.cal-legend dd { margin: 3px 0 0 16px; color: var(--muted); }
+.cal-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.cal-methods { margin: 12px 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.cal-methods summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.cal-limits-note { font-size: var(--fs-sm); }
+.cred a { color: var(--accent-line); text-decoration: underline; text-underline-offset: 2px; }
