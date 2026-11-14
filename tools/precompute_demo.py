@@ -365,6 +365,50 @@ def load_given_batch(path: Path, building: dict) -> dict:
 
 
 def run_sweeps(building: dict, source: Path, base: dict, batch: dict, skip: set[str], args, workers: int) -> dict:
+    """The sweeps (below), then the smoke percent that sweeps made before D18 do not carry."""
+    batch = _sweeps(building, source, base, batch, skip, args, workers)
+    rooms = min(args.sweep_rooms, len(batch["rooms"]))
+    return upgrade_smoke_base(batch, base, rooms) if rooms >= 1 and not args.no_sweeps else batch
+
+
+def upgrade_smoke_base(batch: dict, base: dict, rooms: int) -> dict:
+    """What-if entries made before D18 (fire/whatif.py smoke_base) lack baseSmokeSeconds and smokePct, which the report
+    card, the headline pack and the app quote as a percent. They follow from the batch's own runs: the mean smoke of
+    the baseline fires of the rooms the sweep reran, when every one of them has a pair (n says so). It gives the
+    numbers and the `why` wording a sweep run with D18's code gives; an entry that cannot be derived stays as it is."""
+    try:
+        from fire.fixes import _why as fix_why
+        from fire.whatif import _key, _why as whatif_why, smoke_base
+    except ImportError:  # D18 is not on this branch
+        return batch
+    batch = copy.deepcopy(batch)
+    ranked = sorted(batch["rooms"], key=lambda r: -(r["riskT90"] if r["riskT90"] is not None else base["maxTime"]))[:rooms]
+    selected = {(r["floor"], r["id"]) for r in ranked}
+    baseline = [r for r in batch["runs"] if _key(r)[:2] in selected]
+    done = 0
+    for entry in batch.get("whatIf") or []:
+        if "baseSmokeSeconds" in entry or "dSmokeSeconds" not in entry or entry.get("n") != len(baseline):
+            continue
+        try:
+            entry.update(smoke_base(baseline, baseline, entry))  # every baseline fire has its pair: matched is all of them
+            entry["why"] = whatif_why(entry["label"], entry)
+            done += 1
+        except (KeyError, ZeroDivisionError):  # a baseline run without smokeSeconds
+            continue
+    by_id = {v["id"]: v for v in batch.get("whatIf") or []}
+    for fix in batch.get("fixes") or []:  # a fix derived from a what-if: D18's formula (fire/fixes.py)
+        if "derivedFrom" in fix and fix.get("smokePct") is None and "dSmokeSeconds" in fix:
+            b = by_id.get(str(fix["derivedFrom"]).split(".", 1)[-1], {}).get("baseSmokeSeconds")
+            if b is not None and b - fix["dSmokeSeconds"] > 0:
+                fix["smokePct"] = 100 * fix["dSmokeSeconds"] / (b - fix["dSmokeSeconds"])
+                fix["why"] = fix_why(fix)
+                done += 1
+    if done:
+        say(f"  smoke percent added to {done} what-if and fix entries (D18's baseSmokeSeconds and smokePct, from the batch's own runs)")
+    return batch
+
+
+def _sweeps(building: dict, source: Path, base: dict, batch: dict, skip: set[str], args, workers: int) -> dict:
     """D's paired what-if sweep and measured fixes on the worst rooms. Each is optional: a failure
     keeps the batch without it (this runs unattended) and says so. --resume reuses the result of
     the last run when it was made from this very batch."""
@@ -807,7 +851,7 @@ def make_report(batch: dict, building: dict) -> str:
     return report_card(batch, building, allow_llm=True)[0]
 
 
-def make_headlines(batch: dict, building: dict) -> dict | None:
+def make_headlines(batch: dict, building: dict, batch_file: str) -> dict | None:
     """D18's headline numbers pack for the batch, or None while fire/headlines.py is not on this branch.
     The pack only restates the batch, so it is made here, from the batch that is written, and never taken from
     an older file: a pack from another batch would show other numbers than the risk map."""
@@ -816,8 +860,10 @@ def make_headlines(batch: dict, building: dict) -> dict | None:
     except ImportError:
         say("  no headlines pack: fire/headlines.py (D18) is not on this branch")
         return None
+    sources = {"batch": {"file": batch_file, "id": batch.get("id"),  # relative to /demo: no local path reaches the site
+                         "modified": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}}
     try:
-        return build_headlines(building, batch)
+        return build_headlines(building, batch, None, sources)
     except Exception as error:  # noqa: BLE001 - optional
         say(f"  WARNING: no headlines pack, build_headlines failed: {type(error).__name__}: {error}")
         return None
@@ -921,7 +967,7 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     batch_file = f"batch-{safe_name(building_id)}.json"
     report_file = f"report-{safe_name(building_id)}.md"
     report = make_report(batch, building)
-    headlines = make_headlines(batch, building)
+    headlines = make_headlines(batch, building, batch_file)
     headlines_file = f"headlines-{safe_name(building_id)}.json"
     files: dict[str, str | bytes] = {building_file: source.read_bytes()}  # the public file as it is, like sync-demo's copy
     files.update({item["name"]: item["text"] for item in runs})
