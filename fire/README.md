@@ -289,7 +289,8 @@ writing the file. All numeric explanations are ASCII, including building labels.
 
 Top kinds use `exit` for a door connected to outside, otherwise `stair` for a
 connection to a stair room, otherwise `door`. Kind `corridor` is never produced.
-Labels use `Exit <name>`, `Stair <group> door`, or `Door <id>`. Explanations give
+Labels use `Exit <name>`, `Stair <group> door`, or `Door <id> (<A> to <B>)` (since D23 a plain
+door reads `Door between <A> and <B>`: see "Readable door names (D23)"). Explanations give
 peak queues, mean waiting person-seconds and successful fire-run counts. Room
 explanations give mean trapped, mean censored t90 and that room's run count;
 when no run reaches 90%, the explanation says it was not reached by maxTime.
@@ -1359,6 +1360,129 @@ the rerun batch is `data/runs/batch-example-tradeoff.json` (all gitignored).
   holds the whole line, starting `Trade-off:`; `costs` has the cost phrases alone, for a badge or a second line. They
   are in the headline pack's `fixes[]` too (`FIX_KEYS`).
 - The report card quotes `fixes[].why` verbatim, so it now says "Trade-off" and the parenthesis for a rerun batch.
+
+## Readable door names (D23)
+
+A plain interior door used to read `Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`: its IFC id first, its rooms in
+brackets. That string was baked into `top[].why`, the stability line, the widen and keep-clear fixes, the pack's
+`weakSpots[].label` and `why`, and the error text of a fix that could not be measured, so a judge or a report card
+read `D$77xwP`. The rooms are the name now: `Door between CORRIDOR and SCIF OPEN OFFICE`. The words match the report
+card's (`Door between <A> and <B>`, `backend/llm/features.py`).
+
+### The rule
+
+`fire.batch.door_label(building, floor_id, door_id) -> (kind, label)` changes for kind `door` only. Exits
+(`Exit Entry (south)`) and stair doors (`Stair S1 door`) already read well and are as they were. A plain door is one
+that is neither of those. Its rooms are the floor's rooms it connects, in floor order:
+
+| The door | Its label |
+| --- | --- |
+| joins two rooms, and no other plain door of the floor joins the same two names | `Door between Kitchen and Corridor 1` |
+| joins one known room | `Door from Kitchen` |
+| joins no known room | `Door D5`, as before |
+| another plain door of the floor joins the same two names (either way round), or both names are equal | each name gets its room id: `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `Door between CORRIDOR (R1AC3) and CORRIDOR (R1CC1)` |
+| two or more doors join the same two rooms | the label above and `, 1 of 2`, `, 2 of 2`, in order of the middle of the opening: x, then y, to the centimetre |
+
+A room with no name is shown by its id, with no second id after it. A name is ASCII (`?` for anything else) and has no
+colon (`Lab: West` reads `Lab - West`), because a `why` line ends its label at the first `: ` and E34 reads it from
+there. Three or more known rooms read `Door between A, B and C` (no door in the three buildings has that). Ids stay in
+the data: `id`, `top[].id` and `fixes[].door` are as they were.
+
+`widen_door`'s two errors that name a door say its label, not its id, and reach `fixesSkipped[].reason` that way:
+`widening Door between Lobby and Corridor 1 changes room connections or walkable pieces` and `Door between Kitchen
+and Corridor 1 has no opening`. `unknown door <id>` has no label to give and keeps the id. Everything that calls
+`door_label` (`aggregate`, `seed_ranges`, `default_variants`, `candidate_fixes`, `build_headlines`,
+`refresh.exit_shift`) picks the rule up with no change of its own.
+
+### Measured on the three buildings
+
+Plain doors that share two room names with another plain door of their floor, from the files (the rule's counts):
+
+| Building | Plain doors | Name pairs shared | Doors that carry room ids | Numbered `n of m` |
+| --- | --- | --- | --- | --- |
+| Example | 18 | 0 | 0 | 0 |
+| Office | 85 | 3 (F1: CORRIDOR and OPEN OFFICE, 2 doors, and CORRIDOR and VEST/ENTRY, 3; F2: OPEN OFFICE and TEAM RM, 5) | 10 | 0 |
+| Clinic | 217 | 29 | 94 (17 of them between two rooms of one name) | 4 (two room pairs with two doors each: R1D22 and R1DC1, R2D21 and R2DC1) |
+
+On every floor of all three buildings the 320 plain-door labels are unique, ASCII, free of `:` and free of their own door
+id (`check_door_names`). `D$77xwP` is `Door between CORRIDOR and SCIF OPEN OFFICE`, `D$77xVs` is `Door between OPEN OFFICE
+(R113a) and CORRIDOR (R141)`, `DQnt_pi` is `Door between SECURE DOC ROOM and OPEN OFFICE`, and `Dv$nmj8` is `Door between
+TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1), 1 of 2` (its twin `Dv$nmZR` is `2 of 2`: the two share x, and
+`Dv$nmj8` is lower down the plan).
+
+### Saved batches: `relabel`
+
+`fire.batch.relabel(building, batch) -> dict` returns a copy of a saved batch with the new names, and reruns nothing (a
+saved batch has no per-door waits, so it can be relabeled but not aggregated again). It builds a map from each plain
+door's old label (today's exact string, `Door <id> (<A> to <B>)`, as saved with or without the ASCII fold) to its new
+one, and swaps those strings in every text outside the numeric sections (`runs`, `rooms`, `doors`, `heatmaps`): `top[].why`,
+`stability.why`, `whatIf[].label` and `why`, `fixes[].label` and `why`, `fixesSkipped[].reason`. A skipped fix's reason in
+the old id form (`widening D$77xsW changes room connections or walkable pieces`, `door D$77xsW has no opening`) gets
+the door's label. Ids, numbers and field names are untouched, a second pass changes nothing, and an old label that two
+floors would name differently (the same door id and room names on both) is left alone rather than guessed.
+
+`relabel` and `fire.fixes.restate` commute (`check_door_names` and all three demo batches): run them in either order.
+`build_headlines` relabels its input first, so a pack made from a batch saved before D23 reads like one made after it.
+
+### Changed labels
+
+The three demo batches (`frontend/public/demo/batch-<id>.json`), relabeled into `debug/d23-relabeled-<id>.json`
+(gitignored). Fifteen texts change, and no other text, id or number does:
+
+```text
+Example (top[0].why, top[4].why, stability.why, fixes[3].label and why):
+Door DL1 (Lobby to Corridor 1)                          -> Door between Lobby and Corridor 1
+Door D202 (Office 202 to Corridor 2)                    -> Door between Office 202 and Corridor 2
+
+Office (top[4].why):
+Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)             -> Door between CORRIDOR and SCIF OPEN OFFICE
+
+Clinic (top[0..2].why, top[4].why, stability.why, fixes[0].label and why, fixes[1].label and why):
+Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES)       -> Door between PHYSICAL EXAM and PROVIDER CUBICLES
+Door Dv$nmXk (CHIEF AERO MED. to PHYSICAL EXAM)         -> Door between CHIEF AERO MED. and PHYSICAL EXAM
+Door Dv$n$qC (LAB to CENT. STO.)                        -> Door between LAB and CENT. STO.
+Door DIf2sGN (DENTAL WAITING to CORRIDOR)               -> Door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1)
+```
+
+The last one carries room ids because two more F2 doors join DENTAL WAITING and a CORRIDOR (`DIf2olL`, `DIf2olz`).
+Whole lines, before then after:
+
+```text
+Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE): 15 people queued at peak; 52 person-seconds of waiting on average, 1 of them in smoke, across 294 fires.
+Door between CORRIDOR and SCIF OPEN OFFICE: 15 people queued at peak; 52 person-seconds of waiting on average, 1 of them in smoke, across 294 fires.
+
+Widen Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES) from 0.86 m to 1.36 m
+Widen Door between PHYSICAL EXAM and PROVIDER CUBICLES from 0.86 m to 1.36 m
+
+The top 3 weak spots hold in 0 of 3 seeds: Door DL1 (Lobby to Corridor 1), Exit East stair exit, Exit Main entrance. Door DL1 (Lobby to Corridor 1) ranks first in 3 of 3.
+The top 3 weak spots hold in 0 of 3 seeds: Door between Lobby and Corridor 1, Exit East stair exit, Exit Main entrance. Door between Lobby and Corridor 1 ranks first in 3 of 3.
+```
+
+`python -m fire.headlines data/buildings/office.json debug/d23-relabeled-office.json --out debug/d23-headlines-office.json`
+gives weak spot #5 as `Door between CORRIDOR and SCIF OPEN OFFICE` (`label` and the start of `why`), and a pack built from
+the batch as saved gives the same pack.
+
+### Verification
+
+`python -m fire.smoke_test` and `python -m fire.checks --slow` both print `fire checks OK`. `check_door_names` (fast, no
+simulation) pins the labels above, the uniqueness over the three buildings, every branch of the rule on a made-up floor (a
+colon, a non-ASCII name, an unnamed room, a name shared either way round, three doors between two rooms of one name,
+one known room, none, an exit and a stair door), the two `widen_door` messages, the `aggregate` and stability lines, and
+`relabel` on a hand-made office batch (nothing changes but the texts, no old label or door id is left in a text, a second
+pass changes nothing, `restate` commutes with it) and on a building that names one old label two ways. The office's
+plain-door expectation in `office_checks` and the `D101` line of `check_labels` follow the new rule; `Door missing` stays.
+
+### Handoffs
+
+- **A:** call `fire.batch.relabel(building, batch)` in the precompute before writing `batch-<id>.json` (with
+  `fire.fixes.restate`, in either order). `fire.headlines` relabels on its own. No reruns are needed. Two places outside
+  `fire/` still word a plain door differently: `_Names.label` in `backend/llm/features.py` always shows the room ids
+  (`Door between Lobby (L1) and Corridor 1 (C1)`) and says `Door of <A>` for a one-room door, where D's label shows an id
+  only when the names collide and says `Door from <A>`; and `tools/build_examples.py` writes `Door <id> (<A> to <B>) on
+  <floor>` into the placeholder `batch.example.json`.
+- **E:** text only changes. E34 shows the labels the files carry: `weakSpots[].label` is the label, and a batch `top[].why`
+  starts with it up to the first `: ` (no label holds one). `fixesSkipped[].reason` names its door by label too, with
+  `id` still `widen-<door id>` for the key.
 
 All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
 compliance results.

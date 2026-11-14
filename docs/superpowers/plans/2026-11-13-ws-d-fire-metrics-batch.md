@@ -466,7 +466,6 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - For E: E34 mirrors `VERDICT`. `tradeoff` and `costs` are optional, and `helps` now excludes trade-offs.
 
 ### Task D23 (P0 · Sat 4 PM): Readable names for unnamed interior doors
-BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/batch.py` (`door_label`, new `relabel`), `fire/fixes.py` (`widen_door` messages), `fire/headlines.py` (`build_headlines` relabels its input), `fire/checks.py` (`office_checks`, `check_labels`, new `check_door_names`), `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `debug/d23-relabeled-<id>.json` and `debug/d23-headlines-office.json` (gitignored).
 
@@ -495,12 +494,12 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - Ids stay in the data: `id`, `top[].id`, `fixes[].door`.
   - `relabel(building, batch) -> dict` (pure).
 
-- [ ] **Step 1: Rule.** Write the plain-door rule in `door_label`. Kinds, exits and stair doors are unchanged. `widen_door`'s three door errors name the door by its `door_label` label, not its id.
-- [ ] **Step 2: Relabel saved batches.**
+- [x] **Step 1: Rule.** Write the plain-door rule in `door_label`. Kinds, exits and stair doors are unchanged. `widen_door`'s three door errors name the door by its `door_label` label, not its id.
+- [x] **Step 2: Relabel saved batches.**
   - Build a map from each plain door's legacy label (today's exact string, via a private `_legacy_label`) to its new label.
   - `relabel` replaces those strings in `top[].why`, `stability.why`, `whatIf[].label` and `why`, `fixes[].label` and `why`, and `fixesSkipped[].reason`, and returns a copy. Numbers and ids are untouched.
   - `build_headlines` calls it on its input first, so a pack made from an old batch reads well too.
-- [ ] **Step 3: Checks.** Fast `check_door_names()`:
+- [x] **Step 3: Checks.** Fast `check_door_names()`:
   - Example: `D101` gives `Door between Kitchen and Corridor 1`, `DL1` gives `Door between Lobby and Corridor 1`.
   - Office: `D$77xwP` gives `Door between CORRIDOR and SCIF OPEN OFFICE`, `D$77xVs` gives `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `DQnt_pi` gives `Door between SECURE DOC ROOM and OPEN OFFICE`.
   - Clinic, skipped if missing: `Dv$nmj8` gives `Door between TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1), 1 of 2`.
@@ -510,12 +509,12 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
     - changes nothing else (ids, numbers);
     - changes nothing on a second pass.
   - Move `office_checks`' plain-door expectation and `check_labels`' `D101` line to the new rule. `Door missing` stays.
-- [ ] **Step 4: Verify:**
+- [x] **Step 4: Verify:**
   - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
   - Relabel the three demo batches into `debug/d23-relabeled-<id>.json`, printing each changed label (old -> new).
   - `python -m fire.headlines data/buildings/office.json debug/d23-relabeled-office.json --out debug/d23-headlines-office.json` gives weak spot #5 as `Door between CORRIDOR and SCIF OPEN OFFICE`.
   - README section "Readable door names (D23)": the rule and the old -> new list.
-- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): readable names for unnamed interior doors"` (no attribution lines). Handoffs in the README:
+- [x] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): readable names for unnamed interior doors"` (no attribution lines). Handoffs in the README:
   - For A: call `fire.batch.relabel(building, batch)` in the precompute before writing `batch-<id>.json`. `fire.headlines` relabels on its own. No reruns are needed.
   - For E: text only changes. E34 shows the labels the files carry.
 
