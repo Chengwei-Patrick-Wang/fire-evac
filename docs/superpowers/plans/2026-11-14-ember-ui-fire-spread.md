@@ -27,6 +27,7 @@
 ## Lead rulings (settled before execution)
 
 - **Types:** A11 part 1 adds the shared types to `frontend/src/data/types.ts`: `whatIf: 'material'` on demo runs, an optional `material`, and `fire.rooms` / `fire.material` on runs. E38 imports them and defines no local copies. `findPrecomputedVariant` stays door-only (`'propped'`).
+- **Fixture:** A11 part 1 writes `contracts/run.spread.fixture.json` (a run/v0 with `fire.rooms`). E38 uses that file, opened via File > Open or copied by its qa step, wherever its text says `frontend/public/demo/fixtures/fire-spread.run.json`. A11 part 2 keeps the fixture as a test file and does not delete it.
 - **The ignition room** is listed in `fire.rooms` (ignite = fire start) but keeps today's doors, keep-out and heat curve, so results for unspread fires stay identical (C27).
 - **Sprinklers:** with sprinklers on, the fire stays in the ignition room (D25). `FireModel(spread=False)` turns spread off.
 - **Ordering:** the wood-against-drywall data commit (A11 part 2) reaches `main` only together with or after E38. Until E38, the app reads any non-null `whatIf` as a door what-if.
