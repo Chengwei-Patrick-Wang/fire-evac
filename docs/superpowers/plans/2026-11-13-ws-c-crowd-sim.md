@@ -551,3 +551,110 @@ Handoff for E: `frameHold: true` means an omitted status-0 row holds until a rep
 **Final verification:** `LLM_PROVIDER=off .venv/bin/python -m sim.smoke_test` ended `suite fast: 14.5 s` / `OK`; `--slow` ended `suite slow: 215.3 s` / `OK`. Fast is 6.7% of slow, within C9's 25% budget. The full curve reproduces the saved calibration exactly. `git diff --check` passed. Logs: `/tmp/c20-calibrate.log`, `/tmp/c20-fast.log`, `/tmp/c20-slow.log`.
 
 Handoff for A: copy `data/calibration.json` to `frontend/public/demo/calibration.json`. Handoff for E: chart `speedVisibility` using the existing reference-point shape, with the model-input limits line beside it. Only `sim/`, the explicitly requested generated calibration file and this plan changed. No live LLM calls or git syncing.
+
+## Added Sat 13:25 (demo review fixes)
+
+> From the lead's demo review. P0 tasks fix things judges see; do them first, in order.
+
+### Task C21 (P0 · Sat 3 PM): Fire keep-out fallback: no burning room stays fully walkable (R227)
+
+**Files:** Modify `sim/run.py` (`keepout_cut`, its call in `run()`, module docstring), `sim/smoke_test.py` (`check_office_keepout`, new `check_keepout_fallback` and `check_keepout_rooms`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`.
+
+**Interfaces:**
+- Consumes: `keepout_cut(walk, floor, room, x, y, radius) -> (polygon, radius)`. It tries `[radius]` plus the members of `(1.5, 1.0)` below it. For each, it applies the split check (a second piece over 0.5 m²), keeps at least a quarter of the room's walkable area, keeps exits and stairs within 0.1 m, and does not let `body_pieces` rise. It then prefers no slot (C18: a gap of 0.01–0.3 m) and keeps the first passing cut as the fallback. If nothing passes, it prints `WARNING (sim): F2/R227: no safe fire keep-out cut; keeping walkable area` and returns `(walk, 0.0)`. Also used: `fire_keepout`, `NO_OCCUPANTS`, and `place_occupants`, where area weights skip rooms whose spawn region is empty and `perRoom` raises `has no room to place` for an empty region.
+- **Measured: why R227 fails.** R227 (S-6 STORAGE, F2) is a 3.74 × 2.68 m room (10.0 m²) with one door, DQnt_1e to R223, and no occupants. The batch puts its fire at the room centre (31.392, 9.0275), its `representative_point()`.
+  - 2.5 m covers the whole room: 0.00 m² stays, against a quarter of 2.50.
+  - 1.5 m splits the room: the cut keeps 1.62 m² and cuts off a 1.62 m² piece.
+  - 1.0 m leaves 0.34 m strips north and south of the disc, which is narrower than a 0.4 m body. The 0.87 m-wide west end becomes a second body piece (`body_pieces` 2 > 1).
+  - 0.75 m passes every check: it removes 1.77 m², keeps 8.24 m² and leaves a 0.59 m gap.
+- **Not only R227.** The same failure hits 24 of 109 office rooms, 9 of them with occupants (R111, R112, R119, R126, R130, R133, R138, R206, R218). It also hits 102 of 252 clinic rooms (41 with occupants) and none in the example. In R227 itself it changes nothing (a dead end with nobody in it; its 3 demo-batch seeds trap 0). In an occupied room, though, people can spawn and walk inside the flame footprint, which `fire/model.py` sets at 0.5 m + 1 m·√(Q/1 MW) (1.72 m at a kitchen fire's peak).
+- **Prototype of the fallback below.** Office rooms with no keep-out drop from 24 to 1 (R141, a corridor; R145 and R215 are sealed) and clinic rooms from 102 to 7 (corridors R1CC2, R1EC2, R2BC5, R2CC5; occupied R1B07, R1E02, R2A12-A). Every room that has a cut today keeps it.
+- Produces: `KEEPOUT_SMALL_M = (0.75, 0.5)`; `keepout_cut(walk, floor, room, x, y, radius, small=KEEPOUT_SMALL_M, seal=True)`. Its radius is `math.inf` when the whole room is sealed.
+
+- [ ] **Step 1: Smaller discs, only as a fallback.** Run today's loop unchanged.
+  - Only when it ends with neither a slot-free cut nor a slot fallback, run the same checks and the same slot preference over the `small` radii below `radius`.
+  - 0.5 m is the flame footprint's base radius, so nothing smaller.
+  - A room with a cut today keeps exactly that radius: office R143 1.0, R203c 1.0 (via its slot fallback), R237b 2.5; example L1 2.5, R101 2.5, C1 1.0. So no demo pair and no C18 radius changes.
+  - R227 gets 0.75 m.
+- [ ] **Step 2: Seal an empty dead-end room.** Seal only if no disc passes, `seal` is true and the room's type is in `NO_OCCUPANTS`.
+  - Remove `room polygon ∩ walk`. The door's nub on the neighbour's side stays.
+  - Accept the result under the same split, zone and `body_pieces` checks. The quarter rule doesn't apply, since nobody is placed there.
+  - Return `(retained, math.inf)`.
+  - This seals office R145 and R215, and clinic R1C03, R1E30, R2B25, R2C07 and R2C08.
+- [ ] **Step 3: Say why when nothing works.** Keep the walkable area, with one warning that names the reason. For example: `WARNING (sim): F1/R141: no safe fire keep-out disc and the room cannot be sealed (sealing splits the walkable area); keeping walkable area`.
+  - Reasons: `occupied room`, `the scenario places people there`, `sealing splits the walkable area`, `sealing detaches an exit or stair`, `sealing leaves a piece narrower than a body`.
+  - Update `keepout_cut`'s docstring and the module docstring's keep-out line. A fallback disc can be smaller than the flame footprint, so anyone who stays near the fire is still trapped as `untenable`.
+- [ ] **Step 4: People the scenario puts there.** In `run()`, pass `seal=False` when `scenario.occupants.perRoom` gives the fire room a positive count. Otherwise `place_occupants` would raise for the sealed room.
+- [ ] **Step 5: Smoke test.**
+  - **Fast `check_keepout_fallback()`.** If the office is missing, print a skip line. All under 1 s:
+    - On the F2 walkable, R227 at (31.392, 9.0275) returns 0.75 with no WARNING on stderr.
+    - Its removed area is 1.77 ± 0.02 m², and the cut keeps 8.24 ± 0.02 m² of R227.
+    - `body_pieces` is unchanged, both F2 zones are within 0.1 m, and the removed area is at least 0.3 m from the walkable boundary.
+    - `small=()` with `seal=False` brings back 0.0 with a WARNING. This proves the fallback is what fixed R227.
+    - F1 R145 returns `math.inf` with under 0.01 m² of R145 left walkable. With `seal=False` it returns 0.0 and the warning names `the scenario places people there`.
+    - F1 R141 returns 0.0, and the warning names `sealing splits the walkable area`.
+    - R143 (F1) and R203c (F2) still return 1.0.
+    - `check_office_keepout` accepts `(2.5, 1.5, 1.0, 0.75, 0.5, math.inf, 0.0)`. `check_keepout`'s 1 × 1 m tiny room still warns and returns the walkable area unchanged.
+  - **Slow `check_keepout_rooms()`.** For every office and clinic room, at its `representative_point()`:
+    - Wherever `small=()` and `seal=False` give a radius above 0, the default call gives the same radius.
+    - Print `keep-out: office 24 -> 1 rooms without a cut, clinic 102 -> 7`, and assert at most 1 and 7.
+    - Run an office scenario with 40 agents (`perRoom` R111: 4, R113a: 36), a kitchen fire in R111 at its representative point, seed 1, `maxTime` 400. It must print no keep-out WARNING, no status 0/1 row on F1 may come closer than 0.74 m to the fire point in any frame (0.01 m rounding), and `remaining == inStairs == 0`.
+    - Run the same with the fire in R145 (`perRoom` R113a: 40). No row may lie inside R145 in any frame, and `remaining == inStairs == 0`.
+- [ ] **Step 6: Verify:** With `LLM_PROVIDER=off`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the slow check's counts line and the R227 numbers under this heading.
+- [ ] **Step 7: Commit:** `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "fix(sim): fire keep-out falls back to small discs or a sealed room instead of none"` (no attribution lines).
+  - Handoff for D and A: 23 office rooms (R227 among them) and 95 clinic rooms now get a keep-out. Rooms that had one keep it, so the demo pairs stay valid. Rerun the office and clinic batches at the next precompute.
+  - The WARNING now prints only for office R141 and 7 clinic rooms.
+
+### Task C22 (P0 · Sat 4:30 PM): Corridor speed against density, measured in steady walking (credibility chart)
+
+**Files:** Modify `sim/calibrate.py`, `sim/smoke_test.py` (`check_calibration`), `docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md`. Regenerate `data/calibration.json` (C's generated file, as in C15 and C20).
+
+**Interfaces:**
+- **Consumes, from C15:**
+  - `corridor_building(length, width, door)`: the one-door fixture resized and normalized. Traced rooms shrink 0.1 m, so a 3.0 m room walks 2.8 m wide, and `door` must be narrower than `width`.
+  - `_scenario`.
+  - `speed_density(run, area, t_min=5.0, bin=0.5, min_samples=5)`: frame-pair means binned by measured density. `check_calibration`'s hand-made frames pin its output.
+  - `corridor_points()`: 100 typical agents in a 30 × 2.4 m corridor with a 1 m door, measured on the strip 18–26 m. That strip averages the queue draining into the door. Today's bins read 0.15, 0.24, 0.33, 0.41 and 0.33 m/s at 0.20, 0.72, 1.28, 1.73 and 2.11 persons/m², against Weidmann's 1.34, 1.21, 0.91, 0.71 and 0.57. The speed even rises with density.
+  - `corridor_limits(points)`: its line blames that queue.
+  - `calibration()`'s `speedDensity: {title, source, points: [{label, density, simulated, samples, references: [{name, value}]}]}`. E30's `CalChart` draws it by `label` and computes "below at N of N densities".
+  - `weidmann`, `sfpe`, and typical v0 of 1.0–1.5 m/s.
+- **Also consumed:** `place_occupants` spacing is 0.5 m, falling to 0.42 m with a `crowded` warning near 2.5 persons/m². `check_smoke_walk` pins `speedVisibility` in the saved file.
+- **Measured** (prototype below; Windows, seed 1, `LLM_PROVIDER=off`): pooled bins read 1.18, 1.03, 0.86, 0.52 and 0.39 m/s at 0.20, 0.66, 1.09, 1.61 and 2.09 persons/m², against Weidmann's 1.34, 1.24, 1.01, 0.76 and 0.58. The lowest bin is in the 0.7–1.5 band and speed falls at every step. The bins at 1.6 and 2.1 sit about a third below both references. The five runs took 22 s. A 2.5 target (450 agents) took 53 s and needs the 0.42 m spacing, so it is left out.
+- Produces:
+  - `STEADY_DENSITIES = (0.25, 0.5, 1.0, 1.5, 2.0)`.
+  - `steady_corridor(density, seed=1) -> run`.
+  - `steady_points(densities=STEADY_DENSITIES, seed=1) -> list[dict]`.
+  - `speed_density(..., t_max=math.inf)`, which is unchanged by default.
+  - Private `_pair_samples(run, area, t_min, t_max)` and `_bin_points(samples, bin, min_samples)`, shared, so pooled bins keep `speed_density`'s labels, rounding and references.
+  - `corridor_points()` returns `steady_points()`.
+  - A new `corridor_limits` rule.
+  - The same calibration/v0 schema: no field renamed or removed.
+
+- [ ] **Step 1: Steady corridor.**
+  - Use `corridor_building(length=60.0, width=3.0, door=2.6)`. The 2.6 m exit, in a 2.8 m-wide walkable corridor, is no bottleneck.
+  - For each target density ρ, place `perRoom R1: round(ρ × 60 × 3)` typical agents with `alarmTime` 0, `premovement {lobby: [0, 0]}` and `maxTime` 16. Only the window matters; agents still inside at the end don't count.
+  - Measure on the full-width strip x = 10–20 m ∩ walkable, 40 m upstream of the door. Use frame pairs with 3 ≤ t ≤ 15 s: after the start-up acceleration, and long before any queue at the door could reach the strip.
+- [ ] **Step 2: Pool and bin.**
+  - Pool the frame-pair samples of all targets into 0.5 persons/m² bins by measured strip density.
+  - Give each point the same label, rounding and references as `speed_density`, and keep bins with at least 5 samples.
+  - The strip empties as each crowd's tail passes. Those samples land in lower bins, and they are free walkers, so they stay.
+- [ ] **Step 3: Honest limits.** `corridor_limits(points)` keeps today's line for fewer than 3 bins.
+  - If the lowest bin is outside 0.7–1.5 m/s, or speed doesn't fall from bin to bin, add one line saying which.
+  - Add one more line naming every bin whose `simulated` is below 0.8 × its lower reference or above 1.2 × its higher one. For example: `Corridor speed-density: at 1.6 and 2.1 persons/m2 the simulated speed is 32-33% below Weidmann (1993); the crowd model walks slower than the references in dense crowds.`
+  - Drop the draining-queue wording.
+  - The `speedDensity.source` names the steady setup: 60 × 3 m corridor, 2.6 m exit 40 m past the strip, 10 m strip, 3–15 s, typical agents at 0.25–2.0 persons/m², seed 1. The `title` stays.
+- [ ] **Step 4: Regenerate.** Run `python -m sim.calibrate`.
+  - `version`, `title`, `source`, `points` (door flow), `speedVisibility` and every limits line other than the corridor one stay byte-identical; compare with `git show HEAD:data/calibration.json`.
+  - Only `speedDensity` and the corridor lines change.
+- [ ] **Step 5: Smoke test** `check_calibration(slow=False)`.
+  - **Fast:**
+    - The hand-made `speed_density` assertions still pass with the `t_max` default.
+    - One `steady_corridor(0.5)` run (90 agents, about 1 s) has a strip mean speed in 0.7–1.5 m/s.
+    - `corridor_limits` gives `[]` for falling bins inside ±20% of their references. It returns the planned-check line for hand-made 0.15, 0.4, 0.33 m/s bins, and names a bin 30% under its references.
+  - **Slow:**
+    - `corridor_points()` has at least 4 bins, each with at least 5 samples.
+    - The lowest bin is at 0.7–1.5 m/s, and speeds fall strictly from bin to bin.
+    - The points equal the saved `speedDensity.points`, and every `corridor_limits` line is in the saved `limits`.
+- [ ] **Step 6: Verify:** With `LLM_PROVIDER=off`, `python -m sim.smoke_test` ends with `OK` within C9's fast budget, and `--slow` passes. Put the CLI's speed table and its run time under this heading: bin, density, simulated, Weidmann, SFPE, samples.
+- [ ] **Step 7: Commit:** `git add sim data/calibration.json docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "fix(sim): corridor speed-density measured in steady walking, not a draining queue"` (no attribution lines).
+  - Handoff for E and A: the schema is unchanged. E30's `sync-demo.mjs` copies the file into `frontend/public/demo/` on the next `npm run build`; commit that copy. The chart and its "Known limits" list update by themselves.

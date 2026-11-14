@@ -374,3 +374,184 @@ D19 completed on the lead's laptop (Windows, i9-10885H, shared with A's precompu
 - [ ] **Step 3: Run it.** `python -m fire.demo clinic --budget-min 30` in the background to `debug/clinic-batch.log`. Without the clinic files: `BLOCKED: waiting on B9's data/buildings/clinic.json`. Fix what breaks at this scale inside `fire/` and rerun, at most twice; a crash inside `sim/` or `buildings/` (B9 names one: `Exit areas need to be bounded by convex polygons` from a non-convex stair zone) goes into the README handoff with its error and a one-scenario repro, as in D15, plus a BLOCKED line.
 - [ ] **Step 4: Verify:** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`, and Step 3 wrote `data/runs/batch-clinic.json` and `data/runs/headlines-clinic.json`. README section "Clinic batch (D21)": the command, the machine (OS, cores, workers), the plan line, rooms × seeds, `timing`, the headline, every `top`, `whatIf` and `fixes` `why` line, and the occupancy rule.
 - [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): clinic demo batch and headlines"` (no attribution lines). Handoff in the README for A (`python -m fire.demo clinic --budget-min 60` on the lead's machine regenerates both files, and `python -m fire.demo office` the office's; copy them into the precompute) and E (the clinic's pack has the office's shape; its weak spots can be on either floor).
+
+## Added Sat 13:25 (demo review fixes)
+
+> From the lead's demo review. P0 tasks fix things judges see; do them first, in order.
+
+### Task D22 (P0 · Sat 3 PM): Trade-offs, not "helps": a fix that traps more people says so, and says where
+
+**Files:** Modify `fire/fixes.py` (`VERDICT`, `verdict`, `restate`, `_why`, `_inverse`, `STAT_KEYS`, `add_fixes`), `fire/whatif.py` (`room_deltas`, `_why`, `add_whatif`), `fire/headlines.py` (`FIX_KEYS`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `data/runs/batch-example-tradeoff.json` and `debug/d22-restated-<id>.json` (gitignored).
+
+**Interfaces:**
+- **Consumes, from D14 (`fire/fixes.py`):**
+  - `helps` = any gain: `dT90 <= -1 or dTrapped < 0` or a smoke gain.
+  - `_why(fix)` and the helps-first sort.
+  - `_inverse(variant)`: copies only its listed keys and negates the `d` ones.
+  - `STAT_KEYS`: the sprinkler fix copies these from the sprinkler what-if.
+- **From D11 (`fire/whatif.py`):** `compare`, whose exact output `check_whatif` pins, so leave it as it is; `_key`; `_why(label, stats)`.
+- **From D18:** `smoke_base` and `FIX_KEYS`.
+- **Other readers:**
+  - A's `tools/precompute_demo.py` imports `fire.whatif._why(label, stats)` and `fire.fixes._why(fix)`, so keep both signatures. It also reuses saved sweeps with `--resume`.
+  - E28's badge. E31's scene 5 picks the first fix with `helps` as "Best measured fix".
+  - The report card quotes `fixes[].why` verbatim.
+- **Measured: the example's "Keep Exit Main entrance clear (vs blocked): ... +1.3 trapped per fire" and the blocked-exit what-if's "-1.3 trapped per fire" are the same 47 people.** I reran the demo batch's three Lobby (L1) fires (160 occupants, kitchen, seeds 1–3).
+  - With E1 open: 16, 13 and 18 trapped (11/10/14 `untenable`, 5/3/4 `no route`), and 77, 79 and 68 people leave through E1.
+  - With E1 blocked: 0 trapped, all 160 leave through E2. t90 is 186.0, 185.9 and 190.4 s, against 221.8 s, 169.2 s and never reached. Smoke is 5,624, 5,191 and 5,812 person-seconds, against 4,132, 3,986 and 4,082.
+  - The batch's L1 `riskTrapped` is 15.7 = 47/3, and `dTrapped` is -47/36 = -1.31.
+  - `remaining` is 0 in all six runs, so this is real model behaviour, not a counting artifact. E1 is the lobby's own exit, so in a lobby fire the people heading for it walk past the fire.
+  - Sprinklers also trap 0 there, which is why the sprinkler what-if shows the same -1.3.
+- **Other demo fixes with a cost:**
+  - office `keepClear-D$77wwb`: +0.42 trapped.
+  - office `selfClosers` (vs propped open): +0.42 trapped.
+  - office `sprinklers`: +18% smoke with -2.25 trapped (D15's caveat: trapped people stop counting).
+  - clinic `keepClear-Dv$nncb`: +37% smoke.
+- **Produces, one rule shared with E34:**
+  - Gains: `dT90 <= -1` s, `dTrapped <= -0.05` per fire, `smokePct <= -5` (or `dSmokeSeconds < 0` when `smokePct` is null).
+  - Costs: `dT90 >= +1`, `dTrapped >= +0.05`, `smokePct >= +5` (or `dSmokeSeconds > 0` when null).
+  - In `fire/fixes.py`: `VERDICT = {"t90": 1.0, "trapped": 0.05, "smokePct": 5.0}` and `verdict(fix) -> {"helps", "tradeoff", "costs"}`. `helps` now means gains and no cost, `tradeoff` gains and a cost; with `n == 0`, neither.
+  - Optional fix fields `tradeoff` and `costs` (ASCII phrases).
+  - In `fire/whatif.py`: `room_deltas(baseline_runs, variant_runs, key="trapped", building=None, doors=()) -> [{floor, room, label, delta, fires, opensOnto}]`.
+  - Optional `dTrappedRooms` (first 3) on what-if entries and rerun fixes, inherited with `delta` negated by derived fixes.
+  - `restate(batch) -> dict`: pure, no reruns.
+
+- [ ] **Step 1: Where the change happens.**
+  - `room_deltas` pairs runs like `compare` (by `_key`, dropping failed runs). It sums `variant[key] - baseline[key]` per ignition room, drops zeros, and sorts by |delta| (then floor, room).
+  - Each row gets `label`, which is `<room name> (<id>)`.
+  - Each row gets `opensOnto`: `"exit"` if one of `doors` joins that room to `outside`, `"door"` if it joins it to another room, else null.
+  - `add_whatif` stores the first 3 as `dTrappedRooms` when there are any (with the variant's `doors`). `add_fixes` does the same for a rerun fix (with its `door` or `doors`).
+  - `_inverse` adds `dTrappedRooms` with each `delta` negated. It's a list, so keep it out of the `d`-prefix negation loop.
+  - `STAT_KEYS` gains `dTrappedRooms`.
+- [ ] **Step 2: Verdict.**
+  - `add_fixes` sets `helps`, `tradeoff` and `costs` from `verdict`, replacing D14's helps line.
+  - Sort helping fixes first, then trade-offs, then the rest, each by `dT90`, then `dSmokeSeconds`.
+  - Cost phrases: `"1.3 more trapped per fire"`, `"18% more time in smoke"` (or `"427 more person-seconds in smoke"` without `smokePct`), `"90% out 12 s later on average"`.
+  - A smoke cost adds ` (people no longer trapped keep counting)` when trapped is a gain.
+- [ ] **Step 3: Name the fires behind a trapped number.**
+  - Let the total be `round(dTrapped * n)`. When |total| ≥ 1, and the first `dTrappedRooms` row has the same sign and at least half of it, the trapped phrase gets ` (47 of 47 in fires in Lobby (L1), which this exit opens onto)`.
+  - Use `door` for `opensOnto == "door"`, and drop the "which ..." part when it's null.
+- [ ] **Step 4: Wording.**
+  - `_why(fix)` keeps D14's exact sentence for helping and no-gain fixes.
+  - A trade-off lists its gains, then `but` and its costs, joined with commas and a final `and`. Exactly: `"Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34), but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)."`
+  - The what-if `_why(label, stats)` adds the same parenthesis after its trapped number when `stats` has `dTrappedRooms`: `... -1.3 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).`
+- [ ] **Step 5: Saved batches without reruns.**
+  - `restate(batch)` returns a copy. Every fix gets `helps`, `tradeoff`, `costs` and `why` from Steps 2–4 and is re-sorted, and every what-if `why` is re-rendered. The parentheses appear only where `dTrappedRooms` exists.
+  - `FIX_KEYS` gains `tradeoff` and `costs`, so headline packs keep them.
+- [ ] **Step 6: Checks.**
+  - **Fast `check_tradeoffs()`, no sim:**
+    - `verdict` on keepClear-E1's numbers (`dT90` -58.29, `smokePct` -67.7, `dTrapped` +1.31, `n` 36) gives a trade-off.
+    - On widen-E2's numbers (`dT90`, `smokePct`, `dTrapped` = -10.6, -2.9, -0.19) it gives helps. The tuples below use the same order.
+    - On the office sprinklers (-6.7, +18.2, -2.25) it gives a trade-off whose cost carries the counting note.
+    - On (+18, -3, +0.5) it gives neither; on `n` 0, neither.
+    - `room_deltas` on hand-made L1 pairs (16/13/18 → 0) plus an R105 pair (0 → 0) gives exactly `[{"floor": "F1", "room": "L1", "label": "Lobby (L1)", "delta": -47, "fires": 3, "opensOnto": "exit"}]`.
+    - The trade-off `why` matches Step 4 exactly; a helping fix's `why` keeps D14's shape.
+    - `restate` on a hand-made batch holding the example demo's five fixes (their ids, labels, `n`, `dT90`, `dTrapped`, `dSmokeSeconds`, `smokePct`, `derivedFrom` and `faster`, copied into the check) gives `keepClear-E1` `helps` false, `tradeoff` true and a `why` starting `Trade-off: Keep Exit Main entrance clear (vs blocked):` that contains `but 1.3 more trapped per fire`. It comes after widen-E2, sprinklers, widen-DL1 and selfClosers, which stay helping.
+    - The same treatment of the office's keepClear-D$77wwb, selfClosers and sprinklers numbers marks all three as trade-offs.
+    - Every `why` is ASCII, `json.dumps(..., allow_nan=False)` passes, and inputs are unchanged.
+    - `check_whatif` and `check_fixes` pass; change only an assertion whose hand-made fix now has a cost, and name it in the commit body.
+  - **Slow `check_tradeoffs_slow()`:**
+    - Example, ignitions L1 and R105, seed 1, 160 occupants, `maxTime` 400, 2 workers, `add_whatif` with only the E1-blocked variant.
+    - `dTrappedRooms[0]` is L1 with a negative delta and `opensOnto` `"exit"`.
+    - Its `why` contains `in fires in Lobby (L1), which this exit opens onto`.
+- [ ] **Step 7: Verify:**
+  - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
+  - Restate the three demo batches into `debug/d22-restated-<id>.json` and print their fix `why` lines.
+  - Run `python -m fire.batch contracts/building.example.json contracts/scenario.example.json --seeds 1,2,3 --whatif --whatif-rooms 3 --fixes --fix-rooms 3 --out data/runs/batch-example-tradeoff.json` (99 runs) in the background to `debug/d22-example.log`. Its keepClear-E1 `why` names Lobby (L1).
+  - README section "Trade-offs (D22)": the rule, the L1 table above, and every changed `why`.
+- [ ] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): measured fixes with a cost read as trade-offs and name the fires behind them"` (no attribution lines). Handoffs in the README:
+  - For A: call `fire.fixes.restate(batch)` on each batch in the precompute before writing `batch-<id>.json` and the pack (no reruns). Rerun the sweeps without `--resume` to get the "in fires in ..." parentheses.
+  - For E: E34 mirrors `VERDICT`. `tradeoff` and `costs` are optional, and `helps` now excludes trade-offs.
+
+### Task D23 (P0 · Sat 4 PM): Readable names for unnamed interior doors
+
+**Files:** Modify `fire/batch.py` (`door_label`, new `relabel`), `fire/fixes.py` (`widen_door` messages), `fire/headlines.py` (`build_headlines` relabels its input), `fire/checks.py` (`office_checks`, `check_labels`, new `check_door_names`), `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `debug/d23-relabeled-<id>.json` and `debug/d23-headlines-office.json` (gitignored).
+
+**Interfaces:**
+- **Consumes `door_label(building, floor_id, door_id) -> (kind, label)`.**
+  - Exits and stair doors already read well: `Exit Entry (south)`, `Stair S1 exit`, `Stair S1 door`.
+  - A plain interior door gives `Door <id> (<room name> to <room name>)`, names in floor order. So the demo shows IFC ids:
+    - `Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`: office weak spot #5 and its pack.
+    - `Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES)`: clinic weak spot #1 and its widen fix.
+    - `Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE)`.
+- **Callers of `door_label`:** `aggregate` (`top[].why`), `_exit_why`, `seed_ranges` (`stability.why`), `default_variants`, `candidate_fixes` (`Widen <label> ...`, `Keep <label> clear`), `build_headlines` (`weakSpots[].label`), `refresh.exit_shift`.
+- **Saved batches:** these strings are baked into `top[].why`, `stability.why`, `whatIf[].label` and `why`, and `fixes[].label` and `why`. Saved `runs[]` carry no per-door waits, so a saved batch can be relabeled but not re-aggregated.
+- **Error messages:** `widen_door`'s errors name raw ids (`widening D$77xsW changes room connections or walkable pieces`), and they reach `fixesSkipped[].reason`.
+- **Pinned checks:** `check_fixes` pins `door_label(building, "F1", "missing") == ("door", "Door missing")`. D14b's `office_checks` builds the plain-door expectation from the file.
+- **Measured: name collisions among plain doors (same floor, same two room names):**
+  - Example: none.
+  - Office: 3 pairs, 10 doors. For example OPEN OFFICE–CORRIDOR on F1 (D$77xaz, D$77xVs), and OPEN OFFICE–TEAM RM on F2 (five doors).
+  - Clinic: 29 pairs, 94 doors, plus 17 doors between two rooms of the same name (CORRIDOR–CORRIDOR).
+  - Two clinic room pairs have two doors each: R1D22–R1DC1 (Dv$nmZR, Dv$nmj8) and R2D21–R2DC1 (DIf2nYS, DIf2nbp).
+  - The rule below gives unique labels on every floor of all three buildings.
+- **Produces, for a plain door:**
+  - `Door between <A> and <B>`, names in floor order.
+  - When another plain door on the floor joins the same two names, or the names are equal, each name gets its room id: `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `Door between CORRIDOR (R1AC3) and CORRIDOR (R1CC1)`.
+  - When two doors join the same two rooms, append `, 1 of 2` or `, 2 of 2`, ordered by door midpoint (x, then y).
+  - With one known room: `Door from <A>`. With none: `Door <id>`, as today.
+  - Ids stay in the data: `id`, `top[].id`, `fixes[].door`.
+  - `relabel(building, batch) -> dict` (pure).
+
+- [ ] **Step 1: Rule.** Write the plain-door rule in `door_label`. Kinds, exits and stair doors are unchanged. `widen_door`'s three door errors name the door by its `door_label` label, not its id.
+- [ ] **Step 2: Relabel saved batches.**
+  - Build a map from each plain door's legacy label (today's exact string, via a private `_legacy_label`) to its new label.
+  - `relabel` replaces those strings in `top[].why`, `stability.why`, `whatIf[].label` and `why`, `fixes[].label` and `why`, and `fixesSkipped[].reason`, and returns a copy. Numbers and ids are untouched.
+  - `build_headlines` calls it on its input first, so a pack made from an old batch reads well too.
+- [ ] **Step 3: Checks.** Fast `check_door_names()`:
+  - Example: `D101` gives `Door between Kitchen and Corridor 1`, `DL1` gives `Door between Lobby and Corridor 1`.
+  - Office: `D$77xwP` gives `Door between CORRIDOR and SCIF OPEN OFFICE`, `D$77xVs` gives `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `DQnt_pi` gives `Door between SECURE DOC ROOM and OPEN OFFICE`.
+  - Clinic, skipped if missing: `Dv$nmj8` gives `Door between TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1), 1 of 2`.
+  - On every floor of the three buildings, plain-door labels are unique, ASCII, free of `:` and free of their own door id.
+  - `relabel` on a hand-made office batch whose `top`, `stability`, `whatIf`, `fixes` and `fixesSkipped` texts carry the legacy labels of D$77xwP, D$77xVs and DQnt_pi:
+    - leaves no match of `Door [A-Za-z0-9_$]+ \(` in any text field;
+    - changes nothing else (ids, numbers);
+    - changes nothing on a second pass.
+  - Move `office_checks`' plain-door expectation and `check_labels`' `D101` line to the new rule. `Door missing` stays.
+- [ ] **Step 4: Verify:**
+  - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
+  - Relabel the three demo batches into `debug/d23-relabeled-<id>.json`, printing each changed label (old -> new).
+  - `python -m fire.headlines data/buildings/office.json debug/d23-relabeled-office.json --out debug/d23-headlines-office.json` gives weak spot #5 as `Door between CORRIDOR and SCIF OPEN OFFICE`.
+  - README section "Readable door names (D23)": the rule and the old -> new list.
+- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): readable names for unnamed interior doors"` (no attribution lines). Handoffs in the README:
+  - For A: call `fire.batch.relabel(building, batch)` in the precompute before writing `batch-<id>.json`. `fire.headlines` relabels on its own. No reruns are needed.
+  - For E: text only changes. E34 shows the labels the files carry.
+
+### Task D24 (P1 · Sat 6 PM): Tiny rooms: a fire in a room thinner than a smoke cell starts at the nearest reachable cell
+
+**Files:** Modify `fire/grid.py` (`FloorGraph`, `BuildingGraph.__init__`, `node_at`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`.
+
+**Interfaces:**
+- Consumes:
+  - `BuildingGraph.node_at(floor_id, x, y, room_polygon)`. Candidates are node centres inside the room polygon. If there are none, it raises `ValueError("No grid nodes inside the requested room on F2")`. `FireModel.__init__` calls it with the scenario's fire room.
+  - The per-floor `polygon` local in `__init__`: walkable ∪ door passages buffered by half a cell, prepared. Edges must be covered by it (D1's wall rule).
+  - `check_grid`'s snap-into-room case.
+- **Measured:** in all three buildings only office F2 R203b has no node inside.
+  - R203b is an OPEN OFFICE fragment of 1.16 m², 5.57 × 0.21 m (bounds 0.331, 23.818, 5.897, 24.026).
+  - It is open to CORRIDOR R201 and OPEN OFFICE R203a with no wall, and the 0.5 m grid's nodes at y = 23.75 (R201) and 24.25 (R203a) straddle it.
+  - Its nearest node, (3.25, 23.75) in R201, is 0.22 m from the room's representative point (3.114, 23.922), over walkable floor.
+  - All 3 seeds failed in D16 and in the demo batch (`failed` in `frontend/public/demo/batch-office.json`), so R203b has no risk estimate.
+  - The sim side is fine: C's keep-out gives R203b a 1.5 m disc.
+- Produces:
+  - `FloorGraph.walk`: that prepared polygon, as an optional dataclass field.
+  - A `node_at` fallback.
+  - The error message `No grid nodes inside or beside the requested room on <floor>`.
+
+- [ ] **Step 1: Keep the polygon.** Store the per-floor polygon on `FloorGraph` as `walk`.
+- [ ] **Step 2: Fallback.** Only when no node lies inside the room polygon:
+  - The anchor is (x, y) if the room polygon covers it, else the polygon's `representative_point()`.
+  - Candidates are nodes within one cell (`spec["cell"]`) of the room polygon whose straight segment to the anchor is covered by `walk`. The nearest to the anchor wins.
+  - With no candidate, raise with the new message.
+  - Rooms with a node inside behave exactly as today, so no other fire moves.
+- [ ] **Step 3: Checks.**
+  - **Fast `check_tiny_room()`:**
+    - On `fixture_building()`, a 0.09 × 2 m room inside A along its east side (`box(9.9, 3, 9.99, 5)`) gets a node in A within 0.5 m.
+    - A 0.16 × 2 m room inside the wall (`box(10.02, 3, 10.18, 5)`) still raises `ValueError` naming F1.
+    - On the office, `node_at("F2", 3.114, 23.922, <R203b polygon>)` returns the node at (3.25, 23.75), and `FireModel` with a kitchen fire in R203b builds with `source_xy` there.
+    - `check_grid` passes unchanged.
+  - **Slow `check_tiny_room_slow()`:**
+    - `_run_one` for office R203b, seed 1, 60 occupants, `maxTime` 240 returns `ok: True`.
+    - Every clinic room gets a node.
+- [ ] **Step 4: Verify:**
+  - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
+  - `run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from `apply_overrides(office.scenario, 250, "kitchen")`, has 3 ok runs. Paste their t90 and trapped into a README section "Tiny rooms (D24)" that replaces D16's "Office limitation" paragraph.
+- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
+  - Handoff for A: R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs.

@@ -402,3 +402,130 @@
 - [x] **Step 7: Fixture and qa.** `make-fixtures.mjs` writes `.fixtures/headlines.json`: headlines/v0 for `example-office` (`buildingName`, `generated` now, D18's `note`), `scenario` from `public/demo/batch.example.json`'s `base` (occupants 160, fireType kitchen) with seeds [1, 2, 3], rooms 22, runs 66, failed 0; `weakSpots` from its `top` (rank, kind, id, floor, score, why; labels "Stair SB door", "Stair SA door", "Stair SA door"; `seedsInTop3` 3, 2, 3); one `proppedStairs` `whatIf` (n 66, dT90 0.2, smokePct 22, `why` in D11's shape); `fixes` = the first two of E28's fixture without `door`, `floor` and `width`; `stability` {why: E29's fixture sentence, heldIn 2, n 3}; `headline` "Stair doors propped open: +22% person-seconds in smoke across 66 paired fires; 90% out 0 s later on average."; made-up numbers for the UI only. `qa.mjs`, after the `--open` loop, when `__app.getState().headlines` is set: About → `open-about.png` → Escape; `__tour.getState().go(3, false)`, 3 s → `open-scene4.png`; `go(4, false)`, 3 s → `open-scene5.png`; `stop()`.
 - [x] **Step 8: Verify.** `npm run build` passes with no type errors; `node scripts/make-fixtures.mjs`, then `npm run qa -- --open .fixtures/headlines.json` exits 0: `qa/open-1-tab-report.png` shows the headline sentence, the scenario line "160 occupants, kitchen fire; 66 fires in 22 rooms over 3 seeds (0 failed)", three weak spots with seed badges and the two fixes (the widening with "→ #1 DSB2"); `qa/open-scene4.png`'s caption is the headline sentence; `qa/open-scene5.png`'s starts "Fires in every room. Top weak spot: Stair SB door (top 3 in 3 of 3 seeds). Best measured fix: Widen Stair SB door"; `qa/open-about.png` shows the numbers block; `qa/tab-report.png`, `qa/scene4.png` and `qa/about.png` look as before (the demo batch is a placeholder, so About adds no block).
 - [x] **Step 9: Commit** `git add frontend && git commit -m "feat(frontend): headline numbers pack for report, demo and about"` (no co-author or AI attribution lines; the runner pushes).
+
+## Added Sat 13:25 (demo review fixes)
+
+> From the lead's demo review. P0 tasks fix things judges see; do them first, in order.
+
+> Lead note: the what-if door dropdown also shows raw door ids. Cover it in E34: show the door's readable label and keep the id as the value.
+
+### Task E32 (P0 · Sat 2 PM): Readable what-if notes: axe color contrast
+- **Files:** Modify `frontend/src/App.css`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Interfaces:**
+  - **Consumes:**
+    - `.dim { color: var(--muted) }`. `--muted` (#94a3b8) on `--panel` (#111a2e) gives about 6.8:1.
+    - `.whatif-headline .dim { opacity: 0.7; font-size: var(--fs-sm); }` blends that down to about 4.0:1. Axe wants 4.5:1 for this small text.
+    - `<WhatIfHeadline />` and E31's `<HeadlinePack />` put their `.dim` lines inside `.whatif-headline`.
+    - Every demo batch now has real what-ifs, so qa's `a11y` step (axe, wcag2aa, every results tab) reports 2 color-contrast problems and `npm run qa` exits 1.
+    - The high-contrast theme (`index.css`) and the print view (`.printreport .page .dim`, #475569 on white) lose contrast to the same opacity.
+  - **Produces:** the same muted colour, at full opacity.
+- [ ] **Step 1: CSS.**
+  - Change the rule to `.whatif-headline .dim { font-size: var(--fs-sm); }`: no opacity. The colour stays `var(--muted)`.
+  - If qa then names another color-contrast element, fix it the same way (a colour token, no opacity) and name it in the commit body.
+- [ ] **Step 2: Verify.**
+  - `npm run build` passes.
+  - `npm run qa` exits 0, and no axe line for any tab mentions `color-contrast`.
+  - `qa/tab-report.png` and `qa/tab-results.png` still show the what-if notes muted grey and readable.
+- [ ] **Step 3: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): readable what-if notes (axe color contrast)"` (no attribution lines).
+
+### Task E33 (P1 · Sat 4 PM): Static mode: the Sprinklers box says it needs the backend and quotes the measured sprinkler what-if
+- **Files:** Modify `frontend/src/ui/WhatIfCard.tsx`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Interfaces:**
+  - **Consumes:**
+    - `WhatIfCard`'s local `sprinklers` state, passed to `runWhatIf(door, state, sprinklers)` (`store/app.ts`).
+    - Live mode sends `makeVariant(..., sprinklers)` to the API.
+    - Static mode (no `VITE_API_URL`, or the backend unreachable) ignores door, state and sprinklers. It loads the one precomputed variant for the fire room through `findPrecomputedVariant`. Every demo variant is a propped stair door (`whatIf: 'propped'` in `index.json`), and there are no sprinkler runs.
+    - The result's headline already names the door and state it loaded, but nothing says the sprinklers were not applied.
+    - `useApp.mode`, `useApp.batch`, `useApp.headlines`, and `readWhatIf(batch)` (`src/model/exposure.ts`).
+    - All three demo batches carry a `sprinklers` what-if (example n 36, office 24, clinic 9). The example's reads: "Sprinklers on: 90% out 10 s sooner on average (slower in 0 of 36 fires); -86 person-seconds in smoke (-6%), -2.4 people at an illustrative smoke dose of 1, -1.3 trapped per fire."
+  - **Produces:** a disabled checkbox with a note in static mode, and the qa step `whatif-static`.
+- [ ] **Step 1: Disabled in static mode.**
+  - With `live = mode === 'live'`, the checkbox gets `disabled={!live}`, `checked={live && sprinklers}` and a `title`.
+  - The Run button passes `live && sprinklers`.
+  - Door and state stay as they are: the loaded run's headline already names the precomputed door and state.
+  - Live mode is unchanged.
+- [ ] **Step 2: Note.** In static mode, add a muted `p.dim.note` under the checkbox: "Sprinklers need the live backend."
+  - Then, if `readWhatIf(batch)` (else `headlines.whatIf`) has an entry with id `sprinklers` and `n > 0`: " Measured across <n> fires: <why>", with the why verbatim.
+  - Otherwise: " This static demo has precomputed propped-door runs only."
+  - App.css: `.whatif .note { margin: 2px 0 6px; font-size: var(--fs-xs) }`.
+- [ ] **Step 3: QA.** Add step `whatif-static` after `load`, in the scenario panel's `.whatif`.
+  - Report a problem if the Sprinklers checkbox is enabled, or if the note lacks "Sprinklers need the live backend" or "fires:".
+  - Take shot `whatif-static.png`.
+- [ ] **Step 4: Verify.**
+  - `npm run build` passes with no type errors.
+  - `npm run qa` exits 0 (with E32 in), and `qa/whatif-static.png` shows the greyed checkbox and the note quoting the example's sprinkler what-if.
+  - If the backend runs: with `VITE_API_URL=http://localhost:8000/api npm run dev`, the box is enabled, and a what-if run with it ticked is labelled "+sprinklers".
+- [ ] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
+
+### Task E34 (P1 · Sat 6 PM): Fix lines show trade-offs, and no list names a spot by its raw id
+- **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Interfaces:**
+  - **Consumes, from E28:**
+    - `Fix`, `readFixes`, `fixTarget` and `fixLine`. `fixLine` builds a signed compact line, with "; +1.3 trapped per fire" when |dTrapped| ≥ 0.05.
+    - `MeasuredFixes`: a `helps` badge (`.badge.ok` "helps"), else `.badge.warn` "no gain"; the target `→ #<rank> <t.id>` or `→ <t.id> · <floor>`; and "Not measured" items as `<id>: <reason>`.
+  - **Also consumed:**
+    - `WeakSpots`' item heading `<b>{t.id}</b>`.
+    - `PrintReport`'s weak-spot table `<td>{t.id}</td>`.
+    - `HeadlinePack`'s `t.label ?? t.id`.
+    - Scene 5's `spot.label ?? spot.id`, and its "Best measured fix" (the first fix with `helps`).
+  - **What judges see today.** D's `helps` means any gain, so the demo shows "helps" on fixes with a cost:
+    - Example: "Keep Exit Main entrance clear (vs blocked): -58 s t90, -68% smoke exposure across 36 fires; +1.3 trapped per fire". D22's diagnosis: all 47 extra trapped are in the three Lobby (L1) fires, where E1 is the lobby's own exit.
+    - Office: keepClear-D$77wwb and selfClosers (+0.4 trapped), and sprinklers (+18% smoke, D15's counting caveat).
+    - Clinic: keepClear-Dv$nncb (+37% smoke).
+    - The office Risk map also lists exit weak spots as `D$77wwb`.
+  - **D22's rule, shared with D:**
+    - Gains: dT90 ≤ −1 s, dTrapped ≤ −0.05, smokePct ≤ −5 (or dSmokeSeconds < 0 when smokePct is null).
+    - Costs: dT90 ≥ +1 s, dTrapped ≥ +0.05, smokePct ≥ +5 (or dSmokeSeconds > 0 when null).
+    - helps = gains and no cost; trade-off = gains and a cost.
+    - D22 adds optional `tradeoff` and `costs`, and narrows `helps` to exclude trade-offs. Only batches and packs written after D22 carry them, so derive the verdict when they're absent.
+  - **Labels:**
+    - Batch `top[]` entries have no `label`, but every `why` starts with it (`<label>: ...`). D18's `weakSpots[]` carry `label`.
+    - Interior-door labels inside D's text still carry IFC ids (`Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`). The batches and headline packs pick up readable labels once D23 lands and A reruns the precompute; A's report cards already use `_Names.label`.
+  - **Produces:** `VERDICT`, `fixVerdict(fix) → 'helps' | 'tradeoff' | 'nogain'`, `fixCosts(fix) → string[]`, `spotLabel(entry) → string`, `.badge.trade`, fixture entries, and qa checks.
+- [ ] **Step 1: One rule.**
+  - In `fixes.ts`, add `VERDICT = { t90: 1, trapped: 0.05, smokePct: 5 }` and `fixVerdict(fix)`:
+    - `n === 0` gives 'nogain'.
+    - When `typeof fix.tradeoff === 'boolean'` (D22 data): 'tradeoff' if true, else 'helps' if `helps`, else 'nogain'.
+    - Otherwise, gains and costs from the numbers by D22's rule.
+  - `Fix` gains `tradeoff?: boolean` and `costs?: string[]`.
+- [ ] **Step 2: Line.**
+  - `fixLine` keeps today's text for 'helps' and 'nogain', so E28's expectations hold.
+  - A trade-off lists its gains, then "; but " and its costs, in the same signed form. Example: "Keep Exit Main entrance clear (vs blocked): -58 s t90, -68% smoke exposure across 36 fires; but +1.3 trapped per fire".
+  - A measure that is neither a gain nor a cost is left out.
+- [ ] **Step 3: Badge.**
+  - helps → `.badge.ok` "helps"; tradeoff → `.badge.trade` "trade-off"; nogain → `.badge.warn` "no gain".
+  - App.css: `.badge.trade { background: #7c2d12; color: #ffedd5 }`. qa's axe step checks contrast.
+  - Scene 5's "Best measured fix" is the first fix whose verdict is 'helps'.
+- [ ] **Step 4: Names, never ids.** In `spots.ts`, `spotLabel(entry)` returns, in order of preference:
+  - `entry.label`, if it's a non-empty string;
+  - else the text of `entry.why` before its first ": ";
+  - else `Room <id>` for kind `room` (room ids read well);
+  - else `<Kind> on <floor>` (e.g. "Exit on F1").
+  
+  Use it for:
+  - MeasuredFixes' target, in a new `span.target`: `→ #1 Stair S1 exit`; unranked, `→ show on F1`.
+  - WeakSpots' heading, instead of `<b>{t.id}</b>`.
+  - PrintReport's weak-spot column (header "Weak spot").
+  - HeadlinePack and scene 5, instead of `?? t.id`.
+  
+  "Not measured" items read `<kind word>: <reason>`, with kind words Widen, Keep clear, Sprinklers and Self-closers. `data-spot`, React keys and `goToSpot` keep the ids.
+- [ ] **Step 5: Fixtures.** In `make-fixtures.mjs`, for `.fixtures/fixes.batch.json` (made-up numbers for the UI only):
+  - Give the `top` entries readable whys: "Stair SB door: 31 people queued at peak; ...", "Stair SA door: ...", "Stair SA door: ...".
+  - Append `keepClear-E1` in today's shape: label "Keep Exit Main entrance clear (vs blocked)", derivedFrom "whatIf.blockedExit", door E1, floor F1, n 36, dT90 −58, dSmokeSeconds −3022, smokePct −68, dTrapped 1.3, helps true, no `tradeoff`.
+  - Append `keepClear-E2` in D22's shape: label "Keep Exit East stair exit clear (vs blocked)", door E2, floor F1, n 36, dT90 −4, dTrapped −0.2, smokePct 37, helps false, tradeoff true, costs ["37% more time in smoke"].
+  - Give both a `why` in D's shape.
+- [ ] **Step 6: QA.** Extend step `fixes`, which runs only with `--open`.
+  - When the loaded batch is the fixture (`batch.id === 'fixes'`), report a problem unless all of these hold:
+    - the list shows two "trade-off" badges;
+    - it contains "; but +1.3 trapped per fire";
+    - none of DSB2, DSA2, DSA1, E1, E2 appears as a whole word in any `.fixes .target` or `.spots button b` text.
+  - Demo batches skip that id assertion: their D-written labels keep IFC ids until D23 and the precompute rerun.
+  - The fly-to assertion on the first button stays for every batch.
+- [ ] **Step 7: Verify.**
+  - `npm run build` passes with no type errors. Run `node scripts/make-fixtures.mjs`.
+  - `npm run qa -- --open .fixtures/fixes.batch.json` exits 0:
+    - `qa/fixes-list.png` shows "→ #1 Stair SB door" and two "trade-off" badges at the end of the list;
+    - `qa/open-1-tab-risk.png`'s weak-spot headings read labels, not DSB2.
+  - `npm run qa -- --open public/demo/batch-example-office.json` exits 0. Its `qa/fixes-list.png` shows keepClear-E1 with a "trade-off" badge, "; but +1.3 trapped per fire" and "→ #4 Exit Main entrance".
+- [ ] **Step 8: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): trade-off badges for measured fixes; spots named by label, never raw id"` (no attribution lines).
+  - Say in the commit body that office and clinic interior doors read well once D23 lands and A reruns the precompute.
