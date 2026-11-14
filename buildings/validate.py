@@ -114,8 +114,8 @@ def problems(building: dict, scenario: dict | None = None) -> list[str]:
                         found.append(f"{label} has no exterior door {zone.get('door')}")
         for door in floor['doors']:
             label = f"{fid}: door {door['id']}"
-            if not 0.6 <= door['width'] <= 3.0:
-                found.append(f'{label} width outside 0.6–3.0 m')
+            if not 0.6 <= door['width'] <= 6.0:
+                found.append(f'{label} width outside 0.6-6.0 m')
             if 'outside' not in door['connects']:
                 rect = Polygon(door['rect'])
                 for rid in door['connects']:

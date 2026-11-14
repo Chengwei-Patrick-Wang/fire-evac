@@ -208,3 +208,7 @@ overall width cut count
 1.83 1.73 1.75 1
 interior cut - width: median 0.016 m, maximum 1.023 m
 ```
+
+## Plan images and trace
+
+Run `python -m buildings.plan_images` to regenerate the scale-preserving example and office PNGs and example trace and plan in `data/buildings/plans/`. Run `python -m buildings.plan_images --check` to check the JSON metadata without drawing. The example images are 40 px/m and the office images 30 px/m; each includes a 10 m scale bar. The example trace preserves the source's 4 m interior opening; the public-building validator accepts door widths from 0.6 to 6.0 m.

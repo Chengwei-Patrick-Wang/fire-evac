@@ -1,0 +1,923 @@
+{
+ "version": "plan/v0",
+ "id": "example-traced",
+ "name": "Example office (traced)",
+ "source": "trace",
+ "credits": "Synthetic example building made by the team; license: free to use, no attribution needed.",
+ "floors": [
+  {
+   "id": "F1",
+   "level": 0,
+   "elevation": 0.0,
+   "height": 3.5,
+   "rooms": [
+    {
+     "id": "R1",
+     "name": "Kitchen",
+     "type": "kitchen",
+     "polygon": [
+      [
+       4.0,
+       0.0
+      ],
+      [
+       12.0,
+       0.0
+      ],
+      [
+       12.0,
+       6.5
+      ],
+      [
+       4.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R2",
+     "name": "Office 102",
+     "type": "office",
+     "polygon": [
+      [
+       12.0,
+       0.0
+      ],
+      [
+       20.0,
+       0.0
+      ],
+      [
+       20.0,
+       6.5
+      ],
+      [
+       12.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R3",
+     "name": "Lobby",
+     "type": "lobby",
+     "polygon": [
+      [
+       20.0,
+       0.0
+      ],
+      [
+       26.0,
+       0.0
+      ],
+      [
+       26.0,
+       6.5
+      ],
+      [
+       20.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R4",
+     "name": "Office 103",
+     "type": "office",
+     "polygon": [
+      [
+       26.0,
+       0.0
+      ],
+      [
+       32.0,
+       0.0
+      ],
+      [
+       32.0,
+       6.5
+      ],
+      [
+       26.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R5",
+     "name": "Office 104",
+     "type": "office",
+     "polygon": [
+      [
+       32.0,
+       0.0
+      ],
+      [
+       36.0,
+       0.0
+      ],
+      [
+       36.0,
+       6.5
+      ],
+      [
+       32.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R6",
+     "name": "Office 105",
+     "type": "office",
+     "polygon": [
+      [
+       4.0,
+       9.5
+      ],
+      [
+       12.0,
+       9.5
+      ],
+      [
+       12.0,
+       16.0
+      ],
+      [
+       4.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R7",
+     "name": "Lounge",
+     "type": "lounge",
+     "polygon": [
+      [
+       12.0,
+       9.5
+      ],
+      [
+       22.0,
+       9.5
+      ],
+      [
+       22.0,
+       16.0
+      ],
+      [
+       12.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R8",
+     "name": "Office 107",
+     "type": "office",
+     "polygon": [
+      [
+       22.0,
+       9.5
+      ],
+      [
+       30.0,
+       9.5
+      ],
+      [
+       30.0,
+       16.0
+      ],
+      [
+       22.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R9",
+     "name": "Office 108",
+     "type": "office",
+     "polygon": [
+      [
+       30.0,
+       9.5
+      ],
+      [
+       36.0,
+       9.5
+      ],
+      [
+       36.0,
+       16.0
+      ],
+      [
+       30.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R10",
+     "name": "Corridor 1",
+     "type": "corridor",
+     "polygon": [
+      [
+       4.0,
+       6.5
+      ],
+      [
+       36.0,
+       6.5
+      ],
+      [
+       36.0,
+       9.5
+      ],
+      [
+       4.0,
+       9.5
+      ]
+     ]
+    },
+    {
+     "id": "R11",
+     "name": "Stair A",
+     "type": "stair",
+     "polygon": [
+      [
+       0.0,
+       5.0
+      ],
+      [
+       4.0,
+       5.0
+      ],
+      [
+       4.0,
+       11.0
+      ],
+      [
+       0.0,
+       11.0
+      ]
+     ],
+     "group": "SA"
+    },
+    {
+     "id": "R12",
+     "name": "Stair B",
+     "type": "stair",
+     "polygon": [
+      [
+       36.0,
+       5.0
+      ],
+      [
+       40.0,
+       5.0
+      ],
+      [
+       40.0,
+       11.0
+      ],
+      [
+       36.0,
+       11.0
+      ]
+     ],
+     "group": "SB"
+    }
+   ],
+   "doors": [
+    {
+     "id": "D1",
+     "a": [
+      7.0,
+      6.5
+     ],
+     "b": [
+      7.9,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D2",
+     "a": [
+      15.0,
+      6.5
+     ],
+     "b": [
+      15.9,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D3",
+     "a": [
+      21.0,
+      6.5
+     ],
+     "b": [
+      25.0,
+      6.5
+     ],
+     "width": 4.0,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D4",
+     "a": [
+      28.0,
+      6.5
+     ],
+     "b": [
+      28.9,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D5",
+     "a": [
+      33.5,
+      6.5
+     ],
+     "b": [
+      34.4,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D6",
+     "a": [
+      7.0,
+      9.5
+     ],
+     "b": [
+      7.9,
+      9.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D7",
+     "a": [
+      16.0,
+      9.5
+     ],
+     "b": [
+      17.0,
+      9.5
+     ],
+     "width": 1.0,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D8",
+     "a": [
+      25.0,
+      9.5
+     ],
+     "b": [
+      25.9,
+      9.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D9",
+     "a": [
+      32.5,
+      9.5
+     ],
+     "b": [
+      33.4,
+      9.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D10",
+     "a": [
+      4.0,
+      7.5
+     ],
+     "b": [
+      4.0,
+      8.5
+     ],
+     "width": 1.0,
+     "fireDoor": true,
+     "state": "closed"
+    },
+    {
+     "id": "D11",
+     "a": [
+      36.0,
+      7.5
+     ],
+     "b": [
+      36.0,
+      8.5
+     ],
+     "width": 1.0,
+     "fireDoor": true,
+     "state": "closed"
+    },
+    {
+     "id": "D12",
+     "a": [
+      22.1,
+      0.0
+     ],
+     "b": [
+      23.9,
+      0.0
+     ],
+     "width": 1.8,
+     "fireDoor": false,
+     "state": "open",
+     "name": "Main entrance"
+    },
+    {
+     "id": "D13",
+     "a": [
+      40.0,
+      7.5
+     ],
+     "b": [
+      40.0,
+      8.5
+     ],
+     "width": 1.0,
+     "fireDoor": false,
+     "state": "closed",
+     "name": "East stair exit"
+    }
+   ]
+  },
+  {
+   "id": "F2",
+   "level": 1,
+   "elevation": 3.5,
+   "height": 3.5,
+   "rooms": [
+    {
+     "id": "R13",
+     "name": "Office 201",
+     "type": "office",
+     "polygon": [
+      [
+       4.0,
+       0.0
+      ],
+      [
+       12.0,
+       0.0
+      ],
+      [
+       12.0,
+       6.5
+      ],
+      [
+       4.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R14",
+     "name": "Office 202",
+     "type": "office",
+     "polygon": [
+      [
+       12.0,
+       0.0
+      ],
+      [
+       20.0,
+       0.0
+      ],
+      [
+       20.0,
+       6.5
+      ],
+      [
+       12.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R15",
+     "name": "Meeting room",
+     "type": "office",
+     "polygon": [
+      [
+       20.0,
+       0.0
+      ],
+      [
+       26.0,
+       0.0
+      ],
+      [
+       26.0,
+       6.5
+      ],
+      [
+       20.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R16",
+     "name": "Office 204",
+     "type": "office",
+     "polygon": [
+      [
+       26.0,
+       0.0
+      ],
+      [
+       32.0,
+       0.0
+      ],
+      [
+       32.0,
+       6.5
+      ],
+      [
+       26.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R17",
+     "name": "Kitchenette",
+     "type": "kitchen",
+     "polygon": [
+      [
+       32.0,
+       0.0
+      ],
+      [
+       36.0,
+       0.0
+      ],
+      [
+       36.0,
+       6.5
+      ],
+      [
+       32.0,
+       6.5
+      ]
+     ]
+    },
+    {
+     "id": "R18",
+     "name": "Office 206",
+     "type": "office",
+     "polygon": [
+      [
+       4.0,
+       9.5
+      ],
+      [
+       12.0,
+       9.5
+      ],
+      [
+       12.0,
+       16.0
+      ],
+      [
+       4.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R19",
+     "name": "Open office",
+     "type": "office",
+     "polygon": [
+      [
+       12.0,
+       9.5
+      ],
+      [
+       22.0,
+       9.5
+      ],
+      [
+       22.0,
+       16.0
+      ],
+      [
+       12.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R20",
+     "name": "Office 208",
+     "type": "office",
+     "polygon": [
+      [
+       22.0,
+       9.5
+      ],
+      [
+       30.0,
+       9.5
+      ],
+      [
+       30.0,
+       16.0
+      ],
+      [
+       22.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R21",
+     "name": "Office 209",
+     "type": "office",
+     "polygon": [
+      [
+       30.0,
+       9.5
+      ],
+      [
+       36.0,
+       9.5
+      ],
+      [
+       36.0,
+       16.0
+      ],
+      [
+       30.0,
+       16.0
+      ]
+     ]
+    },
+    {
+     "id": "R22",
+     "name": "Corridor 2",
+     "type": "corridor",
+     "polygon": [
+      [
+       4.0,
+       6.5
+      ],
+      [
+       36.0,
+       6.5
+      ],
+      [
+       36.0,
+       9.5
+      ],
+      [
+       4.0,
+       9.5
+      ]
+     ]
+    },
+    {
+     "id": "R23",
+     "name": "Stair A",
+     "type": "stair",
+     "polygon": [
+      [
+       0.0,
+       5.0
+      ],
+      [
+       4.0,
+       5.0
+      ],
+      [
+       4.0,
+       11.0
+      ],
+      [
+       0.0,
+       11.0
+      ]
+     ],
+     "group": "SA"
+    },
+    {
+     "id": "R24",
+     "name": "Stair B",
+     "type": "stair",
+     "polygon": [
+      [
+       36.0,
+       5.0
+      ],
+      [
+       40.0,
+       5.0
+      ],
+      [
+       40.0,
+       11.0
+      ],
+      [
+       36.0,
+       11.0
+      ]
+     ],
+     "group": "SB"
+    }
+   ],
+   "doors": [
+    {
+     "id": "D14",
+     "a": [
+      7.0,
+      6.5
+     ],
+     "b": [
+      7.9,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D15",
+     "a": [
+      15.0,
+      6.5
+     ],
+     "b": [
+      15.9,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D16",
+     "a": [
+      22.5,
+      6.5
+     ],
+     "b": [
+      23.4,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D17",
+     "a": [
+      28.0,
+      6.5
+     ],
+     "b": [
+      28.9,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D18",
+     "a": [
+      33.5,
+      6.5
+     ],
+     "b": [
+      34.4,
+      6.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D19",
+     "a": [
+      7.0,
+      9.5
+     ],
+     "b": [
+      7.9,
+      9.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D20",
+     "a": [
+      16.0,
+      9.5
+     ],
+     "b": [
+      17.0,
+      9.5
+     ],
+     "width": 1.0,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D21",
+     "a": [
+      25.0,
+      9.5
+     ],
+     "b": [
+      25.9,
+      9.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D22",
+     "a": [
+      32.5,
+      9.5
+     ],
+     "b": [
+      33.4,
+      9.5
+     ],
+     "width": 0.9,
+     "fireDoor": false,
+     "state": "open"
+    },
+    {
+     "id": "D23",
+     "a": [
+      4.0,
+      7.5
+     ],
+     "b": [
+      4.0,
+      8.5
+     ],
+     "width": 1.0,
+     "fireDoor": true,
+     "state": "closed"
+    },
+    {
+     "id": "D24",
+     "a": [
+      36.0,
+      7.5
+     ],
+     "b": [
+      36.0,
+      8.5
+     ],
+     "width": 1.0,
+     "fireDoor": true,
+     "state": "closed"
+    }
+   ]
+  }
+ ]
+}
