@@ -136,4 +136,27 @@ const clone = (o) => JSON.parse(JSON.stringify(o))
   ]
   writeFileSync(join(out, 'exposure.batch.json'), JSON.stringify(batch))
 }
+// fixes: example batch with made-up measured fixes (UI only; keeps placeholder: true), plus a runs folder for sync-demo.
+{
+  const batch = clone(JSON.parse(readFileSync(join(root, 'public/demo/batch.example.json'), 'utf8')))
+  batch.id = 'fixes'
+  const n = 12
+  batch.fixes = [
+    { id: 'widen-DSB2', kind: 'widen', label: 'Widen Stair SB door from 1.00 m to 1.50 m', door: 'DSB2', floor: 'F2', width: 1.5, n, dT90: -12, dT90Min: -20, dT90Max: 1, slower: 1, faster: 10, dTrapped: -0.3, dSmokeSeconds: -300, smokePct: -18, helps: true,
+      why: 'Widen Stair SB door from 1.00 m to 1.50 m: 90% out 12 s sooner on average and 18% less time in smoke across 12 fires (faster in 10); -0.3 trapped per fire.' },
+    { id: 'sprinklers', kind: 'sprinklers', label: 'Sprinklers on', sprinklers: true, n, dT90: -2, dSmokeSeconds: -45, smokePct: -3, dTrapped: -1.9, helps: true,
+      why: 'Sprinklers on: 90% out 2 s sooner on average and 3% less time in smoke across 12 fires; -1.9 trapped per fire.' },
+    { id: 'selfClosers', kind: 'selfClosers', label: 'Self-closers on stair doors (vs propped open)', doors: { DSA1: 'closed' }, derivedFrom: 'whatIf.proppedStairs', n, dT90: 0, dSmokeSeconds: -394, smokePct: null, helps: true,
+      why: 'Self-closers on stair doors (vs propped open): 90% out 0 s sooner on average and 394 fewer person-seconds in smoke across 12 fires.' },
+    { id: 'widen-DSA1', kind: 'widen', label: 'Widen Stair SA door from 1.00 m to 1.50 m', door: 'DSA1', floor: 'F1', width: 1.5, n, dT90: 18, smokePct: -3, dTrapped: 0.5, helps: false,
+      why: 'Widen Stair SA door from 1.00 m to 1.50 m: 90% out 18 s later on average across 12 fires; +0.5 trapped per fire.' },
+  ]
+  batch.fixesSkipped = [{ id: 'widen-DSA2', reason: 'Door DSA2: the wider opening reaches a third room' }]
+  writeFileSync(join(out, 'fixes.batch.json'), JSON.stringify(batch))
+  const real = clone(batch)
+  delete real.placeholder
+  real.id = 'batch-example-office-example-kitchen-fire'
+  mkdirSync(join(out, 'runs'), { recursive: true })
+  writeFileSync(join(out, 'runs', 'batch-example-office.json'), JSON.stringify(real))
+}
 console.log('wrote', out)

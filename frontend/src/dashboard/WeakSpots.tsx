@@ -1,11 +1,11 @@
 import { useApp } from '../store/app'
-import { spotPosition } from '../model/spots'
+import { readFixes, readSkipped } from '../model/fixes'
+import MeasuredFixes from './MeasuredFixes'
 import WhatIfHeadline from './WhatIfHeadline'
 import RiskLegend, { Stamps } from './RiskLegend'
 
 export default function WeakSpots() {
   const batch = useApp((s) => s.batch)
-  const building = useApp((s) => s.building)
   const mode = useApp((s) => s.mode)
   const metric = useApp((s) => s.riskMetric)
   const risk = useApp((s) => s.layers.risk)
@@ -16,17 +16,6 @@ export default function WeakSpots() {
   const err = useApp((s) => s.batchError)
   const runBatch = useApp((s) => s.runBatch)
   const set = useApp.setState
-
-  const go = (id: string, floor: string) => {
-    if (!building) return
-    const p = spotPosition(building, { id, floor })
-    if (!p) {
-      console.warn(`weak spot ${id} not found in ${building.id}`)
-      return set({ notice: `Unknown spot ${id}` })
-    }
-    set({ notice: null, activeSpot: id })
-    useApp.getState().flyTo(p.floorId, p.pos)
-  }
 
   return (
     <div className="weak">
@@ -72,13 +61,14 @@ export default function WeakSpots() {
           <ol className="spots">
             {batch.top.map((t, i) => (
               <li key={t.kind + t.id + i} className={activeSpot === t.id ? 'on' : ''}>
-                <button className="spot" onClick={() => go(t.id, t.floor)}>
+                <button className="spot" onClick={() => useApp.getState().goToSpot(t.id, t.floor)}>
                   <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{t.id}</b> · {t.floor} · score {t.score.toFixed(1)}
                   <div className="dim">{t.why}</div>
                 </button>
               </li>
             ))}
           </ol>
+          <MeasuredFixes fixes={readFixes(batch)} skipped={readSkipped(batch)} top={batch.top} />
           {visible && <button onClick={() => set({ visibleFloors: null, focus: null })}>Show all floors</button>}
         </>
       )}

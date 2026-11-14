@@ -6,6 +6,7 @@ import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
 import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
+import { spotPosition } from '../model/spots'
 import { findPrecomputedVariant, makeVariant } from '../model/whatif'
 
 /** Room labels start on only for small buildings (up to 40 rooms over all floors). */
@@ -92,6 +93,7 @@ interface AppState {
   fitView: number
   autoRotate: boolean
   flyTo: (floorId: string, pos: Vec2) => void
+  goToSpot: (id: string, floor: string) => boolean
   runBatch: () => Promise<void>
   setDraft: (d: Scenario | null) => void
   patchDraft: (p: Partial<Scenario>) => void
@@ -162,6 +164,18 @@ export const useApp = create<AppState>((set) => ({
   fitView: 0,
   autoRotate: false,
   flyTo: (floorId, pos) => set((s) => ({ visibleFloors: [floorId], focus: { floorId, pos, nonce: (s.focus?.nonce ?? 0) + 1 } })),
+  goToSpot: (id, floor) => {
+    const b = useApp.getState().building
+    const p = b ? spotPosition(b, { id, floor }) : null
+    if (!p) {
+      console.warn(`spot ${id} not found in ${b?.id ?? 'no building'}`)
+      set({ notice: `Unknown spot ${id}` })
+      return false
+    }
+    set({ notice: null, activeSpot: id })
+    useApp.getState().flyTo(p.floorId, p.pos)
+    return true
+  },
   runBatch: async () => {
     const st = useApp.getState()
     const b = st.building
