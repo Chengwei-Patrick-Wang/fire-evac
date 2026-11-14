@@ -303,23 +303,23 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - run: `Fire spread at illustrative <material> speeds: <k> other rooms by <last ignite>`, or `Fire spread at illustrative <material> speeds: the fire stayed in its room`.
 
 **Part 1 (Sat 5 PM, before D25):**
-- [ ] **Step 1: Example field.** Add `"material": "drywall"` to the `fire` of `contracts/scenario.example.json`, after `start`. Today's `FireModel` ignores it, and after D25 it's the default, so no result moves.
-- [ ] **Step 2: Document.** In spec §6:
+- [x] **Step 1: Example field.** Add `"material": "drywall"` to the `fire` of `contracts/scenario.example.json`, after `start`. Today's `FireModel` ignores it, and after D25 it's the default, so no result moves.
+- [x] **Step 2: Document.** In spec §6:
   - **scenario/v0:** `fire: {floor, room, x, y, type, growth?, start, material?}`, with a bullet: "`fire.material` (optional): `concrete`, `drywall` (the default when absent) or `wood`, the illustrative room-to-room spread speed (`fire/spread.py`, `fire/README.md`). Any other value is an error."
   - **run/v0:** `fire: {floor, x, y, hrr: [[t, kW], …], rooms?, material?}`, with a bullet: "`fire.rooms` (optional): `[{room, floor, ignite}]`, every room that catches fire by `maxTime`, sorted by `ignite` (s); the first is the ignition room, at the fire's `start`. `fire.material`: the material the run used. `sim/run.py` writes both whenever the run has a fire model. `hrr` is the total of every burning room. A person inside a burning room is trapped with `reason: "burning room"`."
   - Mirror both in `frontend/src/data/types.ts` with the names in Produces. E's tasks import these names and don't redefine them.
-- [ ] **Step 3: Fixture.** `tools/build_examples.py` writes `contracts/run.spread.fixture.json` right after `run.example.json`:
+- [x] **Step 3: Fixture.** `tools/build_examples.py` writes `contracts/run.spread.fixture.json` right after `run.example.json`:
   - **Base:** a deep copy of the run it just built, thinned like `precompute_demo.thin`: every 2nd frame plus the last (`frameInterval` 1.0), every 3rd smoke frame (`interval` 6). About 0.6 MB.
   - **Labels:** `"id": "example-kitchen-fire-s1-spread-fixture"`, and a top-level `"fixture"` string: "A11 frontend fixture: fire.rooms and fire.material give D25's wood schedule for this fire; the agents, smoke and events do not react to it. Not a simulation result; never indexed or published."
   - **Fire block:** `fire.material: "wood"`, and `fire.rooms` = `SPREAD_FIXTURE_ROOMS`, the 15-entry wood list from D25's check. Each entry is `{"room", "floor", "ignite"}`:
     - on F1: R101 0.0; C1 90.0; R102, L1, R103, R104, R105, R106, R107, R108, SA1, SB1 at 180.0;
     - on F2: SA2 and SB2 at 270.0, then C2 at 360.0.
   - **Why wood:** the run ends at 200 s, and with wood twelve rooms ignite inside the replay. E opens the file with File > Open; `sync-demo.mjs` never copies it.
-- [ ] **Step 4: Verify Part 1:**
+- [x] **Step 4: Verify Part 1:**
   - `python tools/build_examples.py` prints a `run.spread.fixture.json` line with its size.
   - `git status contracts` shows `scenario.example.json` and the new fixture; note anything else that changed in the commit body.
   - `python tools/check_all.py fire sim frontend privacy` prints `ALL OK`.
-- [ ] **Step 5: Commit Part 1:** `git add contracts tools/build_examples.py frontend/src/data/types.ts docs/superpowers/specs/2026-11-13-fire-evac-sim-design.md docs/superpowers/plans/2026-11-13-ws-a-integration.md && git commit -m "feat(contracts): optional fire.material and fire.rooms, with a spread fixture for the frontend"` (no attribution lines). Merge to `main` right away, and give E the file and the type names.
+- [x] **Step 5: Commit Part 1:** `git add contracts tools/build_examples.py frontend/src/data/types.ts docs/superpowers/specs/2026-11-13-fire-evac-sim-design.md docs/superpowers/plans/2026-11-13-ws-a-integration.md && git commit -m "feat(contracts): optional fire.material and fire.rooms, with a spread fixture for the frontend"` (no attribution lines). Merge to `main` right away, and give E the file and the type names.
 
 **Part 2 (Sat 8 PM, after D25 and C27 merge):**
 - [ ] **Step 6: Backend.** `fire.material` already passes through (see Interfaces). In `backend/smoke_test.py`, the real-run check gets two twins:

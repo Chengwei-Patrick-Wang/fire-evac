@@ -4,11 +4,16 @@
 
 - contracts/building.example.json  <- buildings.normalize(plan.example)
 - contracts/run.example.json       <- sim.run(building, scenario.example, ToyFire) + fire.metrics
+- contracts/run.spread.fixture.json <- A11 frontend fixture: run.example.json thinned like precompute_demo --thin, with
+                                      fire.rooms (D25's wood schedule) and fire.material "wood" added. The agents, smoke
+                                      and events do not react to it, so it is a test file: E opens it with File > Open;
+                                      sync-demo never copies it, and it is never indexed or published
 - contracts/batch.example.json     <- placeholder batch/v0 (seeded random numbers, "placeholder": true);
                                       its doors are named by fire.batch.door_label, as in D's real batches
 """
 from __future__ import annotations
 
+import copy
 import json
 import sys
 import time
@@ -27,6 +32,24 @@ from sim.run import run as run_sim  # noqa: E402
 
 CONTRACTS = ROOT / "contracts"
 SEEDS = (1, 2, 3)
+
+# D25's wood schedule for the example kitchen fire in R101 (plan 2026-11-14-ember-ui-fire-spread, task D25, "The example"):
+# R101 at 0 s, the corridor C1 at 90 s, the ten rooms off C1 (the F1 offices, lobby, lounge and both stairwells) at
+# 180 s, then the F2 stairwells at 270 s and its corridor C2 at 360 s. The example run ends at 200 s, so the first
+# twelve ignite inside the replay.
+SPREAD_FIXTURE_ROOMS = [
+    {"room": "R101", "floor": "F1", "ignite": 0.0},
+    {"room": "C1", "floor": "F1", "ignite": 90.0},
+    *({"room": room, "floor": "F1", "ignite": 180.0}
+      for room in ("R102", "L1", "R103", "R104", "R105", "R106", "R107", "R108", "SA1", "SB1")),
+    {"room": "SA2", "floor": "F2", "ignite": 270.0},
+    {"room": "SB2", "floor": "F2", "ignite": 270.0},
+    {"room": "C2", "floor": "F2", "ignite": 360.0},
+]
+SPREAD_FIXTURE_NOTE = (
+    "A11 frontend fixture: fire.rooms and fire.material give D25's wood schedule for this fire; the agents, smoke "
+    "and events do not react to it. Not a simulation result; never indexed or published."
+)
 
 
 def load_fire_model():
@@ -60,6 +83,35 @@ def write_json(path: Path, data: dict, compact: bool = False) -> int:
     text = json.dumps(data, separators=(",", ":")) if compact else json.dumps(data, indent=1)
     path.write_text(text, encoding="utf-8")
     return path.stat().st_size
+
+
+def thin_run(run: dict) -> dict:
+    """The rule of tools/precompute_demo.thin (--thin): every 2nd agent frame, the last one kept so the replay keeps its
+    length (frameInterval doubles), and every 3rd smoke frame (interval triples). Events and metrics stay as they were."""
+    frames = run["frames"]
+    kept = frames[::2]
+    if frames and kept[-1] is not frames[-1]:
+        kept.append(frames[-1])
+    run["frames"] = kept
+    run["frameInterval"] = round(run["frameInterval"] * 2, 6)
+    for layer in run.get("smoke") or []:
+        layer["frames"] = layer["frames"][::3]
+        layer["interval"] = round(layer.get("interval", 2) * 3, 6)
+    return run
+
+
+def write_spread_fixture(run: dict, building: dict) -> int:
+    """contracts/run.spread.fixture.json: the run it was given, thinned, with the wood fire.rooms on it.
+    The run is left as it was."""
+    known = {(f["id"], r["id"]) for f in building["floors"] for r in f["rooms"]}
+    missing = [e for e in SPREAD_FIXTURE_ROOMS if (e["floor"], e["room"]) not in known]
+    if missing:
+        raise SystemExit(f"SPREAD_FIXTURE_ROOMS names rooms {building['id']} does not have: {missing}")
+    fixture = thin_run(copy.deepcopy(run))
+    fixture["fire"].update(rooms=[dict(e) for e in SPREAD_FIXTURE_ROOMS], material="wood")
+    head = {"version": fixture["version"], "id": f"{run['id']}-spread-fixture", "fixture": SPREAD_FIXTURE_NOTE}
+    fixture = {**head, **{k: v for k, v in fixture.items() if k not in head}}
+    return write_json(CONTRACTS / "run.spread.fixture.json", fixture, compact=True)
 
 
 def _door_kind(door: dict, room_types: dict) -> str:
@@ -165,6 +217,11 @@ def main() -> int:
     if "doors" in m:
         worst = sorted(m["doors"], key=lambda d: -d["waitPersonSeconds"])[:3]
         print("  worst doors: " + ", ".join(f"{d['id']} {d['waitPersonSeconds']:.0f} p*s" for d in worst))
+
+    size = write_spread_fixture(run, building)
+    in_replay = sum(1 for e in SPREAD_FIXTURE_ROOMS if e["ignite"] <= run["frames"][-1]["t"])
+    print(f"run.spread.fixture.json: {size / 1e6:.2f} MB, wood fire.rooms {len(SPREAD_FIXTURE_ROOMS)} "
+          f"({in_replay} ignite inside the {run['frames'][-1]['t']:.0f} s replay); a frontend test file, never indexed")
 
     batch = make_batch(building, scenario, m.get("heatmaps"))
     size = write_json(CONTRACTS / "batch.example.json", batch)

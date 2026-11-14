@@ -104,8 +104,9 @@ How `normalize` builds the walkable area (B owns it; the tracer and the example 
 3. Each exterior door gets a 2 m stub outside the wall, and the exit polygon is the far end of the stub. **Never draw exit zones against a wall:** JuPedSim then lets people out about 4× faster per meter (`07`).
 4. walkable = union(rooms, door rectangles, stubs). Warn about disconnected pieces and unreachable rooms.
 
-**scenario/v0**: `{version, id, buildingId, seed, occupants: {total | perRoom: {roomId: n}, mix: {profile: share}}, fire: {floor, room, x, y, type, growth?, start}, sprinklers, doors: {doorId: open|closed|propped|blocked}, alarmTime, maxTime}`
+**scenario/v0**: `{version, id, buildingId, seed, occupants: {total | perRoom: {roomId: n}, mix: {profile: share}}, fire: {floor, room, x, y, type, growth?, start, material?}, sprinklers, doors: {doorId: open|closed|propped|blocked}, alarmTime, maxTime}`
 - `fire.type` is a preset: kitchen, bedroom, battery, trash, liquid (§7.3). `growth` overrides the preset's growth class.
+- `fire.material` (optional): `concrete`, `drywall` (the default when absent) or `wood`, the illustrative room-to-room spread speed (`fire/spread.py`, `fire/README.md`). Any other value is an error.
 - Door states for people: open, closed and propped are passable; `blocked` is not (blocked-exit what-if). For smoke: closed doors hold it back; open and propped doors don't.
 - P0 profiles: `typical`, `older`, `visitor`. P1 adds `cane`, `walker`, `wheelchair`.
 - `brain` (optional, P2): `rules` (default), `mixed` (10–20 LLM agents), or `llm` (every agent asks the LLM).
@@ -115,7 +116,8 @@ How `normalize` builds the walkable area (B owns it; the tracer and the example 
 - `agents[]`: `{idx, profile, floor, room, v0, startDelay}`. `idx` is ours, never JuPedSim's id.
 - `frames[]`: `{t, a: [[idx, x, y, floorIdx, status], …]}`, coordinates rounded to 0.01 m. Status: 0 not moving yet, 1 moving, 2 waiting for help, 3 in a stairwell (drawn at the stair). An agent disappears after its `exit` event.
 - `smoke[]`: per floor `{floor, origin, cell, cols, rows, interval: 2, frames: [{t, d}]}`. `d` is base64 of a row-major Uint8 array with values 0–100, which feeds a Three.js DataTexture directly.
-- `fire`: `{floor, x, y, hrr: [[t, kW], …]}`.
+- `fire`: `{floor, x, y, hrr: [[t, kW], …], rooms?, material?}`.
+- `fire.rooms` (optional): `[{room, floor, ignite}]`, every room that catches fire by `maxTime`, sorted by `ignite` (s); the first is the ignition room, at the fire's `start`. `fire.material`: the material the run used. `sim/run.py` writes both whenever the run has a fire model. `hrr` is the total of every burning room. A person inside a burning room is trapped with `reason: "burning room"`.
 - `events[]`: `{t, type, idx?, …}`. Types: exit, reroute, trapped, wait, door_blocked, llm (carries `reason`).
 - `metrics`: `{agents, evacuated, trapped, t50, t90, t100, exitCounts}` from the sim. `fire.metrics.compute` adds `doors: [{id, floor, peakQueue, waitPersonSeconds, flow}]`, `heatmaps: [{floor, origin, cell, cols, rows, d}]` and (P1) `rooms: [{id, rset, aset, margin}]`.
 

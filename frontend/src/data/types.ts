@@ -58,13 +58,22 @@ export interface Building {
   floors: BuildingFloor[]
 }
 
+/** Illustrative room-to-room fire spread speed (fire/spread.py); `drywall` when a scenario leaves it out. */
+export type Material = 'concrete' | 'drywall' | 'wood'
+/** A room that catches fire by maxTime, `ignite` in seconds. The first entry of `Run.fire.rooms` is the ignition room. */
+export interface FireRoom {
+  room: string
+  floor: string
+  ignite: number
+}
+
 export interface Scenario {
   version: 'scenario/v0'
   id?: string
   buildingId?: string
   seed: number
   occupants: { total: number; mix: Partial<Record<Profile, number>> }
-  fire: { floor?: string; room?: string; x?: number; y?: number; type: string; start?: number }
+  fire: { floor?: string; room?: string; x?: number; y?: number; type: string; start?: number; material?: Material }
   sprinklers?: boolean
   doors?: Record<string, DoorState>
   alarmTime?: number
@@ -152,7 +161,8 @@ export interface Run {
   agents: RunAgent[]
   frames: RunFrame[]
   smoke?: SmokeLayer[]
-  fire: { floor: string; x: number; y: number; hrr?: [number, number][] }
+  /** `rooms`: every room that catches fire by maxTime, sorted by `ignite`; absent on runs made before the spread model. */
+  fire: { floor: string; x: number; y: number; hrr?: [number, number][]; rooms?: FireRoom[]; material?: Material }
   events: RunEvent[]
   metrics: RunMetrics
 }
@@ -208,7 +218,9 @@ export interface DemoRun {
   buildingId: string
   label: string
   file: string
-  whatIf: null | 'propped'
+  /** `'propped'`: a door what-if. `'material'`: the same fire at another (illustrative) material. */
+  whatIf: null | 'propped' | 'material'
+  material?: Material
   fire: { floor: string; room: string; x: number; y: number; type: string }
   doors: Record<string, DoorState>
   metrics?: { t50: number | null; t90: number | null; t100: number | null; evacuated: number; trapped: number }
