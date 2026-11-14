@@ -24,7 +24,7 @@
 - Results look precise but rest on hidden assumptions. Assumptions sit next to results; the fire model is labeled illustrative.
 - A "panic mode", or framing slow evacuees as the problem instead of the building.
 - Weak-spot maps of a real UMass building in the public repo, on Devpost or in the video.
-- Every agent a live LLM (slow, costly, unrepeatable).
+- LLM-driven agents in batch runs or what-if comparisons (slow, costly, unrepeatable). An all-LLM crowd is a stretch-goal showcase mode instead (§7.5, §9).
 
 ## 3. Constraints
 
@@ -43,7 +43,7 @@
 | Crowd engine | JuPedSim · own floor-field cellular automaton in the browser · Vadere | **JuPedSim** (planning session) | Published models, Python API, measured speed and door flow (`07`). A browser automaton would allow live runs but is our own unvalidated model in one big shared TypeScript codebase; Vadere is Java |
 | Smoke | grid diffusion (draft) · smoke front on the grid · CFAST | **Smoke front** (my call) | Diffusion spreads in every direction and needs tuning to look right. A front that travels along open paths is cheap, controllable, easy to explain, and gives every spot a "time until unsafe" |
 | App LLM | Gemini · Claude | **Gemini** (team) | MLH Gemini prize; one wrapper, swappable |
-| LLM agents | situation cache plus live agents (draft) · live agents only, logged | **Logged live agents, P2** (my call) | No cache to build; decisions saved in the run file keep replays identical; batch runs stay rule-based |
+| LLM agents | situation cache plus live agents (draft) · live agents only, logged · every agent an LLM | **Logged live agents (P2); every agent an LLM as a stretch showcase mode** (team + my call) | No cache to build; decisions saved in the run file keep replays identical; batch runs and what-if comparisons stay rule-based |
 
 ## 5. Architecture
 
@@ -108,6 +108,7 @@ How `normalize` builds the walkable area (B owns it; the tracer and the example 
 - `fire.type` is a preset: kitchen, bedroom, battery, trash, liquid (§7.3). `growth` overrides the preset's growth class.
 - Door states for people: open, closed and propped are passable; `blocked` is not (blocked-exit what-if). For smoke: closed doors hold it back; open and propped doors don't.
 - P0 profiles: `typical`, `older`, `visitor`. P1 adds `cane`, `walker`, `wheelchair`.
+- `brain` (optional, P2): `rules` (default), `mixed` (10–20 LLM agents), or `llm` (every agent asks the LLM).
 
 **run/v0**
 - `{version, id, buildingId, scenarioId, seed, frameInterval: 0.5, floors: [floorId, …], agents[], frames[], smoke[], fire, events[], metrics}`
@@ -133,7 +134,7 @@ How `normalize` builds the walkable area (B owns it; the tracer and the example 
 - JuPedSim 1.4.2 `CollisionFreeSpeedModel`, one `Simulation` per floor, stepped together at 0.01 s.
 - **Stairs:** an agent who reaches a stair zone is removed and re-added in the same group's zone one floor down after (stair length ÷ stair speed). A FIFO per stair group caps throughput at about 1.1 persons/s per meter of stair width.
 - **Exits:** one exit stage per exit polygon; journeys target the chosen exit or stair, and JuPedSim routes within the floor. `jps.RoutingEngine` can give path lengths for exit choice (check on 1.4.2).
-- **Brain** (every 1 s and on events): P0 cost is route time plus queue time (`d/v + q/F`). Pick with a seeded softmax and switch only if the new choice is 20% better (`05-agent-design.md`). P1 adds smoke and familiarity terms.
+- **Brain** (every 1 s and on events): P0 cost is route time plus queue time (`d/v + q/F`). Pick with a seeded softmax and switch only if the new choice is 20% better (`05-agent-design.md`). P1 adds smoke and familiarity terms. The brain sits behind one interface, `decide(obs) -> {target, action, reason} | None`: rules now, an LLM implementation later (P2), and `None` falls back to rules.
 - **Start delay:** an agent stays put until the alarm plus its profile delay (status 0, kept out of JuPedSim).
 - **Fire coupling** (every 1 s): `desired_speed = min(v0, max(0.2, v0 − 0.34·(3 − S)))` with S from `fire.visibility`. `fire.untenable` marks an agent trapped. `fire.blocked_doors()` makes agents who can see the door (or hear the alarm message) re-plan.
 - Doors that are `blocked` in the scenario are removed from the geometry before the run.
@@ -166,6 +167,7 @@ How `normalize` builds the walkable area (B owns it; the tracer and the example 
   Runs go through a process pool and are saved as files in `data/runs/`. Until C lands, `POST /runs` returns the example run.
 - **`backend/llm/client.py`:** Gemini through the `google-genai` SDK, with `GEMINI_API_KEY` and `GEMINI_MODEL` from `.env`, JSON-schema structured output, a timeout, and `None` on failure. `LLM_PROVIDER=claude` switches to Anthropic with `APP_ANTHROPIC_API_KEY`.
 - **Features:** `propose_plan(image, hints)` (the tracer's first pass) and `report(batch | run, building)` (top weak spots, the numbers, fixes, one line on limits). P2: personas, and live LLM agents (C calls `llm.decide(obs)` at junctions; decisions are logged as `llm` events).
+- **Stretch: LLM crowd mode** (`brain: "llm"`). Every agent's decisions come from Gemini at decision points: starting to move, junctions, seeing smoke, a blocked or long-queued door. One call per decision tick decides for every agent at a decision point (`llm.decide_batch(observations) -> decisions`), with a timeout and rule fallback. Showcase runs only (up to ~150 agents), precomputed and replayed from the logged decisions. Batch and what-if runs stay rule-based.
 
 ### 7.6 Frontend (E; tracer page by A)
 
@@ -202,7 +204,7 @@ How `normalize` builds the walkable area (B owns it; the tracer and the example 
   - the propped-stair-door what-if;
   - **the batch risk map and ranked chokepoints**.
 - **P1:** report card (Gemini); the second real building; Gemini's first pass in the tracer; synced split screen; blocked-exit and sprinkler what-ifs; mobility profiles and waiting for help; RSET/ASET margins; door-flow calibration chart.
-- **P2:** accessibility lens; live LLM agents; personas; exit criticality; trails; agent's-eye view; web-ifc overlay; CFAST.
+- **P2:** accessibility lens; live LLM agents (10–20 per run); **every agent an LLM (showcase mode)**; personas; exit criticality; trails; agent's-eye view; web-ifc overlay; CFAST.
 
 ## 10. Workstreams and schedule
 
