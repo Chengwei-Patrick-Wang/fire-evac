@@ -4,6 +4,9 @@ Run from the repository root with the project virtual environment active:
 `python -m fire.checks` for the model checks, or
 `python -m fire.smoke_test` for those checks plus the existing metrics/toy-fire checks.
 `--slow` on the checks runner also enables checks whose names end in `_slow`.
+`python -m fire.checks --slow` runs the 240 s example with explicit `NoFire`
+and `FireModel` instances, prints their evacuation metrics, verifies smoke and
+heat-release output, and writes the coupled run to `data/runs/ws-d-coupled.json`.
 
 ## Starting constants
 
@@ -118,3 +121,40 @@ Integration handoff: C can use `fire.model.FireModel(building, scenario)` with
 the same API as `NoFire`. A can replace `ToyFire` in `tools/build_examples.py`
 and regenerate examples. Smoke frames start independently on each floor when
 the front reaches it; upper floors may have no frames yet.
+
+## Tuning log (D4)
+
+The example kitchen scenario meets every model target with the starting
+constants, so no constants changed. At 100 s the F1 corridor query (7.5, 8)
+has visibility 2.61 m. At 180 s only D101 is blocked. Neither trash nor bedroom
+fires block a door at any 1 s check through 300 s. At 120 s, battery smoke and
+flame make 43.7% of F1 graph nodes untenable, versus 0.9% for kitchen.
+`check_tuning()` checks these bounds on every ordinary checks/smoke-test run.
+
+Coupled example results (`maxTime = 240`, seed 1, 160 occupants), for A and C:
+
+| Model | t50 (s) | t90 | t100 | Trapped |
+| --- | --- | --- | --- | --- |
+| `NoFire` | 115.39 | null | null | 0 |
+| `FireModel` | 113.23 | null | null | 1 |
+
+The scaffold still uses upper-floor stair sinks, so these runs cannot establish
+whole-building evacuation times. The lower t50 does not demonstrate a slowdown:
+one trapped agent changes crowd interactions. The differing metrics establish
+coupling, while the local severity targets establish the intended smoke strength;
+no constants were increased just to force a slower t50. Re-run the slow check
+after C's stair transfers and rerouting land. Both checks and the package smoke
+test pass; smoke frames have interval 2 s and heat release is nondecreasing.
+
+## Limits
+
+- The model is illustrative and is not a compliance tool. Constants have not
+  been calibrated to measured fires in these buildings.
+- There is no heat or toxic-gas model. Heat release drives the front and density;
+  untenability uses smoke density and a geometric flame footprint.
+- There is no venting through exterior doors or windows, and no smoke clearance.
+- Eight-neighbor grid distances can overestimate unobstructed distances by
+  about 8%; wall geometry and grid resolution add further approximation.
+- Each scenario has one ignition point. Stair links and closed-door penalties
+  approximate smoke transport rather than solving airflow.
+- Front arrival is tabulated for 1800 s after ignition; farther nodes stay clear.

@@ -240,6 +240,60 @@ def check_stairs():
     assert abs(graph.path_distance(low, {})[high] - 3) < 1e-6
     assert abs(graph.path_distance(high, {})[low] - 30) < 1e-6
 
+def check_tuning():
+    """Keep the example's illustrative severity targets visible and repeatable."""
+    from fire.model import FireModel
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    for preset in ("kitchen", "battery", "trash", "bedroom"):
+        model = FireModel(building, {**scenario, "fire": {**scenario["fire"], "type": preset}})
+        floor_index = model.graph.floor_index["F1"]
+        offset = model.graph.offset[floor_index]
+        count = model.graph.floors[floor_index].n
+        for t in range(1, 301):
+            model.step(t)
+            if preset == "kitchen" and t == 100:
+                visibility = model.visibility("F1", 7.5, 8)
+                assert visibility < 3, visibility
+            if t == 120 and preset in ("kitchen", "battery"):
+                fraction = float(model._untenable[offset:offset + count].mean())
+                assert fraction >= 0.30 if preset == "battery" else fraction <= 0.05, (preset, fraction)
+                print(f"{preset}: {fraction:.1%} of F1 nodes untenable at 120 s")
+            if preset == "kitchen" and t == 180:
+                assert model.blocked_doors() == {"D101"}, model.blocked_doors()
+            if preset in ("trash", "bedroom"):
+                assert model.blocked_doors() == set(), (preset, t, model.blocked_doors())
+
+
+def check_coupled_slow():
+    # Import only for --slow: the ordinary model checks do not need JuPedSim.
+    from sim.run import run
+    from fire.model import FireModel
+    from fire.stub import NoFire
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    scenario["maxTime"] = 240
+    baseline = run(building, scenario, NoFire(building, scenario))
+    coupled = run(building, scenario, FireModel(building, scenario))
+    smoke = next((entry for entry in coupled["smoke"] if entry["floor"] == "F1"), None)
+    assert smoke is not None and smoke["frames"] and smoke["interval"] == 2
+    hrr = coupled["fire"]["hrr"]
+    assert hrr and all(a[1] <= b[1] for a, b in zip(hrr, hrr[1:])), hrr
+    for label, result in (("NoFire", baseline), ("FireModel", coupled)):
+        metrics = result["metrics"]
+        print(f"{label}: " + " ".join(f"{key}={metrics[key]}" for key in ("t50", "t90", "t100", "trapped")),
+              flush=True)
+    assert baseline["metrics"] != coupled["metrics"], "sim ignores fire or smoke is too weak"
+    out = root / "data/runs/ws-d-coupled.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(coupled, separators=(",", ":")), encoding="utf-8")
+    print(f"wrote {out.relative_to(root)}", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):
