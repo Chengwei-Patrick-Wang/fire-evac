@@ -1,5 +1,27 @@
 # IFC candidates
 
+## Normalization overrides
+
+`python -m buildings.normalize plan.json building.json --overrides fixes.json`
+applies corrections without changing the input plan. If `--overrides` is omitted,
+the command loads `buildings/overrides/<plan id>.json` when present. All keys in
+the following format are optional:
+
+```json
+{
+  "doors": {"add": [{"floor": "F1", "id": "DFIX1", "a": [1, 2], "b": [2, 2], "width": 1.0, "fireDoor": false, "state": "open"}], "remove": ["D2"]},
+  "rooms": {"remove": ["R2"]},
+  "exits": {"add": ["D1"], "remove": ["D3"]},
+  "stairGroups": {"S1": ["R3", "R4"]}
+}
+```
+
+Door and room removals and door additions apply before normalization. Exit
+additions force a door to be exterior; exit removals keep the door but suppress
+its exit. Stair groups assign the listed rooms to the same stairwell. Unknown
+referenced IDs raise an error. The command prints a connectivity report after
+writing the building; upper-level exits are informational warnings.
+
 Run `python -m buildings.inspect_ifc data/raw` to reproduce the per-storey counts. Downloads are local and not committed. A model is pickable when at least two storeys have spaces and it has at least two stairs (or two flights if it has no stairs). Empty roof, foundation and footing storeys do not disqualify it. Of pickable models with at least 50 spaces, the smallest file is selected.
 
 PICK: data/raw/team-downloads/Office_A_20110811.ifc

@@ -110,7 +110,7 @@ def _side_rooms(rooms, mid, normal, sign):
                                       for rid, poly in rooms if poly.intersects(ray))]
 
 
-def _normalize_floor(floor: dict, wall: float, source: str) -> dict:
+def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_remove: set) -> dict:
     fid = floor["id"]
     rooms_out, stairs_out, doors_out, exits_out = [], [], [], []
     room_polys: list[tuple[str, Polygon]] = []
@@ -164,6 +164,14 @@ def _normalize_floor(floor: dict, wall: float, source: str) -> dict:
         if not side_neg and not side_pos:
             _warn(f"{fid}/{door['id']}: no room on either side of the door")
             continue
+        forced = door["id"] in exit_add
+        if forced and side_neg and side_pos:
+            centroid = room_union.centroid
+            dot = (centroid.x - mid[0]) * n[0] + (centroid.y - mid[1]) * n[1]
+            if dot >= 0:
+                side_neg = None
+            else:
+                side_pos = None
         # Preserve the supplied rectangle's centre and width, growing only its depth.
         coords = list(rect.exterior.coords)[:-1]
         along = [x*u[0] + y*u[1] for x, y in coords]
@@ -194,7 +202,10 @@ def _normalize_floor(floor: dict, wall: float, source: str) -> dict:
             inside = side_neg or side_pos
             o = n if side_neg else (-n[0], -n[1])  # outward direction
             out["connects"] = [inside, "outside"]
-            if source == "ifc" and envelope.covers(Point(mid[0] + o[0], mid[1] + o[1])):
+            if door["id"] in exit_remove:
+                doors_out.append(out)
+                continue
+            if not forced and source == "ifc" and envelope.covers(Point(mid[0] + o[0], mid[1] + o[1])):
                 _warn(f"door {door['id']} faces an unmodeled space")
                 doors_out.append(out)
                 continue
@@ -246,6 +257,17 @@ def _normalize_floor(floor: dict, wall: float, source: str) -> dict:
 
 def plan_to_building(plan: dict, wall: float | None = None, overrides: dict | None = None) -> dict:
     """plan/v0 dict -> building/v0 dict."""
+    from buildings.fixups import apply_overrides
+    overrides = overrides or {}
+    plan = apply_overrides(plan, overrides)
+    exit_add = set(overrides.get("exits", {}).get("add", []))
+    exit_remove = set(overrides.get("exits", {}).get("remove", []))
+    door_ids = {d["id"] for f in plan["floors"] for d in f.get("doors", [])}
+    for door_id in exit_add | exit_remove:
+        if door_id not in door_ids:
+            raise ValueError(f"unknown door {door_id}")
+    if exit_add & exit_remove:
+        raise ValueError(f"door in both exits.add and exits.remove: {sorted(exit_add & exit_remove)}")
     if wall is None:
         wall = default_wall(plan.get("source"))
     return {
@@ -254,7 +276,7 @@ def plan_to_building(plan: dict, wall: float | None = None, overrides: dict | No
         "name": plan.get("name", plan["id"]),
         "source": plan.get("source", "synthetic"),
         "credits": plan.get("credits", ""),
-        "floors": [_normalize_floor(f, wall, plan.get("source", "synthetic")) for f in plan["floors"]],
+        "floors": [_normalize_floor(f, wall, plan.get("source", "synthetic"), exit_add, exit_remove) for f in plan["floors"]],
     }
 
 
@@ -263,9 +285,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("plan")
     parser.add_argument("output")
     parser.add_argument("--wall", type=float)
+    parser.add_argument("--overrides")
     args = parser.parse_args(argv)
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    building = plan_to_building(plan, wall=args.wall)
+    from buildings.fixups import load_overrides
+    from buildings.validate import validate, print_report
+    override_path = Path(args.overrides) if args.overrides else Path("buildings/overrides") / (plan["id"] + ".json")
+    overrides = load_overrides(override_path) if args.overrides or override_path.exists() else None
+    building = plan_to_building(plan, wall=args.wall, overrides=overrides)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(building, indent=1), encoding="utf-8")
@@ -275,6 +302,7 @@ def main(argv: list[str]) -> int:
               f"{len(f['doors'])} doors, exits {[e['id'] for e in f['exits']]}, "
               f"stairs {[s['id'] for s in f['stairs']]}")
     print(f"wrote {out}")
+    print_report(validate(building))
     return 0
 
 

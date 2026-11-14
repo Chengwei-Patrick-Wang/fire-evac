@@ -72,6 +72,42 @@ def check_hard():
     assert not plan_to_building(gap)["floors"][0]["exits"]
 
 
+def check_overrides():
+    from buildings.validate import validate
+    plan = hard_plan()
+    report = validate(plan_to_building(plan))
+    assert len(report["disconnected"]) == 1
+    assert report["disconnected"][0]["rooms"] == ["R9"]
+    assert abs(report["disconnected"][0]["gap"] - 0.6) < 0.03
+    assert [r["id"] for r in report["roomsNoDoor"]] == ["R9"]
+    assert {(s["group"], s["floor"]) for s in report["stairSingle"]} == {("SA", "F1"), ("SB", "F2")}
+    assert report["upperExits"] == [{"floor": "F2", "door": "DU"}]
+    assert not report["ok"]
+    overrides = {"doors": {"add": [{"floor": "F1", "id": "DFIX1", "a": [10.9, 6.3],
+                                     "b": [11.9, 6.3], "width": 1.0}]},
+                 "stairGroups": {"SA": ["SL", "SU"]}, "exits": {"remove": ["DU"]}}
+    building = plan_to_building(plan, overrides=overrides)
+    report = validate(building)
+    assert report["ok"] and not report["exits"]["F2"]
+    assert all(f["stairs"][0]["group"] == "SA" for f in building["floors"])
+    assert plan["floors"][1]["rooms"][1]["group"] == "SB"
+    gap_plan = {"id": "gap", "source": "ifc", "floors": [{"id": "F1", "rooms": [
+        {"id": "A", "polygon": [[0, 0], [6, 0], [6, 4], [0, 4]]},
+        {"id": "B", "polygon": [[0, 6.6], [6, 6.6], [6, 10.6], [0, 10.6]]}],
+        "doors": [{"id": "D", "a": [2.5, 4], "b": [3.5, 4], "width": 1}]}]}
+    forced = plan_to_building(gap_plan, overrides={"exits": {"add": ["D"]}})
+    assert "D" in {e["id"] for e in forced["floors"][0]["exits"]}
+    for bad in ({"doors": {"remove": ["missing"]}}, {"exits": {"add": ["missing"]}},
+                {"stairGroups": {"S": ["missing"]}},
+                {"doors": {"add": [{"floor": "missing", "id": "D"}]}}):
+        try:
+            plan_to_building(plan, overrides=bad)
+        except ValueError as exc:
+            assert "missing" in str(exc)
+        else:
+            raise AssertionError(f"accepted unknown id: {bad}")
+
+
 def check_ifc():
     from buildings.ifc import group_stairs
     def stair(id, x):
@@ -160,6 +196,7 @@ def main() -> int:
         assert abs(area - expected_area) / expected_area < 0.01
 
     check_hard()
+    check_overrides()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
