@@ -1102,9 +1102,35 @@ def check_fixes():
     assert len(percents["fixes"]) == 2
     for fix in percents["fixes"]:
         assert abs(fix["smokePct"] - -16.7) < .1 and "17% less time in smoke" in fix["why"], fix
+    # A sprinkler what-if that paired every baseline fire already measured the sprinkler fix: reused, not rerun.
+    sprinkled = {**batch, "whatIf": [dict(
+        id="sprinklers", label="Sprinklers on", doors={}, sprinklers=True, n=2, dT90=-3.0, dT90Min=-4.0, dT90Max=-2.0,
+        slower=0, faster=2, dTrapped=0.0, dDosed=0.0, dSmokeSeconds=-50.0, baseSmokeSeconds=200.0, smokePct=-25.0)]}
+    reran = []
+
+    def spy(b, scenario, *rest):
+        reran.append(scenario["id"].removeprefix(base["id"] + "-"))
+        return rerun(b, scenario, *rest)
+
+    with patch("fire.fixes.run_many", side_effect=spy):
+        reused = add_fixes(building, base, sprinkled, workers=1, timeout_s=12, progress=False)
+        short = add_fixes(building, base, {**sprinkled, "whatIf": [{**sprinkled["whatIf"][0], "n": 1}]},
+                          workers=1, timeout_s=12, progress=False)
+        partial = add_fixes(building, base, sprinkled, rooms=1, workers=1, timeout_s=12, progress=False)
+    # Reused: only the widened door reruns. A what-if with fewer pairs than baseline fires, or a fix limited to
+    # one room, reruns the sprinklers too.
+    assert reran == ["widen-DSB1", "widen-DSB1", "sprinklers", "widen-DSB1", "sprinklers"], reran
+    fix = next(f for f in reused["fixes"] if f["id"] == "sprinklers")
+    assert (fix["n"], fix["dT90"], fix["dSmokeSeconds"], fix["smokePct"]) == (2, -3.0, -50.0, -25.0)
+    assert fix["helps"] and "derivedFrom" not in fix and fix["kind"] == "sprinklers" and fix["sprinklers"] is True
+    assert fix["why"] == ("Sprinklers: 90% out 3 s sooner on average and 25% less time in smoke across 2 fires "
+                          "(faster in 2); +0.0 trapped per fire.")
+    assert next(f for f in short["fixes"] if f["id"] == "sprinklers")["n"] == 2  # rerun, not the what-if's 1
+    assert next(f for f in partial["fixes"] if f["id"] == "sprinklers")["n"] == 1
     json.dumps(result, allow_nan=False)
     json.dumps(inverses, allow_nan=False)
     json.dumps(percents, allow_nan=False)
+    json.dumps(reused, allow_nan=False)
 
 
 def check_fixes_slow():
@@ -1318,6 +1344,423 @@ def check_headlines():
         finally:
             os.chdir(here)
     print("headlines: pack, headline wording and fallbacks, labels, ASCII and the CLI checked", flush=True)
+
+
+def check_refresh():
+    from contextlib import redirect_stderr, redirect_stdout
+    from copy import deepcopy
+    from io import StringIO
+    from unittest.mock import patch
+    from fire.batch import apply_overrides
+    from fire.headlines import build_headlines
+    from fire.refresh import (DT90_S, SMOKE_PCT_POINTS, TRAPPED, diff_headlines, exit_shift, main, refresh,
+                              sim_features, stair_probe, terms_off)
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    original = deepcopy(base)
+    assert (SMOKE_PCT_POINTS, DT90_S, TRAPPED) == (5.0, 5.0, 0.5)
+    assert isinstance(sim_features()["smokeAwareExits"], bool)
+
+    # apply_overrides: a copy; the mix stays, growth goes, bad values raise ValueError.
+    changed = apply_overrides({**base, "fire": {**base["fire"], "growth": "slow"}}, occupants=90, fire_type="trash")
+    assert changed["occupants"] == {"total": 90, "mix": base["occupants"]["mix"]}
+    assert changed["fire"]["type"] == "trash" and "growth" not in changed["fire"]
+    assert apply_overrides(base) == base and apply_overrides(base) is not base and base == original
+    for kwargs in ({"occupants": 0}, {"fire_type": "unknown"}):
+        try:
+            apply_overrides(base, **kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"bad override accepted: {kwargs}")
+
+    # terms_off: C14's weights at 0 and a new id; nothing else moves, and the input stays as it was.
+    off = terms_off(base)
+    assert off["exitChoice"] == {"smoke": 0, "unfamiliar": 0} and off["id"] == f"{base['id']}-c14off"
+    assert {k: v for k, v in off.items() if k not in ("exitChoice", "id")} == {k: v for k, v in base.items() if k != "id"}
+    assert base == original and "exitChoice" not in base
+
+    # refresh: both sides get the same ignitions, seeds and variants; the scenarios differ in exitChoice and id only.
+    calls, stages = [], []
+
+    def fake_run_many(b, scenario, ignitions, seeds, workers, timeout, progress):
+        assert b is building and workers == 3 and timeout == 99 and progress is False
+        calls.append(("run_many", scenario, ignitions, seeds))
+        # The blocked exit comes from the current side's counts (E1); the legacy side's would pick E2.
+        counts = {"E1": 20, "E2": 60} if "exitChoice" in scenario else {"E1": 60, "E2": 20}
+        runs = [{"ignition": dict(i), "seed": s, "t90": 100.0, "trapped": 0, "exitCounts": counts}
+                for i in ignitions for s in seeds]
+        return {"id": f"batch-{b['id']}-{scenario['id']}", "base": deepcopy(scenario), "runs": runs, "failed": []}
+
+    def fake_whatif(b, scenario, batch, variants=None, workers=None, timeout_s=None, progress=None):
+        assert b is building and workers == 3 and timeout_s == 99 and progress is False
+        calls.append(("add_whatif", scenario, variants))
+        return {**batch, "whatIf": [{"id": v["id"], "n": len(batch["runs"])} for v in variants]}  # only these, as the real one
+
+    def fake_fixes(b, scenario, batch, workers=None, timeout_s=None, progress=None):
+        assert b is building and workers == 3 and timeout_s == 99 and progress is False
+        assert [w["id"] for w in batch["whatIf"]] == ["proppedStairs", "blockedExit", "sprinklers"]
+        calls.append(("add_fixes", scenario))
+        return {**batch, "fixes": []}
+
+    ignitions = [{"floor": "F1", "room": "R101"}, {"floor": "F1", "room": "R105"}]
+    with (patch("fire.refresh.run_many", side_effect=fake_run_many), patch("fire.refresh.add_whatif", side_effect=fake_whatif),
+          patch("fire.refresh.add_fixes", side_effect=fake_fixes), redirect_stdout(StringIO())):
+        result = refresh(building, base, ignitions, (1, 2), workers=3, timeout_s=99, progress=False,
+                         on_stage=lambda side, stage, batch: stages.append((side, stage)))
+    assert base == original and set(result) == {"legacy", "current"}
+    assert [c[0] for c in calls] == ["run_many"] * 2 + ["add_whatif"] * 6 + ["add_fixes"] * 2
+    ids = ["proppedStairs", "blockedExit", "sprinklers"]  # each variant on both sides in turn, then the fixes
+    assert stages == ([("legacy", "baseline"), ("current", "baseline")]
+                      + [(side, f"what-if {i}") for i in ids for side in ("legacy", "current")]
+                      + [("current", "fixes"), ("legacy", "fixes")])  # the fixes of the side the demo quotes first
+    legacy, current = calls[0][1], calls[1][1]
+    assert legacy["exitChoice"] == {"smoke": 0, "unfamiliar": 0} and "exitChoice" not in current
+    assert legacy["id"] == f"{base['id']}-c14off" and current["id"] == base["id"]
+    strip = lambda scenario: {k: v for k, v in scenario.items() if k not in ("exitChoice", "id")}
+    assert strip(legacy) == strip(current) == strip(base)
+    assert calls[0][2:] == calls[1][2:] == (ignitions, (1, 2))
+    sweeps = calls[2:8]
+    assert [c[1] for c in sweeps[0::2]] == [legacy] * 3 and [c[1] for c in sweeps[1::2]] == [current] * 3
+    assert [c[2] for c in sweeps[0::2]] == [c[2] for c in sweeps[1::2]]  # the same variant list on both sides
+    variants = [c[2][0] for c in sweeps[0::2]]
+    assert [c[2] for c in sweeps[0::2]] == [[v] for v in variants] and [v["id"] for v in variants] == ids
+    assert variants[1]["doors"] == {"E1": "blocked"}  # from the current baseline, not the legacy one
+    assert calls[8][1] == current and calls[9][1] == legacy
+    assert result["legacy"]["base"] == legacy and result["current"]["base"] == current
+    assert [w["id"] for w in result["current"]["whatIf"]] == ids
+    json.dumps(result, allow_nan=False)
+
+    # A baseline or what-if stage that lost runs is run again (once); a resumed run skips the stages it holds in full.
+    log = []
+    legacy_id = f"{base['id']}-c14off"
+
+    def flaky_run_many(b, scenario, ignitions, seeds, workers, timeout, progress):
+        log.append(("baseline", scenario["id"]))
+        runs = [{"ignition": dict(i), "seed": s, "t90": 100.0, "trapped": 0, "exitCounts": {"E1": 60, "E2": 20}}
+                for i in ignitions for s in seeds]
+        lost = log.count(("baseline", legacy_id)) == 1 and scenario["id"] == legacy_id  # the first legacy attempt
+        failed = [{"scenarioId": "x", "error": "BrokenProcessPool('a worker died')"}] if lost else []
+        return {"id": f"batch-{b['id']}-{scenario['id']}", "base": deepcopy(scenario),
+                "runs": runs[:-1] if lost else runs, "failed": failed}
+
+    def flaky_whatif(b, scenario, batch, variants=None, **kwargs):
+        key = ("whatIf", scenario["id"], variants[0]["id"])
+        log.append(key)
+        short = log.count(key) == 1 and key[1:] == (base["id"], "blockedExit")  # the first current blockedExit attempt
+        return {**batch, "whatIf": [{"id": variants[0]["id"], "n": len(batch["runs"]) - short}]}
+
+    def flaky_fixes(b, scenario, batch, **kwargs):
+        log.append(("fixes", scenario["id"]))
+        return {**batch, "fixes": []}
+
+    def run_flaky(**kwargs):
+        with (patch("fire.refresh.run_many", side_effect=flaky_run_many), patch("fire.refresh.add_whatif", side_effect=flaky_whatif),
+              patch("fire.refresh.add_fixes", side_effect=flaky_fixes), redirect_stdout(StringIO())):
+            return refresh(building, base, ignitions, (1, 2), progress=False, **kwargs)
+
+    again = run_flaky()
+    assert log.count(("baseline", legacy_id)) == 2 and log.count(("baseline", base["id"])) == 1
+    assert not again["legacy"]["failed"] and len(again["legacy"]["runs"]) == 4
+    assert log.count(("whatIf", base["id"], "blockedExit")) == 2 and log.count(("whatIf", legacy_id, "blockedExit")) == 1
+    assert [w["id"] for w in again["current"]["whatIf"]] == ids and all(w["n"] == 4 for w in again["current"]["whatIf"])
+    log.clear()
+    assert len(run_flaky(retries=0)["legacy"]["runs"]) == 3 and log.count(("baseline", legacy_id)) == 1  # no second try
+
+    log.clear()
+    held_legacy, held_current = deepcopy(again["legacy"]), deepcopy(again["current"])
+    held_legacy.pop("fixes"), held_current.pop("fixes")  # a stopped run: the fixes never ran
+    held_current["whatIf"][0]["n"] = 3  # and the current propped-stairs stage came out short
+    resumed = run_flaky(resume={"legacy": held_legacy, "current": held_current})
+    assert [entry for entry in log if entry[0] == "baseline"] == []
+    assert [entry[1:] for entry in log if entry[0] == "whatIf"] == [(base["id"], "proppedStairs")]
+    assert [entry for entry in log if entry[0] == "fixes"] == [("fixes", base["id"]), ("fixes", legacy_id)]
+    assert [w["id"] for w in resumed["current"]["whatIf"]] == ids and all(w["n"] == 4 for w in resumed["current"]["whatIf"])
+    assert held_current["whatIf"][0]["n"] == 3  # the checkpoint itself is not touched
+    wrong = deepcopy(held_legacy)
+    wrong["base"]["alarmTime"] += 1
+    try:
+        run_flaky(resume={"legacy": wrong})
+    except ValueError as error:
+        assert "legacy checkpoint" in str(error)
+    else:
+        raise AssertionError("a checkpoint of another scenario was accepted")
+    log.clear()
+    short = deepcopy(held_legacy)
+    short["runs"] = short["runs"][:-1]  # a baseline that lacks a planned fire is run again, and its what-ifs are dropped
+    run_flaky(resume={"legacy": short, "current": held_current})
+    assert log.count(("baseline", legacy_id)) == 2 and ("whatIf", legacy_id, "proppedStairs") in log
+    log.clear()
+    stale = deepcopy(again["current"])  # it holds fixes, but its blockedExit stage came out short: they are stale
+    stale["whatIf"][1]["n"] = 3
+    run_flaky(resume={"legacy": deepcopy(again["legacy"]), "current": stale})
+    assert ("fixes", base["id"]) in log and ("fixes", legacy_id) not in log
+
+    # diff_headlines: thresholds and flags, on two hand-made packs (the old one is the C14-off side).
+    def item(ident, label, **fields):
+        return {"id": ident, "label": label, "n": 36, **fields}
+
+    old = {"weakSpots": [{"id": i, "label": f"Spot {i}"} for i in "ABCD"],
+           "whatIf": [item("proppedStairs", "Stair doors propped open", dT90=0.1, dTrapped=0.0, smokePct=22.0, dSmokeSeconds=150.0),
+                      item("blockedExit", "Exit X blocked", dT90=13.0, dTrapped=-0.2, smokePct=50.0, dSmokeSeconds=154.0),
+                      item("sprinklers", "Sprinklers on", dT90=0.0, dTrapped=-1.2, dSmokeSeconds=100.0),
+                      item("lessSmoke", "Less smoke", dT90=0.0, dTrapped=0.0, dSmokeSeconds=100.0)],
+           "fixes": [item("widen-A", "Widen A", dT90=-2.0, dTrapped=-0.1, smokePct=-6.0, helps=True),
+                     item("only-old", "Only old", dT90=0.0, dTrapped=0.0, helps=False)]}
+    new = {"weakSpots": [{"id": i, "label": f"Spot {i}"} for i in "ACBD"],
+           "whatIf": [item("proppedStairs", "Stair doors propped open", dT90=4.9, dTrapped=0.4, smokePct=26.0, dSmokeSeconds=190.0),
+                      item("blockedExit", "Exit X blocked", dT90=18.5, dTrapped=-0.2, smokePct=56.0, dSmokeSeconds=210.0),
+                      item("sprinklers", "Sprinklers on", dT90=0.0, dTrapped=-1.2, dSmokeSeconds=120.0),
+                      item("lessSmoke", "Less smoke", dT90=0.0, dTrapped=0.0, dSmokeSeconds=109.0)],
+           "fixes": [item("widen-A", "Widen A", dT90=-2.0, dTrapped=-0.1, smokePct=-6.0, helps=False),
+                     item("only-new", "Only new", dT90=0.0, dTrapped=0.0, helps=True)]}
+    before = deepcopy((old, new))
+    entries = diff_headlines(old, new)
+    assert (old, new) == before
+    keys = [e["key"] for e in entries]
+    assert len(set(keys)) == len(keys) and all(set(e) == {"key", "label", "old", "new", "changed", "why"} for e in entries)
+    assert {e["key"] for e in entries if e["changed"]} == {
+        "top3", "whatIf.blockedExit.smokePct", "whatIf.blockedExit.dT90", "whatIf.sprinklers.dSmokeSeconds",
+        "fixes.widen-A.helps", "fixes.only-old", "fixes.only-new"}
+    assert {"whatIf.proppedStairs.smokePct", "whatIf.proppedStairs.dT90", "whatIf.proppedStairs.dTrapped",
+            "whatIf.blockedExit.dTrapped", "whatIf.lessSmoke.dSmokeSeconds", "fixes.widen-A.smokePct"} <= set(keys)
+    assert "whatIf.proppedStairs.dSmokeSeconds" not in keys  # smokePct stands in for it when both sides have it
+    by_key = {e["key"]: e for e in entries}
+    assert by_key["top3"]["old"] == ["A", "B", "C"] and by_key["top3"]["new"] == ["A", "C", "B"]
+    assert by_key["whatIf.proppedStairs.smokePct"]["why"] == (
+        "Stair doors propped open, smoke exposure: +22% -> +26% with C14's exit-choice terms on (same 36 fires).")
+    assert by_key["whatIf.blockedExit.dT90"]["why"] == (
+        "Exit X blocked, 90% out time: +13 s -> +18 s with C14's exit-choice terms on (same 36 fires).")
+    assert by_key["whatIf.proppedStairs.dTrapped"]["why"].startswith("Stair doors propped open, trapped per fire: +0.0 -> +0.4 ")
+    assert by_key["whatIf.sprinklers.dSmokeSeconds"]["why"].startswith("Sprinklers on, smoke exposure: +100 person-seconds -> +120 person-seconds ")
+    assert by_key["fixes.widen-A.helps"]["why"] == (
+        "Widen A, helps: yes -> no with C14's exit-choice terms on (same 36 fires).")
+    assert by_key["fixes.only-old"]["why"] == "Only old: measured only with C14's exit-choice terms off."
+    assert by_key["fixes.only-new"]["why"] == "Only new: measured only with C14's exit-choice terms on."
+    assert by_key["top3"]["why"] == "Top 3 weak spots: Spot A, Spot B, Spot C -> Spot A, Spot C, Spot B with C14's exit-choice terms on."
+    assert all(e["why"].isascii() for e in entries)
+    json.dumps(entries, allow_nan=False)
+    same = diff_headlines(old, old)
+    assert not any(e["changed"] for e in same) and same[0]["why"].endswith("the same with C14's exit-choice terms on.")
+    # The headline example: a 13-point move, and per-fire counts that differ between the sides.
+    moved = diff_headlines({"whatIf": [item("p", "Stair doors propped open", smokePct=22.0)]},
+                           {"whatIf": [item("p", "Stair doors propped open", smokePct=9.0)]})
+    assert moved[0]["changed"] and moved[0]["why"] == (
+        "Stair doors propped open, smoke exposure: +22% -> +9% with C14's exit-choice terms on (same 36 fires).")
+    uneven = diff_headlines({"whatIf": [item("p", "Stair doors propped open", smokePct=22.0)]},
+                            {"whatIf": [{**item("p", "Stair doors propped open", smokePct=9.0), "n": 35}]})
+    assert uneven[0]["why"].endswith("(36 fires, then 35).")
+    assert diff_headlines({}, {}) == []
+
+    # exit_shift: per-exit sums over the baseline runs, 5% of the evacuees, the two largest moves named.
+    def counted(*counts):
+        return {"runs": [{"exitCounts": c} for c in counts]}
+
+    shift = exit_shift(counted({"E1": 60, "E2": 20}, {"E1": 40, "E2": 30}), counted({"E1": 70, "E2": 40}, {"E1": 10, "E2": 40}), building)
+    assert shift["key"] == "exitUse" and shift["changed"] is True
+    assert shift["why"] == ("Exit use across the baseline fires: Exit East stair exit 50 -> 80 people, "
+                            "Exit Main entrance 100 -> 80.")
+    assert shift["old"] == {"Exit Main entrance": 100, "Exit East stair exit": 50}
+    small = exit_shift(counted({"E1": 100, "E2": 50}), counted({"E1": 97, "E2": 53}), building)
+    assert small["changed"] is False and small["why"].startswith("Exit use across the baseline fires: ")
+    assert exit_shift({}, {}, building) == {"key": "exitUse", "label": "Exit use across the baseline fires", "old": {},
+                                            "new": {}, "changed": False,
+                                            "why": "Exit use across the baseline fires: no exit moved."}
+    assert all(e["why"].isascii() for e in (shift, small))
+
+    # stair_probe: D15's repro, through _run_one; the geometry error is False, any other error raises.
+    office = load_office()
+    seen = []
+
+    def fake_one(error):
+        def run_one(task):
+            seen.append(task)
+            return {"ok": True} if error is None else {"ok": False, "error": error}
+        return run_one
+
+    with patch("fire.refresh._init"), patch("fire.refresh._run_one", side_effect=fake_one(None)):
+        assert stair_probe(office, json.loads((root / "data/buildings/office.scenario.json").read_text())) is True
+    scenario = seen[0]["scenario"]
+    assert seen[0]["ignition"] == {"floor": "F1", "room": "R106"} and scenario["seed"] == 2
+    assert scenario["doors"]["D$77wwb"] == "blocked" and scenario["maxTime"] == 240
+    assert scenario["occupants"]["total"] == 250 and scenario["fire"]["type"] == "kitchen" and scenario["fire"]["room"] == "R106"
+    with patch("fire.refresh._init"), patch("fire.refresh._run_one", side_effect=fake_one(
+            "RuntimeError('Agent is too close to geometry boundaries')")):
+        assert stair_probe(office, base) is False
+    with patch("fire.refresh._init"), patch("fire.refresh._run_one", side_effect=fake_one("ValueError('something else')")):
+        try:
+            stair_probe(office, base)
+        except RuntimeError as error:
+            assert "something else" in str(error)
+        else:
+            raise AssertionError("an unrelated error was swallowed")
+
+    # The CLI. Exit 3 without C14 or (on the office) without C13b; --check prints the line and exits 0.
+    stdout, stderr = StringIO(), StringIO()
+    with tempfile.TemporaryDirectory() as tmp:
+        here = os.getcwd()
+        os.chdir(tmp)
+        try:
+            Path("building.json").write_text(json.dumps(building), encoding="utf-8")
+            Path("office.json").write_text(json.dumps({**building, "id": "office"}), encoding="utf-8")
+            Path("scenario.json").write_text(json.dumps(base), encoding="utf-8")
+            argv = ["building.json", "scenario.json", "--rooms", "2", "--seeds", "1", "--workers", "2"]
+            no_c14, yes_c14 = {"smokeAwareExits": False}, {"smokeAwareExits": True}
+            boom = AssertionError("refresh must not run")
+            with (patch("fire.refresh.refresh", side_effect=boom), redirect_stdout(stdout), redirect_stderr(stderr)):
+                with patch("fire.refresh.sim_features", return_value=no_c14):
+                    assert main(argv) == 3
+                    assert main(argv + ["--check"]) == 0
+                with patch("fire.refresh.sim_features", return_value=yes_c14), patch("fire.refresh.stair_probe", return_value=False) as probe:
+                    assert main(["office.json", "scenario.json", "--check"]) == 0
+                    assert main(["office.json", "scenario.json"]) == 3
+                    assert probe.call_count == 2 and probe.call_args.args[0]["id"] == "office"
+                with patch("fire.refresh.sim_features", return_value=yes_c14), patch("fire.refresh.stair_probe", return_value=True):
+                    assert main(["office.json", "scenario.json", "--check"]) == 0
+                    assert main(["nope.json", "scenario.json"]) == 1
+            assert stdout.getvalue().splitlines() == [
+                "C14 smoke-aware exit choice: no; C13b stair arrivals: n/a", "nothing to refresh yet",
+                "C14 smoke-aware exit choice: no; C13b stair arrivals: n/a",
+                "C14 smoke-aware exit choice: yes; C13b stair arrivals: no",
+                "C14 smoke-aware exit choice: yes; C13b stair arrivals: no", "nothing to refresh yet",
+                "C14 smoke-aware exit choice: yes; C13b stair arrivals: yes"], stdout.getvalue()
+            assert stderr.getvalue().strip() == "no such file: nope.json"
+            assert not Path("data").exists()
+
+            # A whole run with refresh patched: files, renames, checkpoints and the changed lines.
+            def hand_batch(scenario, pct, counts, top):
+                runs = [{"scenarioId": f"hand-{r}-s1", "seed": 1, "ignition": {"floor": "F1", "room": r}, "t90": 100.0,
+                         "t100": 120.0, "trapped": 0, "dosed": 0, "smokeSeconds": 100.0, "exitCounts": counts}
+                        for r in ("R101", "R105")]
+                return {"version": "batch/v0", "id": f"batch-{building['id']}-{scenario['id']}", "buildingId": building["id"],
+                        "base": deepcopy(scenario), "runs": runs, "failed": [], "rooms": [], "doors": [], "heatmaps": [],
+                        "top": [{"kind": "exit", "id": i, "floor": "F1", "score": 50.0,
+                                 "why": f"Exit {i}: 3 people queued at peak; 20 person-seconds of waiting on average across 2 fires."}
+                                for i in top],
+                        "whatIf": [{"id": "proppedStairs", "label": "Stair doors propped open", "n": 2, "dT90": 0.0,
+                                    "dTrapped": 0.0, "dSmokeSeconds": pct, "baseSmokeSeconds": 100.0, "smokePct": pct,
+                                    "why": f"Stair doors propped open: 90% out 0 s later on average (slower in 0 of 2 fires); {pct:+.0f} person-seconds in smoke."}],
+                        "fixes": []}
+
+            seen_files = []
+
+            def fake_refresh(b, sc, ignitions, seeds, workers=None, **kwargs):
+                assert len(ignitions) == 2 and seeds == (1,) and workers == 2
+                batches = {"legacy": hand_batch(terms_off(sc), 22.0, {"E1": 80, "E2": 80}, ["E1", "E2"]),
+                           "current": hand_batch(sc, 9.0, {"E1": 60, "E2": 100}, ["E2", "E1"])}
+                for side in batches:
+                    kwargs["on_stage"](side, "baseline", batches[side])
+                seen_files.append(sorted(p.name for p in Path("data/runs").iterdir()))
+                return batches
+
+            runs = Path("data/runs")
+            runs.mkdir(parents=True)
+            (runs / "batch-example-office.json").write_text("old batch", encoding="utf-8")
+            (runs / "headlines-example-office.json").write_text(json.dumps({"headline": "Old headline."}), encoding="utf-8")
+            (runs / "headlines-example-office.prev.json").write_text("older pack", encoding="utf-8")
+            stdout = StringIO()
+            with (patch("fire.refresh.sim_features", return_value=yes_c14), patch("fire.refresh.refresh", side_effect=fake_refresh),
+                  redirect_stdout(stdout)):
+                assert main(argv) == 0
+            assert seen_files == [["batch-example-office-c14off.partial.json", "batch-example-office.json",
+                                   "batch-example-office.partial.json", "headlines-example-office.json",
+                                   "headlines-example-office.prev.json"]], seen_files
+            names = sorted(p.name for p in runs.iterdir())
+            assert names == ["batch-example-office-c14off.json", "batch-example-office.json", "batch-example-office.prev.json",
+                             "headlines-example-office-c14off.json", "headlines-example-office.json",
+                             "headlines-example-office.prev.json", "headlines-example-office.prev2.json"], names
+            assert (runs / "batch-example-office.prev.json").read_text() == "old batch"
+            assert (runs / "headlines-example-office.prev.json").read_text() == "older pack"  # never overwritten
+            assert json.loads((runs / "headlines-example-office.prev2.json").read_text())["headline"] == "Old headline."
+            batch_data = json.loads((runs / "batch-example-office-c14off.json").read_text())
+            assert batch_data["base"]["exitChoice"] == {"smoke": 0, "unfamiliar": 0}
+            data = (runs / "headlines-example-office.json").read_bytes()
+            pack = json.loads(data)
+            assert data.decode("ascii") == json.dumps(pack, indent=1) and b"\r" not in data and len(data) < 20_000
+            assert pack["features"] == {"smokeAwareExits": True}  # stairArrivalsFixed is n/a off the office
+            assert pack["legacyHeadline"] == ("Stair doors propped open: +22% person-seconds in smoke across 2 paired fires; "
+                                              "90% out 0 s later on average.")
+            assert pack["headline"].startswith("Stair doors propped open: +9% person-seconds in smoke")
+            assert list(pack).index("legacyHeadline") == list(pack).index("headline") + 1
+            assert list(pack).index("features") == list(pack).index("scenario") - 1
+            assert all(c["changed"] is True for c in pack["changes"])
+            assert [c["key"] for c in pack["changes"]] == ["top3", "whatIf.proppedStairs.smokePct", "exitUse"], pack["changes"]
+            assert pack["sources"]["batch"]["file"] == "data/runs/batch-example-office.json"
+            assert pack["sources"]["batch"]["id"] == f"batch-{building['id']}-{base['id']}"
+            legacy_pack = json.loads((runs / "headlines-example-office-c14off.json").read_text())
+            assert not {"features", "legacyHeadline", "changes"} & set(legacy_pack)
+            assert legacy_pack["scenario"]["exitChoice"] == {"smoke": 0, "unfamiliar": 0}
+            assert legacy_pack["sources"]["batch"]["file"] == "data/runs/batch-example-office-c14off.json"
+            lines = stdout.getvalue().splitlines()
+            assert "previous pack: Old headline." in lines
+            assert "3 of 5 compared numbers changed:" in lines
+            assert [c["why"] for c in pack["changes"]] == lines[lines.index("3 of 5 compared numbers changed:") + 1:][:3]
+            assert any(line.startswith("unchanged: ") for line in lines) and lines[-1].startswith("runtime ")
+
+            # --resume hands the checkpoints to refresh; without it nothing is loaded.
+            (runs / "batch-example-office.partial.json").write_text(json.dumps({"marker": "current"}), encoding="utf-8")
+            (runs / "batch-example-office-c14off.partial.json").write_text(json.dumps({"marker": "legacy"}), encoding="utf-8")
+            handed = []
+
+            def spy_refresh(b, sc, ignitions, seeds, workers=None, **kwargs):
+                handed.append(kwargs.get("resume"))
+                return {"legacy": hand_batch(terms_off(sc), 22.0, {"E1": 80, "E2": 80}, ["E1", "E2"]),
+                        "current": hand_batch(sc, 9.0, {"E1": 60, "E2": 100}, ["E2", "E1"])}
+
+            resume_out = StringIO()
+            with (patch("fire.refresh.sim_features", return_value=yes_c14), patch("fire.refresh.refresh", side_effect=spy_refresh),
+                  redirect_stdout(resume_out)):
+                assert main(argv + ["--resume"]) == 0
+                assert main(argv) == 0
+            assert handed == [{"legacy": {"marker": "legacy"}, "current": {"marker": "current"}}, None], handed
+            assert ("resuming from data/runs/batch-example-office.partial.json, "
+                    "data/runs/batch-example-office-c14off.partial.json") in resume_out.getvalue()
+            assert not list(runs.glob("*.partial.json"))
+
+            # A stopped run: the files hold what each side finished, the comparison only what both finished.
+            from fire.refresh import publish
+            stopped = {"legacy": hand_batch(terms_off(base), 22.0, {"E1": 80, "E2": 80}, ["E1", "E2"]),
+                       "current": hand_batch(base, 9.0, {"E1": 60, "E2": 100}, ["E1", "E2"])}
+            stopped["current"]["fixes"] = [{
+                "id": "widen-E1", "kind": "widen", "label": "Widen E1", "helps": True, "n": 2, "dT90": -1.0, "dTrapped": 0.0,
+                "why": "Widen E1: 90% out 1 s sooner on average across 2 fires (faster in 1); +0.0 trapped per fire."}]
+            with redirect_stdout(StringIO()):
+                assert "fixes.widen-E1" in [c["key"] for c in publish(building, stopped, yes_c14, Path("full"))]
+                cut = {side: {k: v for k, v in batch.items() if k != "fixes"} for side, batch in stopped.items()}
+                kept = publish(building, stopped, yes_c14, Path("stopped"), compare=cut)
+            assert not any(c["key"].startswith("fixes.") for c in kept) and any(c["changed"] for c in kept)
+            held = json.loads(Path("stopped/headlines-example-office.json").read_text())
+            assert [f["id"] for f in held["fixes"]] == ["widen-E1"]
+            assert not any(c["key"].startswith("fixes.") for c in held["changes"])
+            assert json.loads(Path("stopped/batch-example-office.json").read_text())["fixes"][0]["id"] == "widen-E1"
+        finally:
+            os.chdir(here)
+    print("refresh: sides, overrides, diff thresholds, exit use, the C13b probe and the CLI checked", flush=True)
+
+
+def check_refresh_slow():
+    from fire.refresh import refresh, sim_features
+
+    if not sim_features()["smokeAwareExits"]:
+        print("refresh: skipped (the simulator has no smoke-aware exit choice, C14)", flush=True)
+        return
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    base["maxTime"] = 240
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    result = refresh(building, base, ignitions, (1,), workers=2, timeout_s=900, progress=False)
+    for side in ("legacy", "current"):
+        batch = result[side]
+        assert not batch["failed"] and len(batch["runs"]) == 2, (side, batch["failed"])
+        assert len(batch["whatIf"]) == 3 and all(w["n"] == 2 for w in batch["whatIf"]), side
+        assert batch["fixes"], side
+    assert result["legacy"]["base"]["exitChoice"] == {"smoke": 0, "unfamiliar": 0}
+    assert "exitChoice" not in result["current"]["base"]
+    print("refresh: both sides finished two fires, three what-ifs and the fixes", flush=True)
 
 
 def _long_side(polygon) -> float:

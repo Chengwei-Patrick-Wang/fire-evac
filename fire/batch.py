@@ -33,6 +33,25 @@ def plan_rooms(budget_s, pilot_s, seeds, workers, variants=0, contention=2.0) ->
                             (pilot_s * contention * len(seeds) * (1 + variants))))
 
 
+def apply_overrides(base: dict, occupants: int | None = None, fire_type: str | None = None) -> dict:
+    """A copy of `base` with the `--occupants` and `--fire-type` overrides applied.
+
+    Occupant overrides keep the mobility mix and replace any per-room counts; a fire type
+    replaces the preset and removes a custom growth class. A bad value raises ValueError.
+    """
+    result = deepcopy(base)
+    if occupants is not None:
+        if occupants < 1:
+            raise ValueError("--occupants must be positive")
+        result["occupants"] = {"total": occupants, "mix": result["occupants"]["mix"]}
+    if fire_type is not None:
+        from fire.presets import fire_params
+        result["fire"]["type"] = fire_type
+        result["fire"].pop("growth", None)
+        fire_params(result["fire"])
+    return result
+
+
 def _init(building: dict):
     global _BUILDING
     _BUILDING = building
@@ -425,18 +444,10 @@ def main():
     args = parser.parse_args()
     building = json.loads(args.building.read_text(encoding="utf-8"))
     base = json.loads(args.scenario.read_text(encoding="utf-8"))
-    if args.occupants is not None:
-        if args.occupants < 1:
-            parser.error("--occupants must be positive")
-        base["occupants"] = {"total": args.occupants, "mix": base["occupants"]["mix"]}
-    if args.fire_type is not None:
-        from fire.presets import fire_params
-        base["fire"]["type"] = args.fire_type
-        base["fire"].pop("growth", None)
-        try:
-            fire_params(base["fire"])
-        except ValueError as error:
-            parser.error(str(error))
+    try:
+        base = apply_overrides(base, args.occupants, args.fire_type)
+    except ValueError as error:
+        parser.error(str(error))
     seeds = tuple(sorted({int(seed) for seed in args.seeds.split(",")}))
     args.workers = _workers(args.workers)
     if args.workers < 1:
