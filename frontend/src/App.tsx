@@ -1,3 +1,4 @@
+import { creditParts, loadBuildingIndex } from './model/buildingIndex'
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { useApp } from './store/app'
@@ -21,6 +22,7 @@ import { useTour, useTourKeys } from './tour/tour'
 import ShareCard from './ui/ShareCard'
 import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
 import { findPrecomputedVariant } from './model/whatif'
+import { loadHeadlines, readPack } from './model/headlines'
 import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
 import type { LinkState } from './model/link'
 import type { DemoRun, DoorState } from './data/types'
@@ -57,6 +59,8 @@ async function selectBuilding(id: string) {
     useApp.getState().setBuilding(b)
     const batch = await loadBatch(b.id).catch(() => null)
     useApp.setState({ batch: batch && batch.buildingId === b.id ? batch : null })
+    const hp = await loadHeadlines(b.id)
+    if (useApp.getState().building?.id === b.id) useApp.setState({ headlines: hp })
     useApp.getState().setDraft(makeDraft(b, useApp.getState().batch?.base))
     const runs = await listDemoRuns(b.id)
     const first = runs.find((r) => r.whatIf === null)
@@ -139,6 +143,7 @@ let startLink: LinkState | null = null
 async function startup() {
   const app = useApp.getState()
   app.setLoading('Starting…')
+  void loadBuildingIndex().then((summaries) => useApp.setState({ summaries }))
   try {
     app.setMode(await detectMode())
     const params = new URLSearchParams(location.search)
@@ -184,10 +189,28 @@ async function startup() {
   }
 }
 
+// Parsed JSON when the file is a headlines/v0 pack, else undefined.
+async function headlinesFile(f: File): Promise<unknown> {
+  try {
+    const j = JSON.parse(await f.text())
+    return j?.version === 'headlines/v0' ? j : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function openFile(f: File) {
   const app = useApp.getState()
   app.setLoading(`Loading ${f.name}…`)
   try {
+    const pack = f.size < 1024 * 1024 ? await headlinesFile(f) : undefined
+    if (pack !== undefined) {
+      const s = useApp.getState()
+      const hp = s.building ? readPack(pack, s.building.id) : null
+      if (hp) useApp.setState({ headlines: hp })
+      else s.setNotice(`Headlines are for building ${(pack as { buildingId?: unknown }).buildingId}; loaded building is ${s.building?.id ?? 'none'}`)
+      return
+    }
     const o = await openLocalFile(f)
     if (o.kind === 'building') {
       useApp.getState().setBuilding(o.data)
@@ -218,10 +241,7 @@ function s_notice(m: string) {
   useApp.getState().setNotice(m)
 }
 
-function Credits() {
-  const building = useApp((s) => s.building)
-  if (!building) return <div className="credits" />
-  const text = building.credits ? `${building.name}: ${building.credits}` : `${building.name}: no credits in this building file`
+function linkify(text: string) {
   const parts: (string | { url: string; tail: string })[] = []
   let last = 0
   for (const m of text.matchAll(/https?:\/\/[^\s]+/g)) {
@@ -232,18 +252,47 @@ function Credits() {
     last = m.index + raw.length
   }
   parts.push(text.slice(last))
+  return parts.map((p, i) =>
+    typeof p === 'string' ? (
+      p
+    ) : (
+      <span key={i}>
+        <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a>
+        {p.tail}
+      </span>
+    ),
+  )
+}
+
+function Credits() {
+  const building = useApp((s) => s.building)
+  const summary = useApp((s) => (s.building ? s.summaries[s.building.id] : undefined))
+  if (!building) return <div className="credits" />
+  const text = building.credits ? `${building.name}: ${building.credits}` : `${building.name}: no credits in this building file`
+  const cp = building.credits ? creditParts(building.credits, summary?.shortCredit) : null
+  if (cp?.license) {
+    return (
+      <div className="credits split" title={text}>
+        <span className="src">
+          {linkify(`${building.name}: ${cp.short}`)}
+          {cp.source && (
+            <>
+              {' · '}
+              <a href={cp.source} target="_blank" rel="noreferrer">source</a>
+            </>
+          )}
+        </span>
+        <span className="lic">
+          License:{' '}
+          {cp.licenseUrl ? <a href={cp.licenseUrl} target="_blank" rel="noreferrer">{cp.license}</a> : cp.license}
+          {cp.changes && <span title={cp.changes}> · modified</span>}
+        </span>
+      </div>
+    )
+  }
   return (
     <div className="credits" title={text}>
-      {parts.map((p, i) =>
-        typeof p === 'string' ? (
-          p
-        ) : (
-          <span key={i}>
-            <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a>
-            {p.tail}
-          </span>
-        ),
-      )}
+      {linkify(text)}
     </div>
   )
 }

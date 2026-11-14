@@ -1,0 +1,249 @@
+{
+  "version": "calibration/v0",
+  "title": "Door flow: simulation against published values",
+  "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 200 agents, seed 1, NoFire, immediate start",
+  "points": [
+    {
+      "label": "0.9 m door",
+      "width": 0.9,
+      "simulated": 1.0026,
+      "references": [
+        {
+          "name": "IMO 1.3 persons/(m·s) × width",
+          "value": 1.17
+        },
+        {
+          "name": "Hydraulic 1.3 × (width − 0.3)",
+          "value": 0.78
+        }
+      ]
+    },
+    {
+      "label": "1.0 m door",
+      "width": 1.0,
+      "simulated": 1.1741,
+      "references": [
+        {
+          "name": "IMO 1.3 persons/(m·s) × width",
+          "value": 1.3
+        },
+        {
+          "name": "Hydraulic 1.3 × (width − 0.3)",
+          "value": 0.91
+        }
+      ]
+    },
+    {
+      "label": "1.2 m door",
+      "width": 1.2,
+      "simulated": 1.4682,
+      "references": [
+        {
+          "name": "IMO 1.3 persons/(m·s) × width",
+          "value": 1.56
+        },
+        {
+          "name": "Hydraulic 1.3 × (width − 0.3)",
+          "value": 1.17
+        }
+      ]
+    },
+    {
+      "label": "1.6 m door",
+      "width": 1.6,
+      "simulated": 1.9562,
+      "references": [
+        {
+          "name": "IMO 1.3 persons/(m·s) × width",
+          "value": 2.08
+        },
+        {
+          "name": "Hydraulic 1.3 × (width − 0.3)",
+          "value": 1.69
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "0.8 m door: 57 of 200 passed by the run limit; last exit at 66.71 s. Narrow-opening deadlock is a known limit of this crowd model (0.4 m body diameter).",
+    "Corridor speed-density comparison does not meet the planned reference checks: lowest-density bin 0.15 m/s (expected 0.7–1.5), highest-density bin 0.33 m/s (expected below 70% of the lowest-bin speed). These are full-strip averages during a draining bottleneck queue, not a validated steady-state walking-speed curve; low average density can include slow people left behind as the queue drains.",
+    "Walking speed in smoke: the published rule is a model input; this curve checks that the simulator applies it as published, not independent validation."
+  ],
+  "speedDensity": {
+    "title": "Corridor walking speed against density",
+    "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 100 typical agents, seed 1; 30 × 2.4 m corridor, 1 m door; 8 m measurement strip, t ≥ 5 s; Weidmann (1993) and SFPE corridor reference curves",
+    "points": [
+      {
+        "label": "0.0–0.5 /m²",
+        "density": 0.2,
+        "simulated": 0.15,
+        "samples": 16,
+        "references": [
+          {
+            "name": "Weidmann (1993)",
+            "value": 1.3399
+          },
+          {
+            "name": "SFPE corridor 1.4·(1 − 0.266·D)",
+            "value": 1.1989
+          }
+        ]
+      },
+      {
+        "label": "0.5–1.0 /m²",
+        "density": 0.72,
+        "simulated": 0.24,
+        "samples": 16,
+        "references": [
+          {
+            "name": "Weidmann (1993)",
+            "value": 1.206
+          },
+          {
+            "name": "SFPE corridor 1.4·(1 − 0.266·D)",
+            "value": 1.1319
+          }
+        ]
+      },
+      {
+        "label": "1.0–1.5 /m²",
+        "density": 1.28,
+        "simulated": 0.33,
+        "samples": 13,
+        "references": [
+          {
+            "name": "Weidmann (1993)",
+            "value": 0.9116
+          },
+          {
+            "name": "SFPE corridor 1.4·(1 − 0.266·D)",
+            "value": 0.9233
+          }
+        ]
+      },
+      {
+        "label": "1.5–2.0 /m²",
+        "density": 1.73,
+        "simulated": 0.41,
+        "samples": 39,
+        "references": [
+          {
+            "name": "Weidmann (1993)",
+            "value": 0.708
+          },
+          {
+            "name": "SFPE corridor 1.4·(1 − 0.266·D)",
+            "value": 0.7557
+          }
+        ]
+      },
+      {
+        "label": "2.0–2.5 /m²",
+        "density": 2.11,
+        "simulated": 0.33,
+        "samples": 33,
+        "references": [
+          {
+            "name": "Weidmann (1993)",
+            "value": 0.5687
+          },
+          {
+            "name": "SFPE corridor 1.4·(1 − 0.266·D)",
+            "value": 0.6142
+          }
+        ]
+      }
+    ]
+  },
+  "speedVisibility": {
+    "title": "Walking speed in smoke: simulation against the published rule",
+    "source": "JuPedSim 1.4.2 CollisionFreeSpeedModel, 8 typical agents, seed 1; 30 × 3 m corridor, 1.2 m door; x = 2–24 m, t ≥ 1 s, immediate start",
+    "formula": "min(v0, max(0.2, v0 − 0.34·(3 − S)))",
+    "points": [
+      {
+        "label": "1 m visibility",
+        "visibility": 1.0,
+        "simulated": 0.4813,
+        "samples": 314,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 0.4843
+          }
+        ]
+      },
+      {
+        "label": "1.5 m visibility",
+        "visibility": 1.5,
+        "simulated": 0.6386,
+        "samples": 233,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 0.6632
+          }
+        ]
+      },
+      {
+        "label": "2 m visibility",
+        "visibility": 2.0,
+        "simulated": 0.8088,
+        "samples": 181,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 0.8352
+          }
+        ]
+      },
+      {
+        "label": "2.5 m visibility",
+        "visibility": 2.5,
+        "simulated": 0.9757,
+        "samples": 149,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.0066
+          }
+        ]
+      },
+      {
+        "label": "3 m visibility",
+        "visibility": 3.0,
+        "simulated": 1.1403,
+        "samples": 126,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.1779
+          }
+        ]
+      },
+      {
+        "label": "5 m visibility",
+        "visibility": 5.0,
+        "simulated": 1.1403,
+        "samples": 126,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.1779
+          }
+        ]
+      },
+      {
+        "label": "30 m visibility",
+        "visibility": 30.0,
+        "simulated": 1.1403,
+        "samples": 126,
+        "references": [
+          {
+            "name": "Fridolf et al. (2018), as used by Cheong (2020)",
+            "value": 1.1779
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -51,6 +51,17 @@ const building = join(contracts, 'building.example.json')
 const batch = join(contracts, 'batch.example.json')
 const isPrivate = (p) => /private/i.test(p.replace(root, ''))
 
+// Calibration
+{
+  const p = join(root, 'data', 'calibration.json')
+  if (existsSync(p)) {
+    let c = null
+    try { c = readJson(p) } catch { console.log('skip calibration.json (not valid JSON)') }
+    if (c?.version === 'calibration/v0' && !isPrivate(p)) copyFile(p, 'calibration.json')
+    else if (c) console.log('skip calibration.json (not calibration/v0)')
+  }
+}
+
 const indexPath = join(demo, 'index.json')
 const oldText = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : ''
 const index = oldText ? JSON.parse(oldText) : { version: 'demo-index/v0', buildings: [], runs: [], batches: [] }
@@ -88,6 +99,11 @@ else if (copyFile(building, 'building.example.json') && existsSync(join(demo, 'b
       const p = join(dir, f)
       let b
       try { b = readJson(p) } catch { console.log(`skip ${f} (not valid JSON)`); continue }
+      if (b.version === 'buildings-index/v0') {
+        if ((b.buildings ?? []).some((e) => e.private === true) || /private/i.test(p.replace(root, ''))) console.warn(`sync-demo: ${f} lists a private building, not copied`)
+        else copyFile(p, 'buildings-index.json')
+        continue
+      }
       if (b.version !== 'building/v0') { console.log(`skip ${f} (not a building/v0 file)`); continue }
       if (b.private === true || /private/i.test(p.replace(root, ''))) { console.log(`skip ${f} (private)`); continue }
       const name = `building-${b.id}.json`
@@ -171,6 +187,30 @@ else if (copyFile(batch, 'batch.example.json')) {
   } else {
     const old = index.batches.find((x) => x.id === b.id || x.file === 'batch.example.json')
     upsert(index.batches, { id: b.id, buildingId: b.buildingId, file: 'batch.example.json', ...(old?.report ? { report: old.report } : {}) })
+  }
+}
+
+// Headline packs from --runs DIR: headlines-<buildingId>.json, named on that building's first batch entry
+{
+  const args = process.argv.slice(2)
+  const ri = args.indexOf('--runs')
+  const dir = ri >= 0 && args[ri + 1] ? resolve(process.cwd(), args[ri + 1]) : join(root, 'data', 'runs')
+  if (existsSync(dir)) {
+    for (const bl of index.buildings) {
+      const f = `headlines-${bl.id}.json`
+      const p = join(dir, f)
+      if (!existsSync(p)) continue
+      const entry = index.batches.find((x) => x.buildingId === bl.id)
+      if (!entry) { console.log(`skip ${f} (no batch entry for ${bl.id})`); continue }
+      let h
+      try { h = readJson(p) } catch { console.log(`skip ${f} (not valid JSON)`); continue }
+      if (h.version !== 'headlines/v0' || h.buildingId !== bl.id || isPrivate(p) || statSync(p).size > 1024 * 1024) {
+        console.log(`skip ${f} (not a public headlines/v0 for ${bl.id} under 1 MB)`)
+        continue
+      }
+      copyFile(p, f)
+      entry.headlines = f
+    }
   }
 }
 

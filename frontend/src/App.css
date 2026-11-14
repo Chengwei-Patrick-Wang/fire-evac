@@ -66,6 +66,10 @@ select { background: var(--line); color: inherit; border: 1px solid var(--line-s
 .scenario .doorrow { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
 .scenario button.run { background: #f97316; color: var(--bg); font-weight: 600; }
 .scenario .err { color: var(--danger); }
+.credits.split { display: flex }
+.credits.split .src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis }
+.credits .lic { flex: none; margin-left: 12px }
+ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; font-size: var(--fs-sm); color: var(--muted) }
 .stamp { background: #7f1d1d; color: #fecaca; font-weight: 700; font-size: var(--fs-sm); padding: 4px 8px; border-radius: var(--radius); margin: 6px 0; text-align: center; }
 .risklegend .ramp { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #22c55e, #eab308, #ef4444); }
 .risklegend .row { display: flex; justify-content: space-between; font-size: var(--fs-xs); }

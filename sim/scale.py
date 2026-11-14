@@ -1,4 +1,4 @@
-"""Run the office demo fires: python -m sim.scale BUILDING BASE_SCENARIO."""
+"""Run the office or clinic demo fires: python -m sim.scale BUILDING BASE_SCENARIO."""
 import argparse
 from copy import deepcopy
 import json
@@ -11,6 +11,13 @@ from sim.run import run
 OFFICE_FIRES = {"kitchen": ("F1", "R125", "kitchen"),
                "lobby": ("F1", "R101", "trash"),
                "stair": ("F1", "RS101", "trash")}
+
+
+CLINIC_FIRES = {"waiting": ("F1", "R1AC1", "kitchen"),
+                "activity": ("F1", "R1DC1", "trash"),
+                "kitchenette": ("F2", "R2B17", "kitchen"),
+                "stair": ("F1", "R1AS1", "trash")}
+FIRES = {"office": OFFICE_FIRES, "clinic": CLINIC_FIRES}
 
 
 def fire_scenarios(building, base, fires=OFFICE_FIRES, agents=300):
@@ -58,13 +65,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("building", type=Path)
     parser.add_argument("scenario", type=Path)
+    parser.add_argument("--fires", help="comma-separated fire names")
     parser.add_argument("--agents", type=int, default=300)
     parser.add_argument("--out", type=Path, default=Path("data/runs"))
     args = parser.parse_args(argv)
     building = json.loads(args.building.read_text(encoding="utf-8"))
     base = json.loads(args.scenario.read_text(encoding="utf-8"))
+    if building["id"] not in FIRES:
+        raise ValueError(f"unknown building {building['id']!r}; known ids: {', '.join(FIRES)}")
+    fires = FIRES[building["id"]]
+    if args.fires:
+        names = args.fires.split(",")
+        unknown = set(names) - fires.keys()
+        if unknown:
+            raise ValueError(f"unknown fires {sorted(unknown)}; known fires: {', '.join(fires)}")
+        fires = {name: fires[name] for name in names}
     args.out.mkdir(parents=True, exist_ok=True)
-    for name, scenario in fire_scenarios(building, base, agents=args.agents).items():
+    for name, scenario in fire_scenarios(building, base, fires=fires, agents=args.agents).items():
         row, result = _run_one(building, name, scenario)
         prefix = args.out / f"{building['id']}-{name}"
         prefix.with_suffix(".run.json").write_text(json.dumps(result, separators=(",", ":")), encoding="utf-8")

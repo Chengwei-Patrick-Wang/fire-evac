@@ -11,6 +11,8 @@ import RiskMapSvg from '../dashboard/RiskMapSvg'
 import WhatIfHeadline from '../dashboard/WhatIfHeadline'
 import MeasuredFixes from '../dashboard/MeasuredFixes'
 import { readFixes } from '../model/fixes'
+import { readStability, seedBadge } from '../model/ranges'
+import { seedText } from '../dashboard/WeakSpots'
 
 export default function PrintReport() {
   const building = useApp((s) => s.building)
@@ -55,6 +57,8 @@ export default function PrintReport() {
   const md: string | null = have && report ? report.md : fetched && fetched.key === key ? fetched.md : null
   const floors = building ? [...building.floors].sort((a, b) => a.level - b.level) : []
   const failed = batch?.failed?.length
+  const stab = batch ? readStability(batch) : null
+  const seedCol = !!batch && batch.top.some((t) => seedBadge(t.kind, (t as { seedsInTop3?: number }).seedsInTop3, (t as { seeds?: number }).seeds))
   return createPortal(
     <div className="printreport" ref={rootRef} role="dialog" aria-modal="true" aria-label="Printable report">
       <div className="noprint bar">
@@ -88,16 +92,29 @@ export default function PrintReport() {
               <WhatIfHeadline />
               <table>
                 <thead>
-                  <tr><th>Rank</th><th>Kind</th><th>Id</th><th>Floor</th><th>Score</th><th>Why</th></tr>
+                  <tr><th>Rank</th><th>Kind</th><th>Id</th><th>Floor</th><th>Score</th>{seedCol && <th>Seeds</th>}<th>Why</th></tr>
                 </thead>
                 <tbody>
                   {batch.top.map((t, i) => (
                     <tr key={t.kind + t.id + i}>
-                      <td>{i + 1}</td><td>{t.kind}</td><td>{t.id}</td><td>{t.floor}</td><td>{t.score.toFixed(1)}</td><td>{t.why}</td>
+                      <td>{i + 1}</td><td>{t.kind}</td><td>{t.id}</td><td>{t.floor}</td><td>{t.score.toFixed(1)}</td>
+                      {seedCol && (
+                        <td>
+                          {seedBadge(t.kind, (t as { seedsInTop3?: number }).seedsInTop3, (t as { seeds?: number }).seeds)?.text}
+                          {seedText(batch, t) ? ` · ${seedText(batch, t)}` : ''}
+                        </td>
+                      )}
+                      <td>{t.why}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {stab && (
+                <>
+                  <p>Across seeds: {stab.why}</p>
+                  <p className="dim">Ranges are the spread over the simulated seeds, not confidence intervals.</p>
+                </>
+              )}
             </>
           ) : (
             <p>No batch for this building: no risk map or weak spots.</p>

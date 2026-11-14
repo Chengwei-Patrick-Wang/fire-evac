@@ -4,6 +4,8 @@ import { listDemoRuns, loadDemoRun } from '../data/loader'
 import { compareRuns, findPrecomputedVariant } from '../model/whatif'
 import { spotPosition } from '../model/spots'
 import { batchHeadline, pairHeadline } from '../model/exposure'
+import { fixLine } from '../model/fixes'
+import { seedBadge } from '../model/ranges'
 
 export interface TourCtx {
   after: (ms: number, fn: () => void) => void
@@ -98,6 +100,7 @@ const sec = (v: number | null) => (v == null ? 'not reached' : `${v.toFixed(0)} 
 
 function variantCaption(): string {
   const st = useApp.getState()
+  if (st.headlines?.headline) return st.headlines.headline
   const [a, b] = st.compareKeys.map((k) => st.runs[k])
   if (!a || !b || !b.whatIf) {
     const bh = batchHeadline(st.batch)
@@ -173,17 +176,25 @@ export const TOUR: TourScene[] = [
     title: 'Risk map',
     seconds: 40,
     caption: () => {
-      const top = useApp.getState().batch?.top[0]
+      const st = useApp.getState()
+      const hp = st.headlines
+      const spot = hp?.weakSpots?.[0]
+      if (hp && spot) {
+        const b = seedBadge(spot.kind, spot.seedsInTop3, hp.stability?.n)
+        const fix = hp.fixes?.find((f) => f.helps)
+        return `Fires in every room. Top weak spot: ${spot.label ?? spot.id}${b ? ` (${b.text})` : ''}${fix ? `. Best measured fix: ${fixLine(fix)}` : ''}`
+      }
+      const top = st.batch?.top[0]
       return top ? `Fires in every room. Top weak spot: ${top.why}` : ''
     },
     enter: async ({ after, setNote }) => {
       resetStage()
       await baseline()
       useClock.getState().seek(0)
-      const { batch, building } = useApp.getState()
-      const top = batch?.top[0]
-      if (!batch || !building || !top) {
-        setNote(!batch ? 'No batch for this building yet' : 'The batch lists no weak spots')
+      const { batch, building, headlines } = useApp.getState()
+      const top = headlines?.weakSpots?.[0] ?? batch?.top[0]
+      if ((!batch && !headlines) || !building || !top) {
+        setNote(!batch && !headlines ? 'No batch for this building yet' : 'The batch lists no weak spots')
         return
       }
       useApp.setState((s) => ({ layers: { ...s.layers, risk: true }, resultsTab: 'risk', activeSpot: top.id }))
@@ -197,7 +208,11 @@ export const TOUR: TourScene[] = [
   {
     title: 'Credibility',
     seconds: 20,
-    caption: () => 'Door flow against published values. Illustrative fire model, not a compliance tool.',
+    caption: () => {
+      const base = 'Door flow against published values. Illustrative fire model, not a compliance tool.'
+      const why = useApp.getState().headlines?.sensitivity?.why
+      return why ? `${base} ${why}` : base
+    },
     enter: async () => {
       resetStage()
       await baseline()

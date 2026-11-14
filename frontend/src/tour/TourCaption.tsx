@@ -8,6 +8,7 @@ export default function TourCaption() {
   useApp((s) => s.runs)
   useApp((s) => s.compareKeys)
   useApp((s) => s.batch)
+  useApp((s) => s.headlines)
   useApp((s) => s.building)
   if (scene === null) return null
   const sc = TOUR[scene]

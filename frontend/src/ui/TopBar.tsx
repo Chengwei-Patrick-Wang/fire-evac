@@ -10,7 +10,7 @@ export default function TopBar({
   onSelectBuilding: (id: string) => void
   onOpenFile: (f: File) => void
 }) {
-  const { buildings, building, runOrder, runs, activeRunKey, view, setView, switchRun, mode, loading } = useApp()
+  const { buildings, building, runOrder, runs, activeRunKey, view, setView, switchRun, mode, loading, summaries } = useApp()
   const touring = useTour((s) => s.scene !== null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [display, setDisplay] = useState(false)
@@ -43,8 +43,9 @@ export default function TopBar({
         {building && !buildings.some((b) => b.id === building.id) && <option value={building.id}>{building.name}</option>}
         {buildings.map((b) => (
           <option key={b.id} value={b.id}>
-            {b.name}
-            {b.floors ? ` · ${b.floors} floors` : ''}
+            {summaries[b.id] && summaries[b.id].floors && summaries[b.id].rooms
+              ? `${b.name} · ${summaries[b.id].floors} floors · ${summaries[b.id].rooms} rooms`
+              : `${b.name}${b.floors ? ` · ${b.floors} floors` : ''}`}
             {b.private ? ' (private)' : ''}
           </option>
         ))}

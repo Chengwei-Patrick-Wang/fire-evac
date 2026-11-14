@@ -39,7 +39,19 @@ if (index) {
     const j = load(b.file, 'batch/v0')
     if (j && j.buildingId !== b.buildingId) fail(`batch ${b.id}: file buildingId ${j.buildingId} != ${b.buildingId}`)
     if (b.report) load(b.report)
+    if (b.headlines) {
+      const h = load(b.headlines, 'headlines/v0')
+      if (h && h.buildingId !== b.buildingId) fail(`batch ${b.id}: headlines buildingId ${h.buildingId} != ${b.buildingId}`)
+    }
   }
+}
+
+for (const [file, version] of [['calibration.json', 'calibration/v0'], ['buildings-index.json', 'buildings-index/v0']]) {
+  if (!existsSync(join(dir, file))) continue
+  const j = load(file, version)
+  if (!j) continue
+  if (version === 'calibration/v0' && !Array.isArray(j.points)) fail(`${file}: points is not an array`)
+  if (version === 'buildings-index/v0' && (j.buildings ?? []).some((b) => b.private === true)) fail(`${file}: lists a private building`)
 }
 
 const priv = join(dir, 'private')

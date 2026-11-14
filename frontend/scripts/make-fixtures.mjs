@@ -159,4 +159,61 @@ const clone = (o) => JSON.parse(JSON.stringify(o))
   mkdirSync(join(out, 'runs'), { recursive: true })
   writeFileSync(join(out, 'runs', 'batch-example-office.json'), JSON.stringify(real))
 }
+// ranges: made-up seed ranges for the UI only.
+{
+  const run = clone(src)
+  run.id = 'ranges'
+  const r2 = (v) => +v.toFixed(2)
+  const sr = { seeds: [1, 2, 3, 4, 5] }
+  for (const k of ['t50', 't90', 't100']) {
+    const v = run.metrics[k]
+    sr[k] = v == null ? { min: null, median: null, max: null, missing: 5 } : { min: r2(v * 0.97), median: r2(v), max: r2(v * 1.08), missing: 0 }
+  }
+  const m = run.metrics
+  sr.evacuated = { min: m.agents - 2, median: m.evacuated, max: m.agents, missing: 0 }
+  sr.trapped = { min: 0, median: m.trapped, max: m.trapped + 2, missing: 0 }
+  run.metrics.seedRange = sr
+  writeFileSync(join(out, 'ranges.run.json'), JSON.stringify(run))
+  const batch = clone(JSON.parse(readFileSync(join(root, 'public/demo/batch.example.json'), 'utf8')))
+  batch.id = 'ranges'
+  for (const r of batch.rooms) {
+    if (r.riskT90 != null) r.riskT90Range = { min: r.riskT90 - 6, median: r.riskT90, max: r.riskT90 + 9 }
+    else r.riskT90Range = null
+    if (r.riskTrapped != null) r.riskTrappedRange = { min: Math.max(0, r.riskTrapped - 1), median: r.riskTrapped, max: r.riskTrapped + 1 }
+  }
+  for (const d of batch.doors) d.scoreRange = { min: +(d.score * 0.9).toFixed(1), median: d.score, max: +Math.min(100, d.score * 1.05).toFixed(1) }
+  const in3 = [3, 2, 3]
+  batch.top.forEach((t, i) => {
+    t.seedsInTop3 = in3[i] ?? 3
+    t.seeds = 3
+  })
+  batch.stability = { seeds: [1, 2, 3], top3: ['DSB2', 'DSA2', 'DSA1'], heldIn: 2, n: 3, stable: false, why: 'The top 3 weak spots hold in 2 of 3 seeds: Stair SB door, Stair SA door, Stair SA door. Stair SB door ranks first in 3 of 3.' }
+  writeFileSync(join(out, 'ranges.batch.json'), JSON.stringify(batch))
+}
+// headlines: made-up headlines/v0 pack for example-office (UI only), built from the example batch.
+{
+  const batch = JSON.parse(readFileSync(join(root, 'public/demo/batch.example.json'), 'utf8'))
+  const fx = JSON.parse(readFileSync(join(out, 'fixes.batch.json'), 'utf8')).fixes.slice(0, 2).map((f) => {
+    const { door, floor, width, ...rest } = f
+    return rest
+  })
+  const labels = ['Stair SB door', 'Stair SA door', 'Stair SA door']
+  const in3 = [3, 2, 3]
+  const base = batch.base ?? {}
+  const pack = {
+    version: 'headlines/v0',
+    buildingId: batch.buildingId,
+    buildingName: 'Example office',
+    generated: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+    note: 'Made-up numbers for the UI only. Illustrative smoke model, not a prediction of injury.',
+    sources: { batch: { file: 'batch.example.json', id: batch.id, modified: new Date().toISOString() } },
+    scenario: { id: base.id ?? 'example', occupants: base.occupants?.total ?? 160, fireType: base.fire?.type ?? 'kitchen', seeds: [1, 2, 3], rooms: 22, runs: 66, failed: 0 },
+    headline: 'Stair doors propped open: +22% person-seconds in smoke across 66 paired fires; 90% out 0 s later on average.',
+    weakSpots: batch.top.slice(0, 3).map((t, i) => ({ rank: i + 1, kind: t.kind, id: t.id, floor: t.floor, label: labels[i], score: t.score, why: t.why, seedsInTop3: in3[i] })),
+    whatIf: [{ id: 'proppedStairs', label: 'Stair doors propped open', n: 66, dT90: 0.2, smokePct: 22, why: 'Stair doors propped open: 90% out 0 s later on average (slower in 3 of 66 fires); +22% person-seconds in smoke, +0.0 trapped per fire.' }],
+    fixes: fx,
+    stability: { why: 'The top 3 weak spots hold in 2 of 3 seeds: Stair SB door, Stair SA door, Stair SA door. Stair SB door ranks first in 3 of 3.', heldIn: 2, n: 3 },
+  }
+  writeFileSync(join(out, 'headlines.json'), JSON.stringify(pack, null, 2))
+}
 console.log('wrote', out)

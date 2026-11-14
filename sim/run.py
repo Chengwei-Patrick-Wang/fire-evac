@@ -18,7 +18,8 @@ Behavior:
 - People keep 2.5 m from the burning item where room geometry permits;
   smaller keep-out areas preserve connected escape routes.
 - A burning stairwell is not an escape route; its doors close to route choice.
-- Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
+- Every 1 s: fire.step(t), smoke slows agents; traps record "untenable"
+  or "no route" when every escape option has closed.
 - Mid-run blocked interior doors act only through slowdown and trapping.
   Agents in a stairwell (status 2 or 3) are not exposed to fire.
 """
@@ -50,6 +51,7 @@ FIRE_EVERY = 100     # steps (1 s)
 SMOKE_EVERY = 200    # steps (2 s)
 FRAME_INTERVAL = 0.5
 SMOKE_INTERVAL = 2
+BATCH_RECORDING = {"frameInterval": 1.0, "smokeInterval": 4}
 NO_OCCUPANTS = {"corridor", "stair", "restroom", "storage"}
 WALL_CLEARANCE = 0.3   # spawn inside (room ∩ walkable).buffer(-0.3)
 MIN_SPACING = 0.5      # spawn points at least this far apart
@@ -117,8 +119,10 @@ def keepout_cut(walk, floor, room, x, y, radius):
     attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
     # Never enlarge an explicitly smaller user-supplied distance on fallback.
     radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
+    fallback = None
     for candidate in radii:
-        cut = walk.difference(point.buffer(candidate).intersection(room_poly))
+        removed = point.buffer(candidate).intersection(room_poly).intersection(walk)
+        cut = walk.difference(removed)
         pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
         pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
                         key=lambda p: p.area, reverse=True)
@@ -131,7 +135,16 @@ def keepout_cut(walk, floor, room, x, y, radius):
             continue
         if body_pieces(retained) > original_pieces:
             continue
+        if fallback is None:
+            fallback = (retained, candidate)
+        # JuPedSim can route into a positive gap narrower than a body.
+        # Prefer a smaller disc, but retain the original cut if all have slots.
+        gap = removed.distance(walk.boundary)
+        if 0.01 < gap < 0.3:
+            continue
         return retained, candidate
+    if fallback is not None:
+        return fallback
     _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
     return walk, 0.0
 
@@ -247,6 +260,11 @@ class _FloorSim:
         self.id = floor["id"]
         self.index = index
         self.walk = walk
+        self.room_ids = [r["id"] for r in floor["rooms"]]
+        self.room_tree = shapely.STRtree([Polygon(r["polygon"]) for r in floor["rooms"]])
+        self.doors = floor["doors"]
+        self.stair_rooms = {s["id"]: s["room"] for s in floor["stairs"]}
+        self.room_routes = {}
         self.sim = jps.Simulation(model=jps.CollisionFreeSpeedModel(), geometry=self.walk, dt=DT)
         self.stages: list[dict] = []
         self.jid2idx: dict[int, int] = {}
@@ -263,6 +281,15 @@ class _FloorSim:
         for zone in zones:
             if not reachable_zone(zone["poly"], self.walk, f"{self.id} {zone['kind']} {zone['id']}"):
                 continue
+            # JuPedSim targets a stage's centroid. A keep-out can leave the
+            # zone attached while removing that target (especially stair rooms).
+            if not self.walk.contains(zone["poly"].centroid):
+                from shapely.ops import triangulate
+                usable = zone["poly"].intersection(self.walk)
+                triangles = [p for p in triangulate(usable) if usable.covers(p)]
+                if not triangles:
+                    continue
+                zone["poly"] = max(triangles, key=lambda p: p.area)
             stage = self.sim.add_exit_stage(zone["poly"])
             journey = self.sim.add_journey(jps.JourneyDescription([stage]))
             self.stages.append(dict(zone, stage=stage, journey=journey,
@@ -320,7 +347,7 @@ def _frame(sims: list[_FloorSim], trapped: set, status: list[int], transit: dict
         waiting = status[i] == 2
         x, y = entry["wait_pos"] if waiting else entry["pos"]
         floor = entry["floor"] if waiting else entry["to"]
-        rows.append([i, round(x, 2), round(y, 2), indices[floor], 2 if waiting else 3])
+        rows.append([i, round(x, 2) + 0.0, round(y, 2) + 0.0, indices[floor], 2 if waiting else 3])
     rows.sort(key=lambda r: r[0])
     return rows
 
@@ -419,12 +446,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     walkable[floor["id"]], floor, ignition.get("room"),
                     ignition["x"], ignition["y"], radius)
     burning_doors = set()
+    burning_groups = set()
+    closed_groups = set()
     for floor in building["floors"]:
         if floor["id"] == ignition.get("floor"):
             origin = fire_room(floor, ignition.get("room"), ignition["x"], ignition["y"])
             for stair in floor["stairs"]:
                 if origin and stair["room"] == origin["id"]:
-                    burning_doors.update(stair_doors(floor, stair))
+                    doors = stair_doors(floor, stair)
+                    burning_doors.update(doors)
+                    if not doors:
+                        burning_groups.add(stair["group"])
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
     cue_rng = np.random.default_rng([seed, 3])
@@ -503,6 +535,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             return set()
         if st["kind"] == "exit":
             return {st["door"]} & blocked
+        if st["group"] in closed_groups:
+            return {f"stair {st['group']} closed"}
         closed = set()
         for fid in (fs.id, st["to"]):
             floor = floors[by_id[fid].index]
@@ -511,12 +545,53 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 closed.update(stair_doors(floor, stair))
         return closed
 
+    def trap(i, t, fs, pos, reason):
+        nonlocal active
+        if i in trapped:
+            return
+        trapped.add(i)
+        active -= 1
+        if where[i] is not None:
+            floor_sim, jid = where[i]
+            floor_sim.sim.mark_agent_for_removal(jid)
+        where[i] = None
+        events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
+                       "x": round(pos[0], 2), "y": round(pos[1], 2), "reason": reason})
+
+    def room_reachable(fs, st, blocked_doors):
+        key = (st["id"], frozenset(blocked_doors))
+        if key not in fs.room_routes:
+            if st["kind"] == "stair":
+                reached = {fs.stair_rooms[st["id"]]}
+            else:
+                reached = {r for d in fs.doors if d["id"] == st["door"]
+                           for r in d["connects"] if r != "outside"}
+            edges = [d["connects"] for d in fs.doors if d["id"] not in blocked_doors
+                     and "outside" not in d["connects"]]
+            while True:
+                expanded = reached | {r for edge in edges if reached.intersection(edge) for r in edge}
+                if expanded == reached:
+                    break
+                reached = expanded
+            fs.room_routes[key] = reached
+        return fs.room_routes[key]
+
     def choose(i, t, fs, pos, trigger, speed=None):
         current = None if trigger in ("start", "arrive") else (target[i]["id"] if target[i] else None)
         stages = [st for st in fs.stages if not blocking_doors(fs, st)]
+        # Door cuts can leave a hairline geometric connection that a routing
+        # point can cross but a person cannot. Use the building's room graph
+        # to detect routes severed by blocked doors. Do not infer connectivity
+        # for open/doorless spaces that the room graph never represented.
+        if blocked:
+            rooms = {fs.room_ids[int(j)] for j in fs.room_tree.query(Point(pos), predicate="within")}
+            if (any(rooms.intersection(room_reachable(fs, st, set())) for st in stages)
+                    and not any(rooms.intersection(room_reachable(fs, st, blocked)) for st in stages)):
+                stages = []
         profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
         stages = mobility_options(stages, profile["stairs"])
         if not stages:
+            trap(i, t, fs, pos, "no route")
             return None
         if trigger == "stuck":
             stages = [st for st in stages if st["id"] != current] or stages
@@ -588,7 +663,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         if current is not None and st["id"] != current:
             reason = decision["reason"]
             if trigger == "blocked":
-                reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
+                if target[i].get("group") in closed_groups:
+                    reason = f"stair {target[i]['group']} closed"
+                else:
+                    reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
             events.append({"t": t, "type": "reroute", "idx": i, "floor": fs.id,
                            "from": current, "to": st["id"], "reason": reason})
         return st
@@ -642,6 +720,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             fire_blocks = set(fire.blocked_doors())
             if fire.hrr(t) > 0:
                 fire_blocks.update(burning_doors)
+                closed_groups.update(burning_groups)
             new_blocks = fire_blocks - blocked
             for door in sorted(new_blocks):
                 if door in door_floors:
@@ -670,6 +749,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     center = entry["arrival"].centroid
                     entry["target"] = choose(i, t, fs, (center.x, center.y), "arrive")
                 st = entry["target"]
+                if i in trapped:
+                    heappop(queue)
+                    del transit[i]
+                    continue
                 if st is None:
                     break
                 if st["kind"] == "stair" and st["group"] == group:
@@ -709,11 +792,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     continue
                 x, y = ag.position
                 if fire.untenable(fs.id, x, y):
-                    fs.sim.mark_agent_for_removal(ag.id)
-                    trapped.add(i)
-                    active -= 1
-                    events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
-                                   "x": round(x, 2), "y": round(y, 2)})
+                    trap(i, t, fs, (x, y), "untenable")
                 elif status[i] == 0:
                     if i not in cues:
                         if (fire.hrr(t) > 0 and fs.id == ignition.get("floor")
@@ -735,6 +814,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     ag.model.desired_speed = smoke_speed(v0, vis)
                     trigger = "blocked" if blocking_doors(fs, target[i]) else ("stuck" if stuck else "tick")
                     st = choose(i, t, fs, (x, y), trigger, ag.model.desired_speed)
+                    if i in trapped:
+                        continue
                     if st is None:
                         fs.sim.switch_agent_journey(ag.id, fs.park_journey, fs.park_stage)
                         ag.target = (x, y)
@@ -837,6 +918,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
 
     metrics["profiles"], metrics["assist"] = profile_metrics(agents, events)
 
+    # Round only the exported events, after all dynamics and metrics used the
+    # original times (especially the stair FIFO and assistance deadlines).
     fire_cfg = scenario.get("fire") or {}
     return {
         "version": "run/v0",
@@ -851,7 +934,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "frames": frames,
         "smoke": list(smoke.values()),
         "fire": {"floor": fire_cfg.get("floor"), "x": fire_cfg.get("x"), "y": fire_cfg.get("y"), "hrr": hrr},
-        "events": events,
+        "events": [{key: round(value, 2) + 0.0 if key in {"t", "enter", "arrive", "until", "x", "y"}
+                    else value for key, value in event.items()} for event in events],
         "metrics": metrics,
     }
 

@@ -337,14 +337,16 @@ def check_fire(building, scenario, clear):
     assert reroutes and all(e["t"] == 60 for e in reroutes)
     assert result["metrics"]["evacuated"] == clear["metrics"]["agents"]
 
-    # Loss of every option must park people safely, including agents still delayed.
+    # Loss of every option traps people, including agents still delayed.
     class BlockAll(BlockE1):
         def blocked_doors(self):
             return {"E1", "E2", "DSA2", "DSB2"}
 
     stranded_scenario = dict(scenario, maxTime=100, occupants={"total": 4})
     stranded = run(building, stranded_scenario, BlockAll(building, stranded_scenario))
-    assert stranded["metrics"]["remaining"] == 4
+    assert stranded["metrics"]["remaining"] == 0
+    assert stranded["metrics"]["trapped"] == 4
+    assert all(e["reason"] == "no route" for e in stranded["events"] if e["type"] == "trapped")
     assert stranded["metrics"]["evacuated"] == stranded["metrics"]["inStairs"] == 0
     assert len([e for e in stranded["events"] if e["type"] == "door_blocked"]) == 4
 
@@ -666,6 +668,10 @@ def check_keepout(building, scenario, slow=False):
     # Arrival clearance changes congestion and seeded trajectories. Compare
     # the intervention with its paired baseline rather than pinning one old
     # trajectory's absolute casualty count (formerly <= 15 at full size).
+    if slow:
+        nearby = [e for e in protected["events"] if e["type"] == "trapped"
+                  and e["floor"] == "F1" and Point(e["x"], e["y"]).distance(point) < 3.2]
+        print(f"full lobby traps near keep-out: {nearby}")
     burning["fireKeepout"] = 0
     unprotected = run(building, burning, FireModel(building, burning))
     assert protected["metrics"]["trapped"] <= unprotected["metrics"]["trapped"] / 2
@@ -782,7 +788,7 @@ def check_office_keepout():
     print(f"office keep-out OK: {radii}")
 
 
-def check_stair_fire(building, fast):
+def check_stair_fire(building, fast, open_stair=False):
     from sim.floors import stair_doors
     floor = next(f for f in building["floors"] if f["id"] == "F1")
     stair = next(s for s in floor["stairs"] if s["room"] == "SA1")
@@ -809,7 +815,88 @@ def check_stair_fire(building, fast):
         rows = [a for a in frame["a"] if a[3] == fid and a[4] in (0, 1)]
         assert all(cut.covers(Point(a[1], a[2])) for a in rows)
     assert result["metrics"]["remaining"] == result["metrics"]["inStairs"] == 0
+    if open_stair:
+        assert not blocks
+        stair_ids = {s["id"] for f in building["floors"] for s in f["stairs"]
+                     if s["group"] == "SA"}
+        assert all(e["reason"] == "stair SA closed" for e in result["events"]
+                   if e["type"] == "reroute" and e["from"] in stair_ids and e["t"] >= 75)
+        clear = run(building, scenario, NoFire(building, scenario))
+        assert not any(e["type"] == "door_blocked" or
+                       (e["type"] == "reroute" and "closed" in e["reason"])
+                       for e in clear["events"])
+        assert clear["metrics"]["evacuated"] == clear["metrics"]["agents"]
     print(f"burning stair OK: {len(stairs)} SA transfers before 75 s; none after")
+
+
+
+def check_open_stair(building, fast):
+    opened = deepcopy(building)
+    for floor in opened["floors"]:
+        floor["doors"] = [d for d in floor["doors"] if d["id"] not in {"DSA1", "DSA2"}]
+    check_stair_fire(opened, fast, open_stair=True)
+
+
+def check_keepout_slot():
+    from sim.run import keepout_cut
+    from sim.scale import FIRES
+    poly = Polygon([(0, 0), (10, 0), (10, 8), (0, 8)])
+    floor = {"id": "slot", "rooms": [{"id": "r", "polygon": list(poly.exterior.coords)}],
+             "stairs": [], "exits": []}
+    assert keepout_cut(poly, floor, "r", 5, 2.67, 2.5)[1] == 1.5
+    assert keepout_cut(poly, floor, "r", 5, 3.0, 2.5)[1] == 2.5
+    building = load_building()
+    floor = building["floors"][0]
+    walk = floor_walkable(floor)
+    lobby = next(r for r in floor["rooms"] if r["id"] == "L1")
+    point = Polygon(lobby["polygon"]).representative_point()
+    for rid, x, y, expected in (("L1", point.x, point.y, 2.5),
+                                ("R101", 8, 3, 2.5), ("C1", 20, 8, 1.0)):
+        assert keepout_cut(walk, floor, rid, x, y, 2.5)[1] == expected
+    for name, fires in FIRES.items():
+        path = ROOT / f"data/buildings/{name}.json"
+        if not path.exists():
+            print(f"keep-out radii: {name} missing; skipped")
+            continue
+        building = json.loads(path.read_text())
+        radii = {}
+        for label, (fid, rid, _) in fires.items():
+            floor = next(f for f in building["floors"] if f["id"] == fid)
+            room = next(r for r in floor["rooms"] if r["id"] == rid)
+            point = Polygon(room["polygon"]).representative_point()
+            radii[label] = keepout_cut(floor_walkable(floor), floor, rid, point.x, point.y, 2.5)[1]
+        print(f"{name} keep-out radii: {radii}")
+
+
+def check_clinic_scale():
+    from collections import Counter
+    from unittest.mock import patch
+    from sim.scale import CLINIC_FIRES, fire_scenarios, run_scale
+    path = ROOT / "data/buildings/clinic.json"
+    if not path.exists():
+        print("clinic scale: building missing; skipped")
+        return
+    building = json.loads(path.read_text())
+    base = json.loads(path.with_name("clinic.scenario.json").read_text())
+    def checked_run(building, scenario):
+        result = run(building, scenario)
+        events = result["events"]
+        stuck = [e for e in events if e["type"] == "stuck"]
+        assert all(n == 1 for n in Counter(e["idx"] for e in stuck).values()), stuck
+        exits = {e["idx"]: e["t"] for e in events if e["type"] == "exit"}
+        assert all(exits.get(e["idx"], -1) > e["t"] for e in stuck), stuck
+        stairs = [e for e in events if e["type"] == "stair"]
+        if scenario["fire"]["room"] == "R1AS1":
+            assert not any(e["group"] == "S2" for e in stairs)
+        if scenario["fire"]["room"] == "R2B17":
+            assert {a["idx"] for a in result["agents"] if a["floor"] == "F2"} <= {e["idx"] for e in stairs}
+        return result
+    with patch("sim.scale.run", side_effect=checked_run):
+        rows = run_scale(building, fire_scenarios(building, base, CLINIC_FIRES))
+    for row in rows:
+        assert row["remaining"] == row["inStairs"] == 0, row
+        assert row["trapped"] <= 3 and row["mb"] <= 8, row
+        print(f"clinic scale OK: {row}")
 
 
 def check_blocked_arrival(slow=False):
@@ -1078,6 +1165,154 @@ def check_seeds(building, scenario, slow=False):
         print(f"seed range: full example t90 {spread['t90']}; worker and base reuse parity OK")
 
 
+def check_sweep(building, fast, slow=False):
+    from unittest.mock import patch
+    from tempfile import TemporaryDirectory
+    from sim.sweep import sweep_cases, check_case, sweep, write_report, load_buildings
+    from fire.presets import PRESETS
+
+    buildings = load_buildings(["example", "office", "clinic"])
+    cases = sweep_cases(buildings, 8)
+    assert cases == sweep_cases(buildings, 8)
+    assert cases[3] == sweep_cases(buildings, 5)[3]
+    for case in cases:
+        b = buildings[case["building"]][0]
+        s = case["scenario"]
+        floor = next(f for f in b["floors"] if f["id"] == s["fire"]["floor"])
+        assert s["fire"]["room"] in {r["id"] for r in floor["rooms"]}
+        assert s["fire"]["type"] in PRESETS
+        assert set(s["doors"]) <= {d["id"] for f in b["floors"] for d in f["doors"]}
+    for error, expected in ((ValueError("cannot fit 9 agents in room F1/R1"), "rejected"),
+                            (RuntimeError("broken"), "failed")):
+        with patch("sim.sweep.run", side_effect=error):
+            assert check_case(building, fast)["outcome"] == expected
+    finished = dict(agents=[dict(idx=0)], events=[dict(type="trapped", idx=0, t=0, reason="no route")],
+                    frames=[], metrics=dict(agents=1, evacuated=0, trapped=1, remaining=0, inStairs=0, t100=None))
+    for field in ("remaining", "reason"):
+        bad = deepcopy(finished)
+        if field == "remaining":
+            bad["metrics"]["remaining"] = 1
+        else:
+            del bad["events"][0]["reason"]
+        with patch("sim.sweep.run", return_value=bad):
+            assert check_case(building, fast)["outcome"] == "failed"
+    small = deepcopy(fast)
+    small.update(occupants={"total": 12, "mix": {"typical": 1}}, doors={"DSA1": "propped", "E2": "blocked"})
+    small["fire"]["type"] = "kitchen"
+    row = check_case(building, small)
+    assert row["outcome"] == "ok", row
+    assert sweep(cases, buildings, budget_min=0) == []
+    # Exact seed-0 sweep repros: keep-out over a stage center, and blocked
+    # interior doors leaving a geometric hairline into an isolated room.
+    repros = sweep_cases(buildings, 48)
+    if list(buildings) == ["example", "office", "clinic"]:
+        for index in ((6, 12, 24, 42, 1, 18) if slow else (6, 12, 24)):
+            case = repros[index]
+            row = check_case(buildings[case["building"]][0], case["scenario"])
+            assert row["outcome"] == "ok", row
+    if slow:
+        selected = {k: v for k, v in buildings.items() if k in ("example", "office")}
+        cases = sweep_cases(selected, 4, agents=(10, 40, 120))
+        rows = sweep(cases, selected, workers=2)
+        assert len(rows) == 4
+        with TemporaryDirectory() as directory:
+            report = write_report(cases, rows, directory, 0, sum(r["wallS"] for r in rows))
+            assert json.loads((Path(directory) / "report.json").read_text()) == report
+    print("sweep generation, outcomes and real fire OK")
+
+
+def check_runsize(building, fast, core, slow=False):
+    from sim.runsize import size_report, rounding_problems, thin_frames, expand_frames
+    from sim.run import BATCH_RECORDING
+    from fire.model import FireModel
+
+    assert rounding_problems(core) == []
+    malformed = {"frameInterval": 0.5, "frames": [{"t": 0, "a": [[0, -0.0, 12.345, 0, 0]]}],
+                 "events": [{"t": 0, "enter": 87.309}]}
+    assert len(rounding_problems(malformed)) == 3
+    malformed["frames"][0]["t"] = 0.1
+    assert len(rounding_problems(malformed)) == 4
+    original = deepcopy(core)
+    thin = thin_frames(core)
+    saved_thin = deepcopy(thin)
+    assert expand_frames(thin) == core
+    assert core == original and thin == saved_thin
+    assert thin["frameHold"] is True
+    assert size_report(thin)["rows"] < size_report(core)["rows"]
+    assert thin_frames(thin) == thin and expand_frames(core) == core
+    # Terminal events clear held rows, including an agent trapped before moving.
+    terminal = {"frames": [{"t": 0, "a": [[0, 1, 2, 0, 0], [1, 2, 3, 0, 0]]},
+                           {"t": 1, "a": [[1, 2, 3, 0, 0]]}, {"t": 2, "a": []}],
+                "events": [{"type": "trapped", "idx": 0, "t": 1},
+                           {"type": "exit", "idx": 1, "t": 2}]}
+    assert expand_frames(thin_frames(terminal)) == terminal
+    scenario = deepcopy(fast) if slow else fast_scenario(fast, total=12)
+    results = []
+    for recording in ({"frameInterval": 0.5, "smokeInterval": 2}, BATCH_RECORDING):
+        sampled = {**scenario, **recording}
+        fire = FireModel(building, sampled) if slow else NoFire(building, sampled)
+        results.append(run(building, sampled, fire))
+    full, batch = results
+    assert full["metrics"] == batch["metrics"]
+    assert full["events"] == batch["events"]
+    by_time = {frame["t"]: frame for frame in full["frames"]}
+    assert all(frame == by_time[frame["t"]] for frame in batch["frames"] if frame["a"])
+    if slow:
+        full_smoke = {s["floor"]: {f["t"]: f for f in s["frames"]} for s in full["smoke"]}
+        assert batch["smoke"]
+        for smoke in batch["smoke"]:
+            assert all(f["t"] % 4 == 0 and f == full_smoke[smoke["floor"]][f["t"]]
+                       for f in smoke["frames"])
+    # Explicit caller intervals win over the batch defaults, without mutation.
+    from unittest.mock import patch
+    from sim.seeds import run_seeds
+    from sim.sweep import check_case
+    for override in ({}, {"frameInterval": 0.5, "smokeInterval": 2}):
+        supplied = {**scenario, **override}
+        before = deepcopy(supplied)
+        with patch("sim.seeds.run", return_value=core) as mocked:
+            run_seeds(building, supplied, [1])
+            actual = mocked.call_args.args[1]
+            assert all(actual[k] == supplied.get(k, v) for k, v in BATCH_RECORDING.items())
+        with patch("sim.sweep.run", return_value=core) as mocked:
+            check_case(building, supplied)
+            actual = mocked.call_args.args[1]
+            assert all(actual[k] == supplied.get(k, v) for k, v in BATCH_RECORDING.items())
+        assert supplied == before
+    print("run size: rounding, hold roundtrip and recording parity OK")
+
+
+def check_smoke_walk(slow=False):
+    from sim.calibrate import (UniformSmoke, smoke_walk, speed_visibility,
+                               visibility_limits, SMOKE_RULE_LIMIT)
+    from sim.run import smoke_speed
+
+    for v0 in (0.6, 1.0, 1.5):
+        for visibility in (1, 2, 3, 10):
+            assert smoke_speed(v0, visibility) == min(v0, max(0.2, v0 - 0.34 * (3 - visibility)))
+    assert smoke_speed(0.6, 1) == 0.2
+    smoke = UniformSmoke(1.5)
+    assert smoke.visibility("F1", 0, 0) == 1.5
+    assert smoke.snapshot("F1") is None and smoke.hrr(100) == 0
+    assert not smoke.untenable("F1", 0, 0) and not smoke.blocked_doors()
+    if slow:
+        curve = speed_visibility()
+        failures = visibility_limits(curve)
+        saved = json.loads((ROOT / "data/calibration.json").read_text())
+        assert saved["speedVisibility"] == curve
+        assert SMOKE_RULE_LIMIT in saved["limits"]
+        # Keep and disclose measured misses instead of tuning the crowd model.
+        assert all(failure in saved["limits"] for failure in failures), failures
+        for failure in failures:
+            print(failure)
+    else:
+        smoky, clear = smoke_walk(1.5, agents=4), smoke_walk(30, agents=4)
+        assert smoky["samples"] > 0 and clear["samples"] > 0
+        assert abs(smoky["simulated"] / smoky["formula"] - 1) <= 0.1, smoky
+        assert smoky["simulated"] < clear["simulated"]
+    print("smoke walking-speed measurements OK")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1092,6 +1327,7 @@ def main(argv=None) -> int:
         return result
 
     timed("calibration", check_calibration)
+    timed("smoke walk", check_smoke_walk)
     timed("brain", check_brain)
     timed("floors", check_floors)
     timed("watch and geometry", check_watch_and_geometry)
@@ -1099,12 +1335,16 @@ def main(argv=None) -> int:
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
+    timed("fast sweep", check_sweep, building, fast)
     timed("fast seeds", check_seeds, building, fast)
     core = timed("fast core", check_core, building, fast)
+    timed("run size", check_runsize, building, fast, core)
     timed("exit choice", check_exit_choice, building, fast)
     timed("fast cues", check_cues, building, fast)
     timed("office keep-out", check_office_keepout)
     timed("burning stair", check_stair_fire, building, fast)
+    timed("open stair", check_open_stair, building, fast)
+    timed("keep-out slot", check_keepout_slot)
     timed("blocked arrival", check_blocked_arrival)
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
@@ -1115,11 +1355,15 @@ def main(argv=None) -> int:
     timed("recording", check_recording, building, fast)
 
     if args.slow:
+        timed("full sweep", check_sweep, building, fast, slow=True)
         timed("full seeds", check_seeds, building, scenario, slow=True)
         timed("full calibration", check_calibration, slow=True)
+        timed("full smoke walk", check_smoke_walk, slow=True)
         timed("office blocked arrival", check_blocked_arrival, slow=True)
         timed("office scale", check_scale)
+        timed("clinic scale", check_clinic_scale)
         core = timed("full core", check_core, building, scenario)
+        timed("full run size", check_runsize, building, scenario, core, slow=True)
         timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)
         timed("full fire", check_fire, building, scenario, core)

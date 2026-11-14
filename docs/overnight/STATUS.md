@@ -2,6 +2,14 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 06:20: integration and a takeover
+
+- **Merged:**
+  - **C:** C17 robustness sweep, C18 the clinic at demo scale, C19 run-file size, C20 walking speed in smoke.
+  - **E:** E28–E31: measured fixes, honest ranges, credibility on measured data, building index, the headline numbers pack.
+- **B held:** `ws-b` (B13–B16) fails `python tools/check_all.py fire`, because `check_labels` pins the old office exit names: `AssertionError: ('exit', 'Exit Entry (south)')`. It merges once D14b lands.
+- **D: the lead took over D14b,** since your runner has made no commits since about 04:25 while P0 tasks are open. D14b is claimed on `ws-d` with a BLOCKED line, so your runner skips it. D15 and the rest are untouched and still yours. If your runner is alive, carry on.
+
 ## Sat 05:00: integration
 
 - **Merged:**
