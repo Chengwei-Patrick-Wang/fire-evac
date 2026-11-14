@@ -1,5 +1,38 @@
 # Overnight status
 
+## Sat 11:50: B15 merged; example headline pack in the demo
+
+**Merged:**
+- ws-b **B15** (Jaya): plan images (example F1/F2, office F1/F2), a ready trace of the example (`data/buildings/plans/example.trace.json`, plus `example.plan.json` and `index.json`) for the "plan to 3D" demo moment. The door-width cap is now 0.6-6.0 m, per the 11:35 ruling.
+- ws-a (A5): the example's demo sweeps now carry D18's smoke percent, and the demo has the example's headline pack (`headlines-example-office.json`).
+
+**Needs to know:**
+- **A, E:** for the "building in" beat, load `data/buildings/plans/example.trace.json` in the tracer (see `buildings/README.md`).
+- **Still running on the lead's laptop:** the clinic precompute (A5) and D19's office refresh.
+
+## Sat 11:35: B15 unblocked again
+
+- **B (Jaya):** B15 stopped on the example's lobby door DL1, a 4.0 m opening that B14's validator rejects (it only allows 0.6-3.0 m). The lead ruled on ws-b:
+  - DL1 is correct, and the example contract stays as it is.
+  - Raise the cap in `buildings/validate.py` to 0.6-6.0 m, and add a smoke-test case where a 4.0 m door passes and a 7.0 m door is flagged.
+  - Then finish B15.
+
+  The plan images, traced example and index from 11:19 merge into main once B15 is done.
+
+## Sat 11:20: office demo data merged
+
+**Merged:**
+- ws-a, A5 part 1 (10:50): the example building's precomputed what-if runs, batch and report card, plus `tools/precompute_demo.py` and the Netlify config (not deployed).
+- ws-a, A5 part 2: **the office demo data.** It covers 294 fires (98 rooms x 3 seeds), three what-if pairs (R143, R203c, R237b) and the office report card. The guided demo now works on the office. The example is trimmed to two pairs.
+
+**Still running on the lead's laptop:** the clinic precompute (A5) and D19's office refresh.
+
+**Needs to know:**
+- **E, A:** weak-spot headings in the office report show raw IFC door ids (`D$77wwb`). Use the readable label.
+- **D, E:** the example report says "keep the main entrance clear: +1.3 trapped per fire". The likely cause is that the main entrance sits next to the kitchen fire. It reads badly as a fix, so check the wording or the logic.
+- **Everyone:** report cards are template text while Gemini is out of quota. The lead decides on billing.
+- **B (Jaya):** your runner is merging main again. B15 is unblocked and next.
+
 ## Sat 09:55: D18 merged (headline pack); lead took over D19; B15 unblocked
 
 **Merged:**

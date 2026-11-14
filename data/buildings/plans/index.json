@@ -1,0 +1,103 @@
+{
+ "version": "plan-images/v0",
+ "images": [
+  {
+   "pxPerM": 40,
+   "width": 1840,
+   "height": 880,
+   "origin": [
+    120.0,
+    760.0
+   ],
+   "scaleBar": {
+    "p1": [
+     120.0,
+     840
+    ],
+    "p2": [
+     520.0,
+     840
+    ],
+    "meters": 10
+   },
+   "file": "example-F1.png",
+   "building": "example-office",
+   "floor": "F1"
+  },
+  {
+   "pxPerM": 40,
+   "width": 1840,
+   "height": 880,
+   "origin": [
+    120.0,
+    760.0
+   ],
+   "scaleBar": {
+    "p1": [
+     120.0,
+     840
+    ],
+    "p2": [
+     520.0,
+     840
+    ],
+    "meters": 10
+   },
+   "file": "example-F2.png",
+   "building": "example-office",
+   "floor": "F2"
+  },
+  {
+   "pxPerM": 30,
+   "width": 1678,
+   "height": 1267,
+   "origin": [
+    90.0,
+    1177.0
+   ],
+   "scaleBar": {
+    "p1": [
+     90.0,
+     1237
+    ],
+    "p2": [
+     390.0,
+     1237
+    ],
+    "meters": 10
+   },
+   "file": "office-F1.png",
+   "building": "office",
+   "floor": "F1"
+  },
+  {
+   "pxPerM": 30,
+   "width": 1678,
+   "height": 1267,
+   "origin": [
+    90.0,
+    1177.0
+   ],
+   "scaleBar": {
+    "p1": [
+     90.0,
+     1237
+    ],
+    "p2": [
+     390.0,
+     1237
+    ],
+    "meters": 10
+   },
+   "file": "office-F2.png",
+   "building": "office",
+   "floor": "F2"
+  }
+ ],
+ "traces": [
+  {
+   "trace": "example.trace.json",
+   "plan": "example.plan.json"
+  }
+ ]
+}
