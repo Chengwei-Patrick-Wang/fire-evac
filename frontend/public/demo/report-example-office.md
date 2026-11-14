@@ -6,8 +6,8 @@
 
 #### Top weak spots
 
-1. **Door between Lobby (L1) and Corridor 1 (C1)** · F1
-   - Door between Lobby (L1) and Corridor 1 (C1): 23 people queued at peak; 110 person-seconds of waiting on average, 93 of them in smoke, across 54 fires.
+1. **Door between Lobby and Corridor 1** · F1
+   - Door between Lobby and Corridor 1: 23 people queued at peak; 110 person-seconds of waiting on average, 93 of them in smoke, across 54 fires.
    - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
 2. **Fires starting in Lobby (L1)** · F1
    - Fire in Lobby (L1): 15.7 people trapped on average; 90% out after 264 s (3 fires).

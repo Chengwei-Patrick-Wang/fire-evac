@@ -166,7 +166,7 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
           const [x, y] = centroid(r.polygon)
           return (
             <Html key={r.id} position={toWorld(x, y, 0.3)} center style={labelStyle}>
-              <div style={{ fontSize: 11, color: '#e2e8f0', whiteSpace: 'nowrap', textShadow: '0 0 3px #000' }}>{r.id}</div>
+              <div className="l3d">{r.id}</div>
             </Html>
           )
         })}
@@ -178,7 +178,7 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
           const [x, y] = centroid(s.polygon)
           return (
             <Html key={s.id} position={toWorld(x, y, 0.3)} center style={labelStyle}>
-              <div style={{ fontSize: 11, color: '#fdba74', textShadow: '0 0 3px #000' }}>{s.group}</div>
+              <div className="l3d stair">{s.group}</div>
             </Html>
           )
         })}
@@ -186,7 +186,7 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
         const [x, y] = centroid(e.polygon)
         return (
           <Html key={e.id} position={toWorld(x, y, 0.3)} center style={labelStyle}>
-            <div style={{ fontSize: 11, color: '#86efac', whiteSpace: 'nowrap', textShadow: '0 0 3px #000' }}>{e.name}</div>
+            <div className="l3d exit">{e.name}</div>
           </Html>
         )
       })}

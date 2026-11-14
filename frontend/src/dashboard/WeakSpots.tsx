@@ -1,5 +1,6 @@
 import { useApp } from '../store/app'
 import { readFixes, readSkipped } from '../model/fixes'
+import { spotLabel } from '../model/spots'
 import { doorRange, readStability, roomRange, seedBadge, span } from '../model/ranges'
 import MeasuredFixes from './MeasuredFixes'
 import WhatIfHeadline from './WhatIfHeadline'
@@ -86,7 +87,7 @@ export default function WeakSpots() {
             {batch.top.map((t, i) => (
               <li key={t.kind + t.id + i} className={activeSpot === t.id ? 'on' : ''}>
                 <button className="spot" onClick={() => useApp.getState().goToSpot(t.id, t.floor)}>
-                  <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{t.id}</b> · {t.floor} · score {t.score.toFixed(1)}
+                  <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{spotLabel(t)}</b> · {t.floor} · score {t.score.toFixed(1)}
                   <SeedInfo batch={batch} t={t} />
                   <div className="dim">{t.why}</div>
                 </button>

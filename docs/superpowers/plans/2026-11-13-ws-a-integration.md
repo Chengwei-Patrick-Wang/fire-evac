@@ -160,3 +160,19 @@
 - [ ] **Step 3:** `precompute_demo.py --llm-showcase`: one `brain: "llm"` run with 150 agents (one `decide_batch` call per decision tick; minutes of wall time, so start by Sat 10 PM, on the lead's laptop), `personas` notes stored as `agents[].note` for hover; never in a batch or a what-if.
 - [ ] **Step 4: Verify:** `python -m backend.smoke_test` prints `OK`; with a key, `python -m backend.llm.features decide` prints 5 decisions in under 10 s.
 - [ ] **Step 5: Commit** `feat(llm): personas, decide, decide_batch`.
+
+### Task A11 (P0 · Sat 8 PM; contracts part first, at Sat 5 PM): Material and spread in the formats, a frontend fixture, the wood-vs-drywall pair, and the demo rerun
+
+**Plan:** `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`, Task A11 (steps, exact values and interfaces are there; this entry tracks A's progress). Part 1 needs nothing; Part 2 needs D25 and C27 on `main`. Lead ruling: `contracts/run.spread.fixture.json` stays in `contracts/` as a test file after Part 2.
+
+**Files:** Part 1: `contracts/scenario.example.json`, `tools/build_examples.py`, spec §6, `frontend/src/data/types.ts`; generates `contracts/run.spread.fixture.json`. Part 2: `tools/precompute_demo.py`, `backend/llm/features.py`, `backend/smoke_test.py`, `contracts/*.example.json`, `frontend/public/demo/*`.
+
+**Part 1 (formats, fixture, types):**
+- [x] **Step 1:** `"material": "drywall"` after `start` in the `fire` of `contracts/scenario.example.json`.
+- [x] **Step 2:** Spec §6 documents scenario `fire.material?` and run `fire.rooms?` / `fire.material?`. `frontend/src/data/types.ts` gains `Material`, `FireRoom`, `Scenario.fire.material?`, `Run.fire.rooms?`, `Run.fire.material?`, `DemoRun.whatIf: null | 'propped' | 'material'` and `DemoRun.material?`; E's tasks import them and define no copies.
+- [x] **Step 3:** `tools/build_examples.py` writes `contracts/run.spread.fixture.json` right after `run.example.json`: the run thinned like `precompute_demo --thin` (201 frames at 1 s, smoke every 6 s), `fire.material` `wood`, `fire.rooms` = `SPREAD_FIXTURE_ROOMS` (15 rooms, 12 ignite inside the 200 s replay), id `example-kitchen-fire-s1-spread-fixture`, a top-level `fixture` note; 0.55 MB. It is never indexed or copied by `sync-demo`.
+- [x] **Step 4: Verify:** `python tools/build_examples.py` prints the fixture line; `python tools/check_all.py buildings sim fire backend frontend privacy` prints `ALL OK`. Beyond the plan: the fixture, minus its `fixture` note, passes a strict `satisfies Run` type check (against the old `types.ts` it fails on `rooms`, and the scenario example on `material`); the only other flag is the existing `metrics.doors[].crossed`, which `DoorMetric` never mirrored. `run.example.json` and `building.example.json` regenerate unchanged; `batch.example.json` now carries `base.fire.material` and three `top[].why` strings in the `door_label` names the generator already wrote (the file in the repo was stale). `npm run build` also re-syncs `frontend/public/demo/*`; those copies are left for Part 2's data commit.
+- [x] **Step 5: Commit** `feat(contracts): optional fire.material and fire.rooms, with a spread fixture for the frontend`.
+
+**Part 2 (after D25 and C27 merge):**
+- [ ] **Steps 6–12:** the backend material twins in `backend/smoke_test.py`; the office's wood pair in `tools/precompute_demo.py`; spread sentences in the report cards (`backend/llm/features.py`); regenerate the examples; rerun the demo (`--all --thin`, about 2 h); verify; commit the code, then the data (the data reaches `main` only with or after E38). The fixture stays.

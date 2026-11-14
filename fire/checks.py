@@ -5,10 +5,12 @@ exit names, door widths and exit zones from that file, so a rebuilt office stays
 """
 import argparse
 import base64
+from collections import Counter
 import json
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 
@@ -127,7 +129,7 @@ def check_model():
     scenario = {"fire": {"floor": "F1", "room": "A", "x": 8, "y": 5,
                          "type": "kitchen", "start": 0},
                 "sprinklers": False, "doors": {}}
-    model = FireModel(building, scenario)
+    model = FireModel(building, scenario, spread=False)
     assert abs(model.hrr(60) - 168.8) < 0.5
     assert model.hrr(200) == 1500
     assert model.snapshot("F1") is None
@@ -157,9 +159,9 @@ def check_model():
         if t in (100, 160):
             assert not model.untenable("F1", *west), t
     assert model.untenable("F1", *west)
-    jump = FireModel(building, scenario)
+    jump = FireModel(building, scenario, spread=False)
     jump.step(200)
-    seconds = FireModel(building, scenario)
+    seconds = FireModel(building, scenario, spread=False)
     for t in range(1, 201):
         seconds.step(t)
     assert np.array_equal(jump._untenable, seconds._untenable)
@@ -179,15 +181,15 @@ def check_model():
         raise AssertionError("decreasing fire time must raise ValueError")
     for x, y in ((-50, -50), (10.1, 3.0)):
         sc = {**scenario, "fire": {**scenario["fire"], "x": x, "y": y}}
-        snapped = FireModel(building, sc)
+        snapped = FireModel(building, sc, spread=False)
         assert shapely.contains_xy(shapely.Polygon(building["floors"][0]["rooms"][0]["polygon"]),
                                    *snapped.source_xy)
-    delayed = FireModel(building, {**scenario, "fire": {**scenario["fire"], "start": 50}})
+    delayed = FireModel(building, {**scenario, "fire": {**scenario["fire"], "start": 50}}, spread=False)
     delayed.step(49)
     assert delayed.hrr(49) == 0 and delayed.snapshot("F1") is None
     assert not delayed.untenable("F1", *delayed.source_xy)
     delayed.step(110)
-    reference = FireModel(building, scenario)
+    reference = FireModel(building, scenario, spread=False)
     reference.step(60)
     assert delayed.snapshot("F1") == reference.snapshot("F1")
     assert delayed.blocked_doors() == set()
@@ -266,7 +268,7 @@ def check_tuning():
     building = json.loads((root / "contracts/building.example.json").read_text())
     scenario = json.loads((root / "contracts/scenario.example.json").read_text())
     for preset in ("kitchen", "battery", "trash", "bedroom"):
-        model = FireModel(building, {**scenario, "fire": {**scenario["fire"], "type": preset}})
+        model = FireModel(building, {**scenario, "fire": {**scenario["fire"], "type": preset}}, spread=False)
         floor_index = model.graph.floor_index["F1"]
         offset = model.graph.offset[floor_index]
         count = model.graph.floors[floor_index].n
@@ -1394,6 +1396,10 @@ def check_tradeoffs_slow():
     base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
     base["maxTime"] = 400
     base["occupants"] = {"total": 160, "mix": base["occupants"]["mix"]}
+    # D25: this check tests the trade-off wording, so concrete keeps the spread (the corridor at 300 s) out of its two fires.
+    # With drywall (the corridor at 180 s) the lobby fire traps 17 and the R105 fire traps one more person once E1 is
+    # blocked, so the net 16 is less than the lobby's 17 and no "(N of N in fires in ...)" note is written.
+    base["fire"]["material"] = "concrete"
     ignitions = [{"floor": "F1", "room": room} for room in ("L1", "R105")]
     batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=600)
     assert len(batch["runs"]) == 2 and not batch["failed"], batch["failed"]
@@ -2065,10 +2071,21 @@ def office_checks(path) -> str:
     floor, door, stair = next((f, d, r) for f in office["floors"] for d in f["doors"] for r in f["rooms"]
                               if r.get("type") == "stair" and r["id"] in d["connects"] and "outside" not in d["connects"])
     assert label(floor, door["id"]) == ("stair", f"Stair {stair.get('group', stair['id'])} door")
-    floor, door = next((f, d) for f in office["floors"] for d in f["doors"] if "outside" not in d["connects"]
-                       and not any(r.get("type") == "stair" and r["id"] in d["connects"] for r in f["rooms"]))
-    names = " to ".join(r.get("name", r["id"]) for r in floor["rooms"] if r["id"] in door["connects"])
-    assert label(floor, door["id"]) == ("door", f"Door {door['id']} ({names})")
+    # D23: a plain interior door whose two differently named rooms no other plain door of its floor joins reads
+    # `Door between <A> and <B>`, the names in floor order (the file's own, so a rebuilt office stays green).
+    for floor in office["floors"]:
+        plain = [(d, [r.get("name") or r["id"] for r in floor["rooms"] if r["id"] in d["connects"]])
+                 for d in floor["doors"] if "outside" not in d["connects"]
+                 and not any(r.get("type") == "stair" and r["id"] in d["connects"] for r in floor["rooms"])]
+        pairs = Counter(tuple(sorted(names)) for _, names in plain)
+        pick = next(((d, names) for d, names in plain if len(names) == 2 and names[0] != names[1]
+                     and pairs[tuple(sorted(names))] == 1 and all(n.isascii() and ":" not in n for n in names)), None)
+        if pick:
+            break
+    else:
+        raise AssertionError("no plain interior door with a pair of room names of its own in the office file")
+    door, names = pick
+    assert label(floor, door["id"]) == ("door", f"Door between {names[0]} and {names[1]}")
     # Widening uses the width the file declares, and the exit zone follows it.
     floor, zone = min(((f, z) for f in office["floors"] for z in f["exits"]),
                       key=lambda fz: (doors[fz[1]["door"]]["width"], fz[1]["door"]))
@@ -2125,7 +2142,7 @@ def check_labels():
         copy.write_text(json.dumps(_office_variant(office)), encoding="utf-8")
         variant_summary = office_checks(copy)
     for did, label in {"E1": "Exit Main entrance", "DSB1": "Stair SB door",
-                       "D101": "Door D101 (Kitchen to Corridor 1)"}.items():
+                       "D101": "Door between Kitchen and Corridor 1"}.items():
         assert door_label(example, "F1", did)[1] == label
     trash = deepcopy(base)
     trash["fire"]["type"] = "trash"
@@ -2170,6 +2187,518 @@ def check_labels():
                 raise AssertionError("bad override accepted")
     print(f"labels: {path.name} ({summary}) and a renamed, narrowed copy ({variant_summary}); "
           "overrides and fix budgeting checked", flush=True)
+
+
+def _names_fixture() -> dict:
+    """One floor that holds every case of D23's rule: pairs of names of their own, one pair of names joined by two
+    doors (the rooms in either order), two rooms of one name with three doors between them, a door with one known
+    room and one with none, a colon, a non-ASCII name, an unnamed room, an exit and a stair door."""
+    rooms = [{"id": rid, "type": "room", **({"name": name} if name else {})} for rid, name in (
+        ("R1", "Lab: West"), ("R2", "Hall"), ("R3", "Hall"), ("R4", None), ("R5", "Café"), ("R6", "Hall"),
+        ("R10", "Office"), ("R11", "Store"), ("R12", "Store"), ("R13", "Office"))]
+    rooms.append({"id": "S1", "name": "Stair 1", "type": "stair", "group": "S1"})
+
+    def door(ident, connects, x=0.0, y=0.0):  # the middle of the opening is (x, y)
+        return {"id": ident, "connects": connects, "a": [x, y - .5], "b": [x, y + .5], "width": 1.0, "state": "open"}
+
+    doors = [door("d1", ["R1", "R2"]), door("d7", ["R1", "R6"]),
+             door("d2", ["R2", "R3"], 10, 5), door("d3", ["R3", "R2"], 10, 1), door("d9", ["R2", "R3"], 4, 9),
+             door("d8", ["R4", "R1"]), door("d4", ["R4", "R5"]), door("d5", ["R5", "R99"]), door("d6", ["R98", "R99"]),
+             door("dx", ["R10", "R11"]), door("dy", ["R13", "R12"]),
+             door("E9", ["R2", "outside"]), door("dS", ["R3", "S1"])]
+    return {"version": "building/v0", "id": "names-fixture", "floors": [
+        {"id": "F1", "level": 0, "rooms": rooms, "doors": doors, "exits": [], "stairs": [], "walkable": []}]}
+
+
+def check_door_names():
+    """D23: a plain interior door reads `Door between <A> and <B>` in every text, never by its id."""
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.batch import aggregate, door_label, relabel, seed_ranges
+    from fire.fixes import candidate_fixes, restate, widen_door
+    from fire.headlines import all_whys, build_headlines
+
+    root = Path(__file__).resolve().parents[1]
+    example = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    office = load_office()
+    clinic_path = root / "data/buildings/clinic.json"
+    clinic = json.loads(clinic_path.read_text(encoding="utf-8")) if clinic_path.is_file() else None
+    leak = re.compile(r"Door [A-Za-z0-9_$]+ \(")  # a label of the old kind: the door's id, then its rooms
+
+    def has_door(building, floor_id, door_id):
+        return any(d["id"] == door_id for f in building["floors"] if f["id"] == floor_id for d in f["doors"])
+
+    # The pinned labels: the example's always, the office's and the clinic's when their files hold those doors.
+    assert door_label(example, "F1", "D101") == ("door", "Door between Kitchen and Corridor 1")
+    assert door_label(example, "F1", "DL1") == ("door", "Door between Lobby and Corridor 1")
+    pinned = {("F1", "D$77xwP"): "Door between CORRIDOR and SCIF OPEN OFFICE",
+              ("F1", "D$77xVs"): "Door between OPEN OFFICE (R113a) and CORRIDOR (R141)",
+              ("F1", "D$77xaz"): "Door between OPEN OFFICE (R114) and CORRIDOR (R142)",
+              ("F2", "DQnt_pi"): "Door between SECURE DOC ROOM and OPEN OFFICE"}
+    office_pinned = all(has_door(office, *key) for key in pinned)  # a rebuilt office has ids of its own
+    for key, want in pinned.items() if office_pinned else ():
+        assert door_label(office, *key) == ("door", want), (key, door_label(office, *key))
+    clinic_pinned = clinic is not None and has_door(clinic, "F1", "Dv$nmj8") and has_door(clinic, "F1", "Dv$nmZR")
+    if clinic_pinned:  # two doors join the same two rooms: told apart by the middle of the opening (x, then y)
+        both = "Door between TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1)"
+        assert door_label(clinic, "F1", "Dv$nmj8") == ("door", both + ", 1 of 2")
+        assert door_label(clinic, "F1", "Dv$nmZR") == ("door", both + ", 2 of 2")
+        assert door_label(clinic, "F1", "Dv$nnMB")[1] == "Door between CORRIDOR (R1AC3) and CORRIDOR (R1CC1)"
+    assert door_label(example, "F1", "missing") == ("door", "Door missing")  # an unknown id keeps today's label
+
+    # On every floor of the three buildings: a plain door's label is unique, ASCII, colon-free and without its own id.
+    counted = 0
+    for building in (example, office, clinic):
+        for floor in (building or {"floors": []})["floors"]:
+            rooms, seen = {r["id"]: r for r in floor["rooms"]}, {}
+            for door in floor["doors"]:
+                if "outside" in door["connects"] or any(rooms.get(c, {}).get("type") == "stair" for c in door["connects"]):
+                    continue
+                kind, text = door_label(building, floor["id"], door["id"])
+                assert kind == "door" and text.startswith("Door ") and text.isascii() and ":" not in text, text
+                assert door["id"] not in text, (building["id"], door["id"], text)
+                assert text not in seen, (building["id"], floor["id"], text, door["id"], seen[text])
+                seen[text] = door["id"]
+            counted += len(seen)
+
+    # Every branch of the rule, on a floor made for it.
+    fixture = _names_fixture()
+    want = {"d1": "Door between Lab - West (R1) and Hall (R2)", "d7": "Door between Lab - West (R1) and Hall (R6)",
+            "d9": "Door between Hall (R2) and Hall (R3), 1 of 3", "d3": "Door between Hall (R2) and Hall (R3), 2 of 3",
+            "d2": "Door between Hall (R2) and Hall (R3), 3 of 3", "d8": "Door between Lab - West and R4",
+            "d4": "Door between R4 and Caf?", "d5": "Door from Caf?", "d6": "Door d6",
+            "dx": "Door between Office (R10) and Store (R11)", "dy": "Door between Store (R12) and Office (R13)"}
+    for did, text in want.items():
+        assert door_label(fixture, "F1", did) == ("door", text), (did, door_label(fixture, "F1", did))
+    assert door_label(fixture, "F1", "E9") == ("exit", "Exit E9")
+    assert door_label(fixture, "F1", "dS") == ("stair", "Stair S1 door")
+    assert len(set(want.values())) == len(want) and all(t.isascii() and ":" not in t for t in want.values())
+
+    # widen_door names the door, not its id. An unknown id has no label, so it stays the one id in the messages.
+    widened = widen_door(example, "DL1")
+    altered = deepcopy(widened)
+    altered["floors"][0]["walkable"].append(altered["floors"][0]["walkable"][0])
+    flat = deepcopy(example)
+    kitchen_door = next(d for d in flat["floors"][0]["doors"] if d["id"] == "D101")
+    kitchen_door["b"] = list(kitchen_door["a"])  # an opening of no length
+
+    def refused(building, door_id):
+        try:
+            widen_door(building, door_id)
+        except ValueError as error:
+            return str(error)
+        raise AssertionError(f"widening {door_id} was accepted")
+
+    with patch("fire.fixes.renormalize", return_value=altered):
+        assert refused(example, "DL1") == ("widening Door between Lobby and Corridor 1 "
+                                           "changes room connections or walkable pieces")
+    assert refused(flat, "D101") == "Door between Kitchen and Corridor 1 has no opening"
+    assert refused(example, "missing") == "unknown door missing"
+    fixes, _ = candidate_fixes(example, base, {"top": [{"kind": "door", "id": "DL1", "floor": "F1"}]})
+    assert fixes[0]["label"] == "Widen Door between Lobby and Corridor 1 from 4.00 m to 4.50 m", fixes[0]["label"]
+
+    # The callers that write the label into a text: aggregate's `why` and the stability line.
+    def record(seed):
+        return {"ok": True, "scenarioId": f"hand-{seed}", "seed": seed, "ignition": {"floor": "F1", "room": "R101"},
+                "t90": 100.0, "t100": None, "trapped": 0,
+                "doors": [{"id": "D101", "floor": "F1", "peakQueue": 3, "waitPersonSeconds": 80.0}],
+                "heatmaps": [{"floor": "F1", "origin": [0, 0], "cell": 0.5, "cols": 1, "rows": 1,
+                              "d": base64.b64encode(bytes([100])).decode("ascii")}]}
+
+    top = next(item for item in aggregate(example, base, [record(1)])["top"] if item["id"] == "D101")
+    assert top["why"].startswith("Door between Kitchen and Corridor 1: 3 people queued at peak;"), top["why"]
+    stability = seed_ranges(example, base, [record(1), record(2)])["stability"]["why"]
+    assert stability == ("The top 3 weak spots hold in 2 of 2 seeds: Door between Kitchen and Corridor 1. "
+                         "Door between Kitchen and Corridor 1 ranks first in 2 of 2."), stability
+
+    # relabel: a hand-made office batch whose texts carry the old labels of three doors.
+    picks = [("F1", "D$77xwP"), ("F1", "D$77xVs"), ("F2", "DQnt_pi")] if office_pinned else [
+        (f["id"], d["id"]) for f in office["floors"] for d in f["doors"]
+        if door_label(office, f["id"], d["id"])[0] == "door"][:3]
+
+    def old(floor_id, door_id):  # the label before D23, written out here and not taken from fire.batch
+        floor = next(f for f in office["floors"] if f["id"] == floor_id)
+        door = next(d for d in floor["doors"] if d["id"] == door_id)
+        return f"Door {door_id} ({' to '.join(r.get('name', r['id']) for r in floor['rooms'] if r['id'] in door['connects'])})"
+
+    (fa, a), (fb, b), (fc, c) = picks
+    was = [old(*pick) for pick in picks]
+    now = [pinned[pick] if office_pinned else door_label(office, *pick)[1] for pick in picks]
+    batch = {
+        "version": "batch/v0", "id": "hand-made", "buildingId": office["id"],
+        "top": [{"kind": "door", "id": a, "floor": fa, "score": 61.0,
+                 "why": f"{was[0]}: 15 people queued at peak; 52 person-seconds of waiting on average across 294 fires."},
+                {"kind": "room", "id": "R203c", "floor": "F2", "score": 100.0,
+                 "why": "Fire in OPEN OFFICE (R203c): 0.2 people trapped on average; 90% out after 120 s (24 fires)."}],
+        "stability": {"seeds": [1, 2, 3], "top3": [a, b, c], "heldIn": 2, "n": 3, "stable": False,
+                      "why": f"The top 3 weak spots hold in 2 of 3 seeds: {was[0]}, {was[1]}, {was[2]}. {was[0]} ranks first in 3 of 3."},
+        "whatIf": [{"id": "blockedDoor", "label": f"{was[1]} blocked", "doors": {b: "blocked"}, "sprinklers": False,
+                    "n": 4, "dT90": 3.0, "slower": 3, "faster": 0, "dTrapped": 0.0,
+                    "why": f"{was[1]} blocked: 90% out 3 s later on average (slower in 3 of 4 fires); +0.0 trapped per fire."}],
+        "fixes": [{"id": f"widen-{a}", "kind": "widen", "door": a, "floor": fa, "n": 24, "dT90": -4.0, "faster": 15,
+                   "dTrapped": -0.1, "dSmokeSeconds": -30.0, "smokePct": -6.0, "helps": True,
+                   "label": f"Widen {was[0]} from 0.86 m to 1.36 m",
+                   "why": f"Widen {was[0]} from 0.86 m to 1.36 m: 90% out 4 s sooner on average and 6% less time in smoke "
+                          "across 24 fires (faster in 15); -0.1 trapped per fire."},
+                  {"id": f"keepClear-{c}", "kind": "keepClear", "door": c, "floor": fc, "n": 24, "dT90": -2.0, "faster": 9,
+                   "dTrapped": 0.0, "dSmokeSeconds": -10.0, "smokePct": -7.0, "helps": True,
+                   "label": f"Keep {was[2]} clear",
+                   "why": f"Keep {was[2]} clear: 90% out 2 s sooner on average and 7% less time in smoke "
+                          "across 24 fires (faster in 9); +0.0 trapped per fire."}],
+        "fixesSkipped": [{"id": f"widen-{b}", "reason": f"widening {b} changes room connections or walkable pieces"},
+                         {"id": f"widen-{c}", "reason": f"door {c} has no opening"},
+                         {"id": "widen-nowhere", "reason": "unknown door nowhere"},
+                         {"id": "sprinklers", "reason": "Sprinklers already on or preset peak does not exceed the sprinkler cap."},
+                         {"id": "widen-text", "reason": f"Widen {was[0]}: not measured."}]}
+
+    def swapped(value, pairs):
+        if isinstance(value, str):
+            for before, after in pairs:
+                value = value.replace(before, after)
+            return value
+        if isinstance(value, list):
+            return [swapped(item, pairs) for item in value]
+        if isinstance(value, dict):
+            return {key: swapped(item, pairs) for key, item in value.items()}
+        return value
+
+    def texts(value, key=None):  # every string value, with the field it sits in
+        if isinstance(value, str):
+            yield key, value
+        elif isinstance(value, dict):
+            for field, item in value.items():
+                yield from texts(item, field)
+        elif isinstance(value, list):
+            for item in value:
+                yield from texts(item, key)
+
+    snapshot = deepcopy(batch)
+    expected = swapped(batch, list(zip(was, now)))
+    expected["fixesSkipped"][0]["reason"] = f"widening {now[1]} changes room connections or walkable pieces"
+    expected["fixesSkipped"][1]["reason"] = f"{now[2]} has no opening"
+    result = relabel(office, batch)
+    assert batch == snapshot and result is not batch  # pure
+    assert result == expected  # only the texts moved: ids, numbers and every other text are as they were
+    assert relabel(office, result) == result  # and a second pass changes nothing
+    assert not any(leak.search(text) for _, text in texts(result)), [t for _, t in texts(result) if leak.search(t)]
+    shown = [text for field, text in texts(result) if field in ("why", "label", "reason")]
+    assert not any(ident in text for ident in (a, b, c) for text in shown)
+    assert result["fixesSkipped"][2]["reason"] == "unknown door nowhere"  # no door, no label to give
+    assert restate(relabel(office, batch)) == relabel(office, restate(batch))  # D22's rewrite and this one commute
+    pack = build_headlines(office, batch, generated="2026-11-14T15:00:00Z")  # the pack relabels its input itself
+    first = pack["weakSpots"][0]
+    assert first["label"] == now[0] and first["why"].startswith(now[0] + ": ")
+    assert pack["fixes"][0]["label"] == f"Widen {now[0]} from 0.86 m to 1.36 m"
+    assert not any(leak.search(text) or ident in text for text in all_whys(pack) for ident in (a, b, c))
+    assert not any(leak.search(text) for _, text in texts(pack))
+    folded = {"top": [{"why": "Door d4 (R4 to Caf?): 3 people queued."}, {"why": "Door d4 (R4 to Café): 3 people queued."}]}
+    assert [t["why"] for t in relabel(fixture, folded)["top"]] == ["Door between R4 and Caf?: 3 people queued."] * 2
+    # An old label that two floors would name differently is left alone, never guessed.
+    twin = {"version": "building/v0", "id": "twin", "floors": [
+        {"id": "F1", "rooms": [{"id": f"{n}{i}", "name": n.upper()} for i in (1, 2) for n in ("a", "b")],
+         "doors": [{"id": "dd", "connects": ["a1", "b1"]}, {"id": "dz", "connects": ["a2", "b2"]}]},
+        {"id": "F2", "rooms": [{"id": "a3", "name": "A"}, {"id": "b3", "name": "B"}],
+         "doors": [{"id": "dd", "connects": ["a3", "b3"]}]}]}
+    assert door_label(twin, "F1", "dd")[1] != door_label(twin, "F2", "dd")[1]
+    assert relabel(twin, {"top": [{"why": "Door dd (A to B): 2 people queued."}]}) == {"top": [{"why": "Door dd (A to B): 2 people queued."}]}
+    json.dumps(pack, allow_nan=False)
+    print(f"door names: {counted} plain doors in {'three buildings' if clinic else 'two buildings'}, unique per floor; "
+          f"every branch of the rule, widen messages, aggregate, relabel ({'pinned' if office_pinned else 'office file'} "
+          "doors) and the headline pack checked", flush=True)
+
+
+def _tiny_rooms(building: dict) -> list:
+    """D24: (floor id, room) for each room with no grid node inside it, a room thinner than a smoke cell."""
+    graph = get_graph(building)
+    return [(floor["id"], room) for floor, grid in zip(building["floors"], graph.floors) for room in floor["rooms"]
+            if not shapely.contains_xy(shapely.Polygon(room["polygon"]), grid.xy[:, 0], grid.xy[:, 1]).any()]
+
+
+def check_tiny_room():
+    """D24: a fire in a room thinner than a smoke cell starts at the nearest node a straight walk reaches."""
+    from fire.model import FireModel
+
+    # The fixture: A ends at x = 10, a 0.2 m wall stands before B, and the grid's nodes sit at x = 9.75 and 10.25.
+    building = fixture_building()
+    graph = get_graph(building)
+    grid, in_a = graph.floors[0], shapely.Polygon(building["floors"][0]["rooms"][0]["polygon"])
+    side = _ring(box(9.9, 3, 9.99, 5))  # 0.09 x 2 m along A's east side: no node inside, one 0.15 m away in A
+    node = graph.node_at("F1", 9.945, 4, side)
+    assert in_a.contains(shapely.Point(*grid.xy[node])) and math.dist(grid.xy[node], (9.945, 4)) < 0.5, grid.xy[node]
+    assert graph.node_at("F1", 0, 0, side) == node  # a point off the room anchors at its representative point
+    walled = _ring(box(10.02, 3, 10.18, 5))  # inside the wall: every node beside it is behind a wall
+    try:
+        graph.node_at("F1", 10.1, 4, walled)
+    except ValueError as error:
+        assert str(error) == "No grid nodes inside or beside the requested room on F1", error
+    else:
+        raise AssertionError("a room inside a wall must raise ValueError")
+
+    # The office: each thin room gets a node within a cell of it, one a straight walk over walkable floor reaches.
+    office = load_office()
+    graph = get_graph(office)
+    tiny = _tiny_rooms(office)
+    for floor_id, room in tiny:
+        index, polygon = graph.floor_index[floor_id], shapely.Polygon(room["polygon"])
+        grid, anchor = graph.floors[index], polygon.representative_point()
+        xy = grid.xy[graph.node_at(floor_id, anchor.x, anchor.y, room["polygon"]) - graph.offset[index]]
+        assert polygon.distance(shapely.Point(*xy)) <= grid.spec["cell"], (room["id"], xy)
+        assert grid.walk.covers(shapely.LineString([xy, (anchor.x, anchor.y)])), (room["id"], xy)
+    r203b = next((r for f, r in tiny if (f, r["id"]) == ("F2", "R203b")), None)
+    if r203b and np.allclose(shapely.Polygon(r203b["polygon"]).bounds, (0.331, 23.818, 5.897, 24.026), atol=1e-3):
+        index = graph.floor_index["F2"]  # pinned: the node at (3.25, 23.75) in R201, 0.22 m from the room's point
+        xy = graph.floors[index].xy[graph.node_at("F2", 3.114, 23.922, r203b["polygon"]) - graph.offset[index]]
+        assert np.allclose(xy, (3.25, 23.75)), xy
+        scenario = json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8"))
+        scenario["fire"].update(type="kitchen", floor="F2", room="R203b", x=3.114, y=23.922)
+        assert np.allclose(FireModel(office, scenario).source_xy, (3.25, 23.75))
+    print(f"tiny rooms: fixture sliver, wall sliver, and {len(tiny)} thin office rooms "
+          f"({', '.join(r['id'] for _, r in tiny) or 'none'}) checked", flush=True)
+
+
+def check_tiny_room_slow():
+    """D24: a fire in the office's thin room runs to the end, and every room of the clinic has a node."""
+    from fire.batch import _init, _run_one, _tasks, apply_overrides
+
+    office = load_office()
+    tiny = _tiny_rooms(office)
+    pick = next((p for p in tiny if (p[0], p[1]["id"]) == ("F2", "R203b")), tiny[0] if tiny else None)
+    if pick:
+        base = apply_overrides(json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8")),
+                               60, "kitchen")
+        base["maxTime"] = 240
+        _init(office)
+        record = _run_one(_tasks(office, base, [{"floor": pick[0], "room": pick[1]["id"]}], (1,))[0])
+        assert record["ok"] is True, record
+        print(f"tiny rooms: {pick[1]['id']}, seed 1, 60 occupants: t90={record['t90']} trapped={record['trapped']}",
+              flush=True)
+    path = ROOT / "data/buildings/clinic.json"
+    if path.is_file():  # the clinic file is optional, as in check_door_names
+        clinic = json.loads(path.read_text(encoding="utf-8"))
+        graph = get_graph(clinic)
+        for floor in clinic["floors"]:
+            for room in floor["rooms"]:
+                point = shapely.Polygon(room["polygon"]).representative_point()
+                graph.node_at(floor["id"], point.x, point.y, room["polygon"])  # raises when the room has no node
+        print(f"tiny rooms: all {sum(len(f['rooms']) for f in clinic['floors'])} clinic rooms have a node", flush=True)
+
+
+def _rows(entries) -> list:
+    return [(e["floor"], e["room"], e["ignite"]) for e in entries]
+
+
+def check_spread():
+    """D25: the presets, the room graph, the ignition schedule, and the doors and heat the model adds as rooms ignite."""
+    from copy import deepcopy
+    from fire.model import FireModel
+    from fire.spread import DEFAULT_MATERIAL, MATERIALS, ignition_schedule, material_name, room_hrr_kw, room_links
+    from fire.stub import NoFire
+
+    # Presets: wood is faster than drywall, which is faster than concrete, in every column; a door beats a wall.
+    for column in ("flashover", "door", "wall"):
+        assert MATERIALS["wood"][column] < MATERIALS["drywall"][column] < MATERIALS["concrete"][column], column
+    assert all(preset["door"] < preset["wall"] for preset in MATERIALS.values())
+    assert DEFAULT_MATERIAL == "drywall" and list(MATERIALS) == ["concrete", "drywall", "wood"]
+    assert room_hrr_kw(1500.0, 300.0, -1) == 0.0 and room_hrr_kw(1500.0, 300.0, 0) == 0.0
+    assert room_hrr_kw(1500.0, 300.0, 150) == 375.0 and room_hrr_kw(1500.0, 300.0, 300) == 1500.0
+    assert room_hrr_kw(1500.0, 300.0, 3000) == 1500.0
+
+    # Names: a missing key is drywall; anything but the exact names raises the same message, from the model too.
+    assert material_name({}) == "drywall" and material_name({"type": "kitchen"}) == "drywall"
+    assert [material_name({"material": name}) for name in MATERIALS] == list(MATERIALS)
+    for bad in ("Wood", "steel", "", None, 3, ["wood"]):
+        try:
+            material_name({"material": bad})
+        except ValueError as error:
+            assert str(error) == f"Unknown fire material {bad!r}; valid names: concrete, drywall, wood", error
+        else:
+            raise AssertionError(f"material {bad!r} must raise ValueError")
+    building = fixture_building()
+    base = {"fire": {"floor": "F1", "room": "A", "x": 8, "y": 5, "type": "kitchen", "start": 0},
+            "sprinklers": False, "doors": {}, "maxTime": 1300}
+    for spread in (True, False):
+        try:
+            FireModel(building, {**base, "fire": {**base["fire"], "material": "steel"}}, spread=spread)
+        except ValueError as error:
+            assert str(error) == "Unknown fire material 'steel'; valid names: concrete, drywall, wood", error
+        else:
+            raise AssertionError("a bad material must fail the model")
+
+    # The two-room fixture: A and B stand 0.2 m apart along 6 m, joined by door D. A fire in A.
+    def schedule(b, material=None, start=0, **changes):
+        fire = {**base["fire"], "start": start, **({"material": material} if material else {})}
+        return ignition_schedule(b, {**base, "fire": fire, **changes})
+
+    links = room_links(building)
+    assert links[("F1", "A")] == {("F1", "B"): "door"} and links[("F1", "B")] == {("F1", "A"): "door"}
+    assert schedule(building, "drywall") == [{"room": "A", "floor": "F1", "ignite": 0.0},
+                                             {"room": "B", "floor": "F1", "ignite": 180.0}]
+    assert [_rows(schedule(building, m))[1] for m in ("wood", "concrete")] == [("F1", "B", 90.0), ("F1", "B", 300.0)]
+    assert _rows(schedule(building)) == _rows(schedule(building, "drywall"))  # the default
+    walled = deepcopy(building)
+    walled["floors"][0]["doors"] = []
+    assert room_links(walled)[("F1", "A")] == {("F1", "B"): "wall"}
+    assert [_rows(schedule(walled, m))[1] for m in ("drywall", "wood", "concrete")] == [
+        ("F1", "B", 600.0), ("F1", "B", 240.0), ("F1", "B", 1200.0)]
+    assert _rows(schedule(building, "drywall", start=50)) == [("F1", "A", 50.0), ("F1", "B", 230.0)]
+    assert _rows(schedule(building, "drywall", maxTime=170)) == [("F1", "A", 0.0)]
+    assert _rows(schedule(building, "drywall", maxTime=180)) == [("F1", "A", 0.0), ("F1", "B", 180.0)]
+    assert _rows(schedule(building, "drywall", sprinklers=True)) == [("F1", "A", 0.0)]
+    assert _rows(schedule(building, "wood", maxTime=None)) == [("F1", "A", 0.0), ("F1", "B", 90.0)]  # the sim's default
+    cut = deepcopy(walled)  # 0.6 m of shared wall is too short; 1.2 m is enough
+    cut["floors"][0]["rooms"][1]["polygon"] = _ring(box(10.2, 0, 20.2, 0.6))
+    assert room_links(cut)[("F1", "A")] == {} and _rows(schedule(cut, "wood")) == [("F1", "A", 0.0)]
+    cut = deepcopy(walled)
+    cut["floors"][0]["rooms"][1]["polygon"] = _ring(box(10.2, 0, 20.2, 1.2))
+    assert room_links(cut)[("F1", "A")] == {("F1", "B"): "wall"}
+    odd = deepcopy(building)  # a degenerate room links to nothing and breaks nothing
+    odd["floors"][0]["rooms"].append({"id": "Z", "polygon": [[0, 0], [1, 1]]})
+    assert room_links(odd)[("F1", "Z")] == {} and schedule(odd, "wood") == schedule(building, "wood")
+    # With no room named, the room around the fire point is the origin; a point in no room gives no schedule.
+    anonymous = {key: value for key, value in base["fire"].items() if key != "room"}
+    assert _rows(ignition_schedule(building, {**base, "fire": {**anonymous, "x": 15, "y": 3}})) == [
+        ("F1", "B", 0.0), ("F1", "A", 180.0)]
+    assert ignition_schedule(building, {**base, "fire": {**anonymous, "x": 10.1, "y": 3}}) == []  # in the wall
+    assert ignition_schedule(building, {**base, "fire": {**anonymous, "x": 50, "y": 3}}) == []
+
+    # Doors and heat: a drywall kitchen fire against its spread=False twin.
+    model, twin = FireModel(building, base), FireModel(building, base, spread=False)
+    wanted = [{"room": "A", "floor": "F1", "ignite": 0.0}, {"room": "B", "floor": "F1", "ignite": 180.0}]
+    assert model.material == twin.material == "drywall"
+    assert model.ignition_times() == wanted and twin.ignition_times() == wanted[:1]
+    assert model.burning_rooms(-1) == set()
+    for t in range(1, 181):
+        model.step(t)
+        twin.step(t)
+        assert np.array_equal(model._footprint, twin._footprint), t
+        if t < 180:
+            assert model.hrr(t) == twin.hrr(t), t
+            assert np.array_equal(model._density, twin._density), t
+            assert model.blocked_doors() == twin.blocked_doors(), t
+    assert "D" in model.blocked_doors() and "D" not in twin.blocked_doors()
+    assert model.hrr(330) - twin.hrr(330) == 375.0 and model.hrr(480) - twin.hrr(480) == 1500.0
+    assert model.burning_rooms(179.9) == {("F1", "A")}
+    assert model.burning_rooms(180) == {("F1", "A"), ("F1", "B")} and twin.burning_rooms(400) == {("F1", "A")}
+    for t in range(181, 401):
+        model.step(t)
+        twin.step(t)
+        assert np.array_equal(model._footprint, twin._footprint), t
+    returned = model.ignition_times()
+    returned[1]["ignite"] = -1.0
+    returned.clear()
+    assert model.ignition_times() == wanted
+    # Smoke grows with every burning room: a trash fire peaks at 0.5 MW, so wood's second room (90 s) adds smoke.
+    trash = {**base, "fire": {**base["fire"], "type": "trash", "material": "wood"}}
+    model, twin = FireModel(building, trash), FireModel(building, trash, spread=False)
+    for t in (60, 89):
+        model.step(t)
+        twin.step(t)
+        assert np.array_equal(model._density, twin._density), t
+    model.step(200)
+    twin.step(200)
+    assert model.hrr(200) > twin.hrr(200) == 500.0 and model._density.max() > twin._density.max()
+
+    # The example: a kitchen fire in R101 at (8, 3) over 400 s, each material.
+    example = json.loads((ROOT / "contracts/building.example.json").read_text(encoding="utf-8"))
+    scenario = json.loads((ROOT / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    scenario.update(maxTime=400, sprinklers=False)
+    assert (scenario["fire"]["room"], scenario["fire"]["x"], scenario["fire"]["y"]) == ("R101", 8, 3)
+
+    def burn(material, **fire):
+        return {**scenario, "fire": {**scenario["fire"], "material": material, **fire}}
+
+    ten = ("R102", "L1", "R103", "R104", "R105", "R106", "R107", "R108", "SA1", "SB1")
+    expected = {"drywall": [("F1", "R101", 0.0), ("F1", "C1", 180.0)] + [("F1", r, 360.0) for r in ten],
+                "wood": ([("F1", "R101", 0.0), ("F1", "C1", 90.0)] + [("F1", r, 180.0) for r in ten]
+                         + [("F2", "SA2", 270.0), ("F2", "SB2", 270.0), ("F2", "C2", 360.0)]),
+                "concrete": [("F1", "R101", 0.0), ("F1", "C1", 300.0)]}
+    for material, want in expected.items():
+        got = ignition_schedule(example, burn(material))
+        assert _rows(got) == want, (material, got)
+    lobby = shapely.Polygon(next(r for r in example["floors"][0]["rooms"] if r["id"] == "L1")["polygon"])
+    point = lobby.representative_point()
+    assert _rows(ignition_schedule(example, burn("drywall", room="L1", x=point.x, y=point.y))) == (
+        [("F1", "L1", 0.0), ("F1", "C1", 180.0)]
+        + [("F1", r, 360.0) for r in ("R101", "R102", "R103", "R104", "R105", "R106", "R107", "R108", "SA1", "SB1")])
+    links = room_links(example)  # 24 door links (2 of them stairs) and 22 wall-only links, as measured
+    assert sum(kind == "door" for a, near in links.items() for b, kind in near.items() if a < b) == 24
+    assert sum(kind == "wall" for a, near in links.items() for b, kind in near.items() if a < b) == 22
+    across = {frozenset((a[1], b[1])) for a, near in links.items() for b in near if a[0] != b[0]}
+    assert across == {frozenset(("SA1", "SA2")), frozenset(("SB1", "SB2"))}, across  # only stairs link floors
+
+    # Deterministic: equal calls, equal ignition per room in a copy with the floors reversed, plain JSON.
+    wood = burn("wood")
+    first = ignition_schedule(example, wood)
+    assert first == ignition_schedule(example, wood)
+    flipped = {**example, "floors": list(reversed(example["floors"]))}
+    assert {(e["floor"], e["room"]): e["ignite"] for e in ignition_schedule(flipped, wood)} == {
+        (e["floor"], e["room"]): e["ignite"] for e in first}
+    json.dumps(first, allow_nan=False)
+    one, other = FireModel(example, wood), FireModel(flipped, wood)
+    assert one.material == "wood" and [one.hrr(t) for t in range(0, 401, 20)] == [other.hrr(t) for t in range(0, 401, 20)]
+    assert one.hrr(100) > FireModel(example, wood, spread=False).hrr(100)
+
+    # NoFire has the two methods and no material: the sim writes the new run keys only for a model that has one.
+    none = NoFire(example, scenario)
+    assert none.burning_rooms(10) == set() and none.ignition_times() == [] and not hasattr(none, "material")
+
+    # The office, when its file is there. The pinned numbers belong to the demo's file; a rebuilt office gets the checks
+    # that hold for any building.
+    path = office_path()
+    if not path.is_file():
+        print(f"spread: {path.name} missing, skipped the office part", flush=True)
+        return
+    office = load_office(path)
+    started = time.perf_counter()
+    links = room_links(office)
+    built = time.perf_counter() - started
+    pairs = Counter(kind for a, near in links.items() for b, kind in near.items() if a < b)
+    assert built < 2, built
+    office_scenario = json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8"))
+    rooms = [(f["id"], r["id"]) for f in office["floors"] for r in f["rooms"]]
+    pinned = ("F1", "R143") in rooms and ("F1", "R143A") in rooms
+    if not pinned:  # a rebuilt office has ids of its own
+        office_scenario["fire"].update(floor=rooms[0][0], room=rooms[0][1])
+    reached = {m: len(ignition_schedule(office, {**office_scenario, "maxTime": 400,
+                                                 "fire": {**office_scenario["fire"], "material": m}}))
+               for m in ("concrete", "drywall", "wood")}
+    assert 1 <= reached["concrete"] <= reached["drywall"] <= reached["wood"], reached
+    if pinned:
+        assert (office_scenario["fire"]["floor"], office_scenario["fire"]["room"]) == ("F1", "R143")
+        assert (pairs["door"], pairs["wall"]) == (91, 176), pairs
+        assert [reached[m] for m in ("concrete", "drywall", "wood")] == [9, 21, 37], reached
+    print(f"spread: fixture and example (12 rooms by 400 s with drywall, 15 with wood, 2 with concrete) and "
+          f"{'the office' if pinned else 'a rebuilt office'}: {pairs['door']} door and {pairs['wall']} wall-only links in "
+          f"{built:.2f} s, rooms on fire by 400 s (concrete/drywall/wood) {reached['concrete']}/{reached['drywall']}/"
+          f"{reached['wood']}", flush=True)
+
+
+def check_spread_slow():
+    """D25: the example's kitchen fire over 400 s with drywall, simulated: the corridor's doors close as it ignites."""
+    from sim.run import run
+    from fire.model import FireModel
+
+    building = json.loads((ROOT / "contracts/building.example.json").read_text(encoding="utf-8"))
+    scenario = json.loads((ROOT / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    scenario.update(maxTime=400, sprinklers=False)
+    scenario["fire"]["material"] = "drywall"
+    assert scenario["occupants"]["total"] == 160
+    result = run(building, scenario, FireModel(building, scenario))
+    first = {}
+    for event in result["events"]:
+        if event["type"] == "door_blocked":
+            first.setdefault(event["door"], event["t"])
+    corridor = ("D101", "D102", "D103", "D104", "D105", "D106", "D107", "D108", "DL1", "DSA1", "DSB1")
+    for door in corridor:
+        assert door in first and first[door] <= 180.0, (door, first.get(door))
+    for door in corridor[1:]:
+        assert first[door] == 180.0, (door, first[door])  # the corridor ignites at 180 s: its other ten doors close then
+    reasons = Counter(event["reason"] for event in result["events"] if event["type"] == "trapped")
+    assert result["metrics"]["trapped"] == sum(reasons.values()), (result["metrics"]["trapped"], reasons)
+    print(f"spread: the corridor's 11 doors closed by 180 s (D101 at {first['D101']:g} s, the other ten at 180); "
+          f"trapped {result['metrics']['trapped']} of 160 by reason {dict(reasons)}; "
+          f"t50={result['metrics']['t50']} t90={result['metrics']['t90']}", flush=True)
 
 
 def check_office_slow():

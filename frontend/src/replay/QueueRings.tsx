@@ -99,7 +99,7 @@ function Rings({ targets, counts, building }: { targets: QueueTarget[]; counts: 
       {Array.from({ length: LABELS }, (_, j) => (
         <group key={j} ref={(g) => { groups.current[j] = g }} visible={false}>
           <Html center style={{ pointerEvents: 'none' }}>
-            <div ref={(d) => { divs.current[j] = d }} style={{ display: 'none', color: '#fff', fontSize: 11, textShadow: '0 0 3px #000' }} />
+            <div ref={(d) => { divs.current[j] = d }} className="l3d count" style={{ display: 'none' }} />
           </Html>
         </group>
       ))}

@@ -21,13 +21,18 @@ exposure by +22% (measured Sat 3 AM). Long waits are framed as gaps in the build
 traits of people (spec 12), and the card ends with the limits line and the writer line.
 
 Names. A spot is named in words, never by its door id: an IFC code like D$77wwb means nothing to a
-judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR (R121) and
-OPEN OFFICE (R143)" (an unnamed interior door is named by the two rooms it joins), "Fires starting
-in OPEN OFFICE (R203c)"; a room id after its name is fine, the 3D view labels rooms that way. D's
-`why` lines and what-if labels print door ids for unnamed doors ("Door D$77xwP (CORRIDOR to SCIF
-OPEN OFFICE)"): _Names.readable swaps those for the same label, so the JSON keeps its ids and the
-card never shows one. A headline or fix from the model that carries a door id is dropped like a
-bad number. One heading is built in _render, so the template and the model's card share it.
+judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR and OPEN
+OFFICE" (an unnamed interior door is named by the two rooms it joins, with their room ids only where
+two doors would read the same), "Fires starting in OPEN OFFICE (R203c)"; a room id after its name is
+fine, the 3D view labels rooms that way. A door, an exit or a stair door gets its name from
+fire.batch.door_label (D23), the one rule for door names, so this heading, D's `why` lines, the
+headline pack and the report card read alike. _Names words a door from its rooms only where D's
+name shows the door's id (an exit with no name: D says "Exit DIlsnHU", the card "Exit from MENS RR
+(R135)"). `why` lines and what-if labels saved before D23 print door ids for unnamed doors ("Door
+D$77xwP (CORRIDOR to SCIF OPEN OFFICE)"): _Names.readable swaps those for the same label, so the
+JSON keeps its ids and the card never shows one. A headline or fix from the model that carries a
+door id is dropped like a bad number. One heading is built in _render, so the template and the
+model's card share it.
 
 Decisions. `obs` is sim/brain.py's: {idx, t, floor, x, y, profile, visibility, speed, current,
 trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?}]}. A decision is
@@ -159,6 +164,7 @@ class _Names:
 
     def __init__(self, building):
         b = building if isinstance(building, dict) else {}
+        self.building = b  # fire.batch.door_label reads it for a door's name
         self.name = str(b.get("name") or b.get("id") or "this building")
         self.rooms: dict[tuple[str, str], dict] = {}
         self.doors: dict[tuple[str, str], dict] = {}
@@ -248,10 +254,33 @@ class _Names:
             return "stair"
         return "door"
 
+    def _door_label(self, kind: str, floor: str, did: str) -> str | None:
+        """The name fire.batch.door_label gives this door (D23), the one rule for door names, or None where it will
+        not do: the door is not in the building, D files it under another kind, its name shows a door id (an exit
+        with no name reads 'Exit DIlsnHU'), or D's code cannot be had or fails on a malformed building."""
+        if (floor, did) not in self.doors:
+            return None
+        try:
+            from fire.batch import door_label  # lazy: it brings numpy and shapely in, which the card does not need
+
+            found, text = door_label(self.building, floor, did)
+        except Exception:  # noqa: BLE001 - the card never raises: it words the door from its rooms instead
+            return None
+        return text if found == kind and text and not self.mentions_id(text) else None
+
     def label(self, kind: str, floor: str, sid: str) -> tuple[str, str]:
         """A weak spot in words: (the bold name, where it is), both without a door id.
-        ('Exit Stair S1 (west)', 'from STAIR (RS101) to outside'), ('Door between Lobby (L1) and Corridor 1 (C1)', '').
-        The names match fire.batch.door_label's wherever that has no id, so a `why` line and its heading agree."""
+        ('Exit Stair S1 (west)', 'from STAIR (RS101) to outside'), ('Door between Lobby and Corridor 1', '').
+        A door, an exit or a stair door is named as fire.batch.door_label names it, so a `why` line, a heading and the
+        headline pack agree; `_worded` stands in where that name shows the door's id or cannot be had."""
+        name, detail = self._worded(kind, floor, sid)
+        if kind in ("door", "stair", "exit"):
+            name = self._door_label(kind, floor, sid) or name
+        return name, detail
+
+    def _worded(self, kind: str, floor: str, sid: str) -> tuple[str, str]:
+        """A spot worded from the rooms it joins, as `label` needs it: the name of a room or a corridor, the detail of an
+        exit or a stair door, and the stand-in name of a door that fire.batch.door_label does not name usably."""
         if kind == "room":
             return f"Fires starting in {self.room_label(floor, sid)}", ""
         if kind == "corridor":
@@ -272,14 +301,19 @@ class _Names:
             stair = next((c for c in inside if self._is_stair_room(floor, c)), None)
             label = f"Stair {self._stair_group(floor, stair)} door" if stair else "Stair door"
             return label, f"between {rooms[0]} and {rooms[1]}" if len(rooms) >= 2 else ""
+        # A plain door that D's name does not cover (a door with no known room, a malformed building, no fire/ package):
+        # D's words, but with the room ids always shown, and never the door's own id.
         if len(rooms) >= 2:
             return f"Door between {rooms[0]} and {rooms[1]}", ""
-        return (f"Door of {rooms[0]}" if rooms else "Door"), ""
+        return (f"Door from {rooms[0]}" if rooms else "Door"), ""
 
     def title(self, kind: str, floor: str, sid: str) -> str:
-        """A weak spot's short name, for the template headline: 'the door between Lobby (L1) and Corridor 1 (C1) on F1'."""
+        """A weak spot's short name, for the template headline: 'the door between Lobby and Corridor 1 on F1'."""
         on = f" on {floor}" if floor else ""
         label = self.label(kind, floor, sid)[0]
+        twin = re.search(r", \d+ of \d+$", label)  # D numbers doors that join the same two rooms: '..., 1 of 2'
+        if twin:  # the floor goes before the number: 'the door between A (R1) and B (R2) on F1, 1 of 2'
+            label, on = label[:twin.start()], on + twin.group()
         if kind in ("room", "corridor"):  # a room name keeps its capitals: 'Corridor 2 (C2) on F2'
             return (label[:1].lower() + label[1:] if kind == "room" else label) + on
         return f"the {label[:1].lower()}{label[1:]}{on}"

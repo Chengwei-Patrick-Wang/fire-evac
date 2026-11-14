@@ -11,6 +11,7 @@ import RiskMapSvg from '../dashboard/RiskMapSvg'
 import WhatIfHeadline from '../dashboard/WhatIfHeadline'
 import MeasuredFixes from '../dashboard/MeasuredFixes'
 import { readFixes } from '../model/fixes'
+import { spotLabel } from '../model/spots'
 import { readStability, seedBadge } from '../model/ranges'
 import { seedText } from '../dashboard/WeakSpots'
 
@@ -92,12 +93,12 @@ export default function PrintReport() {
               <WhatIfHeadline />
               <table>
                 <thead>
-                  <tr><th>Rank</th><th>Kind</th><th>Id</th><th>Floor</th><th>Score</th>{seedCol && <th>Seeds</th>}<th>Why</th></tr>
+                  <tr><th>Rank</th><th>Kind</th><th>Weak spot</th><th>Floor</th><th>Score</th>{seedCol && <th>Seeds</th>}<th>Why</th></tr>
                 </thead>
                 <tbody>
                   {batch.top.map((t, i) => (
                     <tr key={t.kind + t.id + i}>
-                      <td>{i + 1}</td><td>{t.kind}</td><td>{t.id}</td><td>{t.floor}</td><td>{t.score.toFixed(1)}</td>
+                      <td>{i + 1}</td><td>{t.kind}</td><td>{spotLabel(t)}</td><td>{t.floor}</td><td>{t.score.toFixed(1)}</td>
                       {seedCol && (
                         <td>
                           {seedBadge(t.kind, (t as { seedsInTop3?: number }).seedsInTop3, (t as { seeds?: number }).seeds)?.text}

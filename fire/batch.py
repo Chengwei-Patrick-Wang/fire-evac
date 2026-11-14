@@ -1,7 +1,7 @@
 """Repeatable room-ignition batches. Run from the repo root: python -m fire.batch."""
 import argparse
 import base64
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from concurrent.futures.process import BrokenProcessPool
 from copy import deepcopy
@@ -10,6 +10,7 @@ import math
 import multiprocessing
 import os
 from pathlib import Path
+import re
 from statistics import median
 import time
 
@@ -166,6 +167,82 @@ def _records(building, tasks, workers, timeout_s, progress):
     return [records[i] for i in range(len(tasks))]
 
 
+# D23: widen_door's two errors that name a door, with the door's label in place of its id (an IFC id means
+# nothing to a reader). `relabel` writes the same texts over the id forms that saved batches carry.
+NO_OPENING = "{label} has no opening"
+NOT_WIDENABLE = "widening {label} changes room connections or walkable pieces"
+_SAVED_REASONS = ((re.compile(r"door (?P<id>.+) has no opening"), NO_OPENING),
+                  (re.compile(r"widening (?P<id>.+) changes room connections or walkable pieces"), NOT_WIDENABLE))
+_NUMERIC = ("runs", "rooms", "doors", "heatmaps")  # the batch sections `relabel` leaves alone: numbers and ids
+
+
+def _room_name(room: dict) -> str:
+    return room.get("name") or room["id"]
+
+
+def _shown(room: dict, with_id: bool) -> str:
+    """A room as a plain-door label shows it: ASCII, no colon (a `why` line ends its label at the first ": "),
+    and, with `with_id`, the room's id after a name that is not the id."""
+    raw = _room_name(room)
+    name = re.sub(r"\s*:\s*", " - ", raw).encode("ascii", "replace").decode("ascii")
+    return f"{name} ({room['id']})" if with_id and raw != room["id"] else name
+
+
+def _midpoint(door: dict) -> tuple[float, float]:
+    """The middle of the opening to the centimetre: doors on one wall line tie on x and are told apart by y."""
+    try:
+        return tuple(round((door["a"][i] + door["b"][i]) / 2, 2) for i in (0, 1))
+    except (KeyError, IndexError, TypeError):
+        return 0.0, 0.0
+
+
+def _plain_labels(floor: dict) -> dict[str, str]:
+    """D23: the label of every plain interior door on a floor (not an exit, not a stair door), by door id.
+
+    `Door between <A> and <B>` with the rooms' names in floor order; `Door from <A>` with one known room;
+    `Door <id>` with none. When another plain door of the floor joins the same names (either way round), or
+    a door joins two rooms of one name, each name gets its room id: `Door between OPEN OFFICE (R113a) and
+    CORRIDOR (R141)`. Doors that join the same rooms then end `, 1 of 2`, `, 2 of 2`, by the middle of the
+    opening (x, then y).
+    """
+    rooms = {}
+    for index, room in enumerate(floor.get("rooms", [])):
+        rooms.setdefault(room["id"], (index, room))
+    plain, seen = [], set()
+    for door in floor.get("doors", []):
+        if door["id"] in seen:  # the first door with an id is the one door_label finds
+            continue
+        seen.add(door["id"])
+        connects = door.get("connects", [])
+        known = [rooms[c][1] for c in sorted({c for c in connects if c in rooms}, key=lambda c: rooms[c][0])]
+        if "outside" not in connects and not any(r.get("type") == "stair" for r in known):
+            plain.append((door, known))
+    joins = Counter(tuple(sorted(_room_name(r) for r in known)) for _, known in plain)
+    memo = {}  # (room id, with id) -> how the room reads; most rooms have several doors
+
+    def show(room: dict, with_id: bool) -> str:
+        if (room["id"], with_id) not in memo:
+            memo[room["id"], with_id] = _shown(room, with_id)
+        return memo[room["id"], with_id]
+
+    labels, twins = {}, defaultdict(list)
+    for door, known in plain:
+        if not known:
+            labels[door["id"]] = f"Door {door['id']}"
+            continue
+        names = [_room_name(r) for r in known]
+        crowded = joins[tuple(sorted(names))] > 1 or len(set(names)) < len(names)
+        shown = [show(r, crowded) for r in known]
+        labels[door["id"]] = ("Door from " + shown[0] if len(shown) == 1 else
+                              "Door between " + ", ".join(shown[:-1]) + " and " + shown[-1])
+        twins[tuple(r["id"] for r in known)].append(door)
+    for group in twins.values():
+        if len(group) > 1:
+            for number, door in enumerate(sorted(group, key=lambda d: (*_midpoint(d), d["id"])), 1):
+                labels[door["id"]] += f", {number} of {len(group)}"
+    return labels
+
+
 def door_label(building: dict, floor_id: str, door_id: str) -> tuple[str, str]:
     """Label a door, including stair and exterior openings; tolerate unknown ids."""
     floor = next((f for f in building.get("floors", []) if f["id"] == floor_id), {})
@@ -185,8 +262,72 @@ def door_label(building: dict, floor_id: str, door_id: str) -> tuple[str, str]:
         return "exit", f"Exit {door_id}"
     if stair:
         return "stair", f"Stair {stair.get('group', stair['id'])} door"
-    names = " to ".join(r.get("name", r["id"]) for r in rooms)
-    return "door", f"Door {door_id}" + (f" ({names})" if names else "")
+    if not door:
+        return "door", f"Door {door_id}"  # an id the building does not have
+    return "door", _plain_labels(floor).get(door_id, f"Door {door_id}")
+
+
+def _legacy_label(floor: dict, door: dict) -> str:
+    """What `door_label` called a plain interior door before D23, to the letter: `Door <id> (<A> to <B>)`.
+    Saved batches carry these strings; `relabel` finds them with this."""
+    names = " to ".join(r.get("name", r["id"]) for r in floor.get("rooms", []) if r["id"] in door.get("connects", []))
+    return f"Door {door['id']}" + (f" ({names})" if names else "")
+
+
+def relabel(building: dict, batch: dict) -> dict:
+    """A copy of a saved batch whose texts name plain interior doors the D23 way (pure; nothing reruns).
+
+    Every text outside the numeric sections (`runs`, `rooms`, `doors`, `heatmaps`) has each legacy label
+    (`Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`, as saved with its names folded to ASCII or not) swapped for
+    the door's current label, and a skipped fix's reason that names its door by id gets the door's label.
+    Ids, numbers and field names stay, and a second pass changes nothing. A legacy label that two floors
+    would give different new labels is left alone.
+    """
+    swaps, clashes = {}, set()
+    for floor in building.get("floors", []):
+        labels, first = _plain_labels(floor), set()
+        for door in floor.get("doors", []):
+            if door["id"] in first:  # door_label finds the first door of an id
+                continue
+            first.add(door["id"])
+            new = labels.get(door["id"])
+            old = _legacy_label(floor, door)
+            for saved in {old, old.encode("ascii", "replace").decode("ascii")}:
+                if new is not None and saved != new:
+                    if swaps.setdefault(saved, new) != new:
+                        clashes.add(saved)
+    pattern = re.compile("|".join(re.escape(s) for s in sorted(set(swaps) - clashes, key=len, reverse=True)) or r"(?!)")
+
+    def swap(text: str) -> str:
+        return pattern.sub(lambda m: swaps[m.group(0)], text) if "Door " in text else text
+
+    def walk(value):
+        if isinstance(value, str):
+            return swap(value)
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, dict):
+            return {key: walk(item) for key, item in value.items()}
+        return value
+
+    def named(reason: str) -> str:
+        for saved, template in _SAVED_REASONS:
+            match = saved.fullmatch(reason)
+            if match:
+                floor = next((f["id"] for f in building.get("floors", [])
+                              if any(d["id"] == match["id"] for d in f.get("doors", []))), None)
+                if floor is not None:
+                    return template.format(label=door_label(building, floor, match["id"])[1])
+        return reason
+
+    result = deepcopy(batch)
+    for key in result:
+        if key not in _NUMERIC:
+            result[key] = walk(result[key])
+    for skipped in result.get("fixesSkipped", []):
+        if isinstance(skipped.get("reason"), str):
+            skipped["reason"] = named(skipped["reason"])
+    return result
 
 
 def aggregate(building: dict, base: dict, records: list[dict]) -> dict:

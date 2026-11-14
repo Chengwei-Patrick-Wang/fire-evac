@@ -1,5 +1,50 @@
 # Overnight status
 
+## Sat 17:20: no merges; Aidan's deck is on main
+
+**On main:**
+- **Aidan uploaded `FirePass.pptx` (6 slides) and `Architecture.png` to the repo root** through GitHub's web page. They're accurate to the app. The deck names the project "FirePass", while the Ember redesign (E36) puts "Ember" in the header, so the team needs to pick one name for the app, Devpost, slides and video.
+
+**Running on the lead's machine:** D25 (fire spread), E36 (Ember shell) and C23 (every-room sweep). No branch has new commits yet.
+
+**Tracer check (17:10, lead's laptop):** load trace, Export to 3D, and a run in the traced building all work. The Gemini first pass proposed 12 rooms that line up with the example plan in about 30 s. Doors and stair groups stay manual. The public site has no backend, so the AI pass and Export are off there.
+
+## Sat 16:50: A11 part 1 merged; D25, E36 and C23 running
+
+**Merged:**
+- **A11 part 1:** new optional fields: scenario `fire.material` (concrete, drywall or wood; default drywall), and run `fire.rooms` (`{room, floor, ignite}`) plus `fire.material`. Also a sample spreading-fire run, `contracts/run.spread.fixture.json` (wood, 15 rooms), and the shared frontend types in `frontend/src/data/types.ts`.
+
+**Running on the lead's machine:**
+- **D25** (ws-d): fire spreads room to room at a speed set by the material.
+- **E36** (ws-e): the Ember theme and shell layout.
+- **C23** (ws-c): the every-room fire sweep. It wraps up by 18:30, then C27 (spread coupling) starts once D25 is merged.
+
+**Notes:**
+- **E:** build the fire visuals against `contracts/run.spread.fixture.json`. Keep the file: A11 part 2 doesn't delete it.
+- **No new tasks are being written:** the team moved to other work at 14:30, and the Ember plan has enough work queued for the lead's machine.
+
+## Sat 15:50: D23, E34, E35 merged; the Ember redesign is approved
+
+**Merged:**
+- **D23:** readable names for unnamed interior doors, such as "Door between CORRIDOR and SCIF OPEN OFFICE".
+- **E34:** trade-off badges on measured fixes, and readable labels in the fix list, door picker and tour.
+- **E35:** in live mode, a failed or timed-out run loads the nearest precomputed fire, with a note.
+
+**Approved design** (`docs/superpowers/specs/2026-11-14-ember-ui-fire-spread-design.md`, based on `docs/design/ember-ui.md`):
+- **UI:** the Ember UI, with a light theme, collapsible top nav, left analytics, bottom floor strip and timeline, and a grey walls-only building.
+- **Floor views:** stacked, single, side by side and ghost.
+- **Visibility and colors:** fire and smoke visibility controls; agents colored by status or type.
+- **Simulated fire spread,** room to room, at concrete/drywall/wood speeds, labeled illustrative.
+
+The lead's machine is writing the plan now. It runs D25 (spread model), C27 (sim coupling), A11 (formats and the demo rerun) and E36 to E38 (UI) tonight. The precompute reruns around 9 to 11 PM, and the freeze is at 2 AM.
+
+## Sat 15:20: D22 merged; C23 to C26 queued
+
+- **Merged:** ws-d **D22**. A measured fix that costs something now reads as a trade-off and names the fires behind the cost. For example: "Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner…, but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)." Five demo fixes become trade-offs; they show on the site after the precompute rerun.
+- **Running on the lead's machine:** D23 (readable interior door names), E34 (trade-off badges, readable labels in lists) and **C23**, a fire in every room of the office and the clinic after C21 (hard stop 19:30).
+- **Queued for C:** C24 (narrow doors: 0.86 m doors wedge when 200 people push at once, though the real layouts evacuate fully), C25 (faster runs with identical results), C26 (determinism guard).
+- **Next for A:** rerun the demo precompute once the fixes that change numbers have landed.
+
 ## Sat 14:55: the demo is live at https://fire-evac-sim.netlify.app
 
 - **Static site:** https://fire-evac-sim.netlify.app is public. Netlify builds it from `main` on every push, so each merge redeploys within a couple of minutes. All three buildings load. The About overlay's QR code points at this URL. Publishing gets locked at feature freeze so nothing changes during judging.

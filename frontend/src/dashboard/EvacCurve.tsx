@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import { useApp } from '../store/app'
-import { useThrottledT } from '../store/clock'
+import { useClock, useThrottledT } from '../store/clock'
+import { useChartTheme } from '../ui/theme'
 import { evacCurve, RUN_COLORS } from './curves'
 import { readSeedRange, t90Phrase } from '../model/ranges'
 
@@ -10,6 +11,7 @@ export default function EvacCurve() {
   const order = useApp((s) => s.runOrder)
   const compare = useApp((s) => s.compareKeys)
   const t = useThrottledT(250)
+  const ct = useChartTheme()
   const keys = order.filter((k) => compare.includes(k))
   const keyStr = keys.join('|')
 
@@ -45,17 +47,30 @@ export default function EvacCurve() {
       </p>
       <div className="legend">
         {order.map((k) => (
-          <label key={k} style={{ color: color(k) }}>
-            <input type="checkbox" checked={compare.includes(k)} onChange={() => toggle(k)} /> {runs[k].label}{band(k) ? ` · ${band(k)}` : ''}
+          <label key={k}>
+            <input type="checkbox" checked={compare.includes(k)} onChange={() => toggle(k)} />
+            <i className="swatch" style={{ background: color(k) }} />
+            <span>{runs[k].label}{band(k) ? ` · ${band(k)}` : ''}</span>
           </label>
         ))}
       </div>
       <div role="img" aria-label="Evacuation curve" aria-describedby="evac-summary" style={{ width: '100%', height: 220 }}>
         <ResponsiveContainer>
-          <LineChart accessibilityLayer={false} data={data} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
-            <CartesianGrid stroke="#1e293b" />
-            <XAxis dataKey="t" type="number" domain={[0, 'dataMax']} stroke="#94a3b8" fontSize={11} unit=" s" />
-            <YAxis domain={[0, 100]} stroke="#94a3b8" fontSize={11} unit="%" />
+          <LineChart
+            accessibilityLayer={false}
+            data={data}
+            margin={{ top: 8, right: 12, bottom: 4, left: -12 }}
+            // A click seeks the clock to the clicked second (nothing when the click carries no x).
+            onClick={(st) => {
+              const label = (st as { activeLabel?: string | number | null } | undefined)?.activeLabel
+              if (label == null) return
+              const x = Number(label)
+              if (Number.isFinite(x)) useClock.getState().seek(x)
+            }}
+          >
+            <CartesianGrid stroke={ct.grid} />
+            <XAxis dataKey="t" type="number" domain={[0, 'dataMax']} stroke={ct.axis} fontSize={11} unit=" s" />
+            <YAxis domain={[0, 100]} stroke={ct.axis} fontSize={11} unit="%" />
             {keys.map((k) => {
               const r = band(k) ? readSeedRange(runs[k].run)?.t90 : null
               return r && r.min != null && r.max != null ? (
@@ -65,7 +80,7 @@ export default function EvacCurve() {
             {keys.map((k) => (
               <Line key={k} dataKey={k} name={runs[k].label} type="stepAfter" stroke={color(k)} dot={false} isAnimationActive={false} strokeWidth={2} strokeDasharray={runs[k].whatIf ? '6 3' : undefined} />
             ))}
-            <ReferenceLine x={Math.round(t)} stroke="#e2e8f0" strokeDasharray="3 3" />
+            <ReferenceLine x={Math.round(t)} stroke={ct.now} strokeDasharray="3 3" />
             {keys.map((k) => {
               const t90 = runs[k].run.metrics.t90
               return t90 == null ? null : (

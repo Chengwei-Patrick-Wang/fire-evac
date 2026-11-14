@@ -528,6 +528,94 @@ def check_report_ai(client):
             p.unlink(missing_ok=True)
 
 
+def check_door_names():
+    """D23, one source of truth for door names: the card calls a door, an exit or a stair door what
+    fire.batch.door_label calls it (the example building and the two public ones, every door), words it from its
+    rooms only where D's name would show the door's id (an exit with no name), swaps the id forms that batches
+    saved before D23 carry, and numbers twin doors; checked on a made-up floor too, one branch of the rule each."""
+    from backend.llm import features
+    from fire.batch import door_label
+
+    def load(path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    shown = 0
+    for path in (ROOT / "contracts" / "building.example.json", ROOT / "data" / "buildings" / "office.json",
+                 ROOT / "data" / "buildings" / "clinic.json"):
+        if not path.is_file():
+            continue
+        b = load(path)
+        names = features._Names(b)
+        for f in b["floors"]:
+            for d in f["doors"]:
+                kind, text = door_label(b, f["id"], d["id"])
+                assert names.door_kind(f["id"], d["id"]) == kind, (path.name, d["id"])
+                label = names.label(kind, f["id"], d["id"])[0]
+                assert not names.mentions_id(label), (path.name, label)  # an IFC code means nothing to a judge
+                if names.mentions_id(text):  # D's `Exit DIlsnHU`, an exit with no name: the card words it from its rooms
+                    assert label != text, (path.name, text)
+                else:
+                    assert label == text, (path.name, text, label)  # D's name, word for word
+                shown += 1
+    example = features._Names(load(ROOT / "contracts" / "building.example.json"))
+    assert example.label("door", "F1", "DL1")[0] == "Door between Lobby and Corridor 1"  # no room ids: no twin
+    assert example.title("door", "F1", "DL1") == "the door between Lobby and Corridor 1 on F1"
+    assert example.readable("Door DL1 (Lobby to Corridor 1): 23 people queued", "F1") == \
+        "Door between Lobby and Corridor 1: 23 people queued"
+
+    def room(rid, name=None, kind="office", **more):
+        return {"id": rid, "type": kind, **({"name": name} if name else {}), **more}
+
+    def door(did, *connects, x=0.0):
+        return {"id": did, "connects": list(connects), "a": [x, 0.0], "b": [x + 1.0, 0.0], "width": 1.0}
+
+    floor = {"id": "F1",
+             "rooms": [room("A1", "Lab"), room("A2", "Lab"), room("B1", "Store"), room("B2", "Shop"),
+                       room("C1", "Hall", "corridor"), room("S1", "Stair", "stair", group="SA")],
+             "doors": [door("D1", "B1", "C1"), door("X1", "A1", "C1"), door("X2", "A1", "C1", x=5.0),
+                       door("X3", "A2", "C1", x=9.0), door("D2", "B2"), door("D3"),
+                       door("E1", "C1", "outside"), door("E2", "B1", "outside"), door("E3", "B2", "outside"),
+                       door("DS1", "C1", "S1")],
+             "exits": [{"id": "E1", "name": "Main entrance", "door": "E1"},
+                       {"id": "E3", "name": "M_Single-Flush:0915 x 2134mm:184259", "door": "E3"}],
+             "stairs": [{"id": "S1", "group": "SA", "room": "S1"}]}
+    building = {"id": "t", "name": "T", "floors": [floor]}
+    names = features._Names(building)
+    label = {d["id"]: names.label(names.door_kind("F1", d["id"]), "F1", d["id"])[0] for d in floor["doors"]}
+    assert label == {
+        "D1": "Door between Store and Hall",  # no other door joins these two names: no room ids
+        "X1": "Door between Lab (A1) and Hall (C1), 1 of 2",  # two doors join the same rooms, told apart by position
+        "X2": "Door between Lab (A1) and Hall (C1), 2 of 2",
+        "X3": "Door between Lab (A2) and Hall (C1)",  # another room of the same name: room ids, no number
+        "D2": "Door from Shop",  # D's word for a door of one known room (the card used to say "Door of")
+        "D3": "Door",  # joins no known room: D says `Door D3`, the card never shows the id
+        "E1": "Exit Main entrance",
+        "E2": "Exit from Store (B1)",  # D says `Exit E2`: the exit has no name
+        "E3": "Exit from Shop (B2)",  # an IFC door family string is no name (D drops it too)
+        "DS1": "Stair SA door"}, label
+    assert names.title("door", "F1", "X1") == "the door between Lab (A1) and Hall (C1) on F1, 1 of 2"
+    assert names.readable("Door D1 (Store to Hall): 5 queued; Exit E2 blocked; DS1 busy", "F1") == \
+        "Door between Store and Hall: 5 queued; Exit from Store (B1) blocked; Stair SA door busy"
+    batch = {"version": "batch/v0", "id": "t-batch", "buildingId": "t", "runs": [], "top": [
+        {"kind": "door", "id": "X1", "floor": "F1", "why": "Door X1 (Lab to Hall): 9 people queued at peak; 40 person-seconds."},
+        {"kind": "exit", "id": "E2", "floor": "F1", "why": "Exit E2: 4 people queued at peak; 12 person-seconds."},
+        {"kind": "door", "id": "D1", "floor": "F1", "why": "Door between Store and Hall: 3 people queued; 8 person-seconds."}]}
+    with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+        md = features.report(batch, building)
+        assert "1. **Door between Lab (A1) and Hall (C1), 1 of 2** · F1\n   - Door between Lab (A1) and Hall (C1), 1 of 2: 9 people" in md, md
+        assert "2. **Exit from Store (B1)** · F1\n   - Exit from Store (B1): 4 people" in md, md
+        assert "3. **Door between Store and Hall** · F1\n   - Door between Store and Hall: 3 people" in md, md
+        assert "the door between Lab (A1) and Hall (C1) on F1, 1 of 2" in md and not names.mentions_id(md), md
+
+        # D's code failing on a malformed building (a floor with no id) never fails the card: the rooms word the door
+        broken = {"id": "t", "name": "T", "floors": [{"rooms": [], "doors": []}, floor]}
+        worded = features._Names(broken)
+        assert worded.label("door", "F1", "D1")[0] == "Door between Store (B1) and Hall (C1)"
+        assert worded.label("door", "F1", "D2")[0] == "Door from Shop (B2)"
+        assert "Door between Store (B1) and Hall (C1)" in features.report(dict(batch, top=batch["top"][2:]), broken)
+    return shown
+
+
 def check_decide():
     """decide / decide_batch for the sim (C7, C8), on sim/brain.py's obs shape: offline every entry is
     None; a stubbed model's decisions are checked against each obs (a known target, an action that
@@ -731,10 +819,11 @@ def check_llm(client):
     check_report(client)
     check_report_run(client)
     check_report_ai(client)
+    doors = check_door_names()
     check_decide()
     check_llm_client()
     print(f"OK  llm: report card (template, AI path stubbed, cache, private building), run card, "
-          f"decide_batch, client retries and fallback, {time.time() - t0:.1f} s")
+          f"door names (D's, {doors} doors), decide_batch, client retries and fallback, {time.time() - t0:.1f} s")
 
 
 def _png(width: int, height: int) -> bytes:
