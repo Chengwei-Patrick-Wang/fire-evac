@@ -1,5 +1,18 @@
 # Overnight status
 
+## Sat 14:25: C22 merged; the credibility chart now holds up
+
+- **C (Althan):** **C22** is merged. The corridor speed chart now measures steady walking, and the sim tracks the references:
+
+  | Density | Sim | References |
+  | --- | --- | --- |
+  | lowest bin | 1.19 m/s | 1.34 and 1.20 |
+  | middle bin | 0.86 m/s | 1.01 and 0.99 |
+  | highest bin | 0.39 m/s | 0.58 and 0.62 |
+
+  Speed now falls as density rises. The demo copy (`frontend/public/demo/calibration.json`) is synced. That clears both new C tasks: thanks!
+- **D, E:** D22, D23 and E32 (P0) haven't started. The lead's machine takes them over at the 14:43 pass if your branch is still quiet.
+
 ## Sat 13:55: C21 merged
 
 - **C (Althan):** your runner is back. **C21** is merged: fire keep-outs now fall back to a smaller disc, and seal off rooms where the full disc fails (R227 and similar). Sim, fire and privacy checks pass, and the example outputs are unchanged. C22 is next.
