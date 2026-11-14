@@ -14,6 +14,8 @@ const opens = []
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--open' && process.argv[i + 1]) opens.push(resolve(process.argv[++i]))
 }
+const FPS = process.argv.includes('--fps')
+const GPU = process.argv.includes('--gpu')
 rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
 
@@ -29,10 +31,29 @@ const server = await preview({ root, preview: { port: 4317 }, logLevel: 'warn' }
 let browser
 try {
   try {
-    browser = await chromium.launch({
-      channel: 'chromium',
-      args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
-    })
+    if (GPU) {
+      try {
+        browser = await chromium.launch({
+          channel: 'chromium',
+          headless: false,
+          args: [
+            '--ignore-gpu-blocklist',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-background-timer-throttling',
+            '--disable-features=CalculateNativeWinOcclusion',
+          ],
+        })
+      } catch (e) {
+        lines.push('gpu: not available, SwiftShader numbers only')
+        console.error(`gpu launch failed: ${String(e).split('\n')[0]}`)
+      }
+    }
+    if (!browser)
+      browser = await chromium.launch({
+        channel: 'chromium',
+        args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+      })
   } catch (e) {
     if (/Executable doesn't exist|executable/i.test(String(e))) console.error('Run: npx playwright install chromium')
     throw e
@@ -233,7 +254,7 @@ try {
     await page.waitForTimeout(500)
     await page.screenshot({ path: join(out, 'print-media.png'), fullPage: true })
     shots.push('print-media')
-    await page.pdf({ path: join(out, 'report.pdf'), format: 'Letter', printBackground: true })
+    if (!GPU || lines.includes('gpu: not available, SwiftShader numbers only')) await page.pdf({ path: join(out, 'report.pdf'), format: 'Letter', printBackground: true })
     await page.emulateMedia({ media: 'screen' })
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !document.querySelector('.printreport'), null, { timeout: 10000 })
@@ -327,6 +348,33 @@ try {
     })
     await tabShots(`open-${n + 1}-`)
   }
+  if (FPS && opens.length > 0)
+    await step('fps', async () => {
+      await page.locator('.results [role=tab]').first().click()
+      const cases = [
+        ['default', { autoRotate: false, trails: false }],
+        ['rotate', { autoRotate: true, trails: false }],
+        ['trails', { autoRotate: false, trails: true }],
+      ]
+      for (const [name, flags] of cases) {
+        await page.evaluate((f) => {
+          window.__app.setState(f)
+          window.__tour?.getState().stop()
+          window.__app.setState(f)
+          window.__clock.getState().seek?.(0)
+          window.__clock.setState({ t: 0, speed: 10, playing: true })
+        }, flags)
+        await page.waitForTimeout(2000)
+        const r = await page.evaluate(async () => ({ f: await window.__fps(10), p: window.__perf() }))
+        lines.push(
+          `fps ${name}: avg ${r.f.avg.toFixed(1)}, 1% low ${r.f.low1.toFixed(1)}, calls ${r.p.calls}, triangles ${r.p.triangles > 1000 ? Math.round(r.p.triangles / 1000) + 'k' : r.p.triangles}, html ${r.p.html}, renderer ${r.p.renderer}`,
+        )
+        await page.evaluate(() => {
+          window.__app.setState({ autoRotate: false, trails: false })
+          window.__clock.setState({ playing: false })
+        })
+      }
+    })
 } finally {
   if (browser) await browser.close()
   await server.close()

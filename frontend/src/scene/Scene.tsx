@@ -1,4 +1,4 @@
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Stats } from '@react-three/drei'
 import { useApp } from '../store/app'
 import Building from './Building'
@@ -14,7 +14,17 @@ import AgentCam from '../replay/AgentCam'
 import { CameraSyncPane } from './cameraSync'
 import { CaptureHook } from './capture'
 import { useA11y } from '../ui/a11y'
-import { perfOn } from '../ui/perf'
+import { perfOn, perfStats } from '../ui/perf'
+
+// Copies the previous frame's render totals (read inside useFrame they are last frame's).
+function PerfProbe() {
+  const gl = useThree((st) => st.gl)
+  useFrame(() => {
+    perfStats.calls = gl.info.render.calls
+    perfStats.triangles = gl.info.render.triangles
+  })
+  return null
+}
 
 export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: string }) {
   const autoRotate = useApp((s) => s.autoRotate)
@@ -28,7 +38,7 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
       aria-label={`3D replay of ${buildingName}`}
       aria-describedby="replay-summary"
       style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%', isolation: 'isolate' }}>
-      <Canvas dpr={[1, 2]} camera={{ fov: 50, near: 0.1, far: 1000 }}>
+      <Canvas dpr={[1, 1.5]} camera={{ fov: 50, near: 0.1, far: 1000 }}>
         <color attach="background" args={[contrast ? '#000000' : '#0b1220']} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[20, 40, 20]} intensity={0.8} />
@@ -36,6 +46,7 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
         <CameraRig />
         {!runKey && <AgentCam />}
         {!paneId && <CaptureHook />}
+        {!paneId && <PerfProbe />}
         {paneId && <CameraSyncPane paneId={paneId} />}
         <Building runKey={runKey} />
         <Agents runKey={runKey} />

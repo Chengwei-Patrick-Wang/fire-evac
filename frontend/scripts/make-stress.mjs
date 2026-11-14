@@ -1,5 +1,5 @@
 // Stress fixtures: a 2-floor, 60 x 30 m, 26-room-per-floor campus with 300 agents and smoke on both floors.
-//   node scripts/make-stress.mjs  ->  .fixtures/stress.building.json, .fixtures/stress.run.json
+//   node scripts/make-stress.mjs [--clinic]  ->  .fixtures/stress.building.json, .fixtures/stress.run.json
 // Load them in the app with "Open file" (building first, then run). Seeded (mulberry32, seed 1).
 //
 // Measurements (Step 6 of plan E18):
@@ -8,6 +8,15 @@
 //   http://localhost:4173/?perf, load both files, play at 10x, then `await __fps(10)` with default layers,
 //   then with heatmap and trails on. Fixes to apply in order if below 30 FPS: room labels off when > 40 rooms
 //   (applied), queue-ring labels unmount while n < 2, Trails reuse Float32Arrays, Canvas dpr [1, 1.5].
+// Clinic-scale results (plan E27), Windows laptop, viewport 1440x900:
+//   fixture: 266 rooms, 264 doors, 3 stair groups, 300 agents, 165 x 30 m.
+//   Before (not re-measured; the plan's estimate): about 530 draw calls, about 270 <Html> labels.
+//   After (Steps 6-8: dpr [1, 1.5], setTimers only on change, instanced queue rings with a pool of 20 labels,
+//   merged floor meshes): calls 28 (29 with trails), triangles 115k, html 0 while nobody queues.
+//   SwiftShader (ANGLE Vulkan SwiftShader): default avg 15.3 / 1% low 10.7; rotate 16.5 / 14.4; trails 15.2 / 10.7.
+//   GPU (ANGLE NVIDIA GeForce RTX 4060, D3D11): default 144.0 / 138.1; rotate 144.0 / 139.9; trails 144.0 / 139.4 (display cap).
+//   bench-replay: clinic: index 7 ms; per tick avg 0.039 ms, max 2.9 ms. Default stress: index 5 ms, avg 0.009 ms.
+//   Step 9 (label LOD, Trails arrays) skipped: every GPU case is above 30 FPS.
 import { mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,12 +34,17 @@ const rnd = mulberry32(1)
 const between = (a, b) => a + (b - a) * rnd()
 const r2 = (v) => Math.round(v * 100) / 100
 
-const W = 60
+const CLINIC = process.argv.includes('--clinic')
+const SIZE = CLINIC
+  ? { id: 'clinic-scale', name: 'Clinic-scale stress (synthetic)', out: 'clinic', ncol: 66, rw: 2.5, stairCols: [0, 33, 65], kitchenCol: 30 }
+  : { id: 'stress-campus', name: 'Stress campus (synthetic)', out: 'stress', ncol: 12, rw: 5, stairCols: [0, 11], kitchenCol: 5 }
+const NCOL = SIZE.ncol
+const RW = SIZE.rw
+const W = NCOL * RW
 const H = 30
 const CY0 = 13.5
 const CY1 = 16.5
 const CMID = 15
-const RW = 5
 const T = 0.2
 const ELEV = [0, 3.5]
 const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
@@ -43,13 +57,14 @@ function floor(fi) {
   const stairs = []
   const exits = []
   const gaps = []
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < NCOL; i++) {
     for (const north of [false, true]) {
-      const isStair = north && (i === 0 || i === 11)
+      const stairIdx = north ? SIZE.stairCols.indexOf(i) : -1
+      const isStair = stairIdx >= 0
       const rid = `${id}-${north ? 'N' : 'S'}${i + 1}`
-      const type = isStair ? 'stair' : !north && i === 5 && fi === 0 ? 'kitchen' : 'office'
+      const type = isStair ? 'stair' : !north && i === SIZE.kitchenCol && fi === 0 ? 'kitchen' : 'office'
       const poly = north ? rect(i * RW, CY1, (i + 1) * RW, H) : rect(i * RW, 0, (i + 1) * RW, CY0)
-      rooms.push({ id: rid, name: isStair ? `Stair ${i === 0 ? 'A' : 'B'}` : rid, type, polygon: poly })
+      rooms.push({ id: rid, name: isStair ? `Stair ${'ABC'[stairIdx]}` : rid, type, polygon: poly })
       const wy = north ? CY1 : CY0
       const cx = roomX(i)
       gaps.push([wy, cx - 0.5, cx + 0.5])
@@ -64,7 +79,7 @@ function floor(fi) {
         connects: [rid, `${id}-C`],
       })
       if (isStair) {
-        const g = i === 0 ? 'SA' : 'SB'
+        const g = `S${'ABC'[stairIdx]}`
         stairs.push({ id: `${g}${fi + 1}`, group: g, room: rid, polygon: poly })
       }
     }
@@ -75,7 +90,7 @@ function floor(fi) {
   }
   // walls as thin holes in one polygon per floor
   const holes = []
-  for (let k = 1; k < 12; k++) {
+  for (let k = 1; k < NCOL; k++) {
     holes.push(rect(k * RW - T / 2, 0, k * RW + T / 2, CY0))
     holes.push(rect(k * RW - T / 2, CY1, k * RW + T / 2, H))
   }
@@ -103,8 +118,8 @@ function floor(fi) {
 
 const building = {
   version: 'building/v0',
-  id: 'stress-campus',
-  name: 'Stress campus (synthetic)',
+  id: SIZE.id,
+  name: SIZE.name,
   source: 'synthetic',
   credits: 'Synthetic stress-test building.',
   floors: [floor(0), floor(1)],
@@ -113,7 +128,8 @@ const building = {
 // ---- agents ----
 const FR = 0.5
 const NF = 600
-const kitchen = [roomX(5), CY0 / 2]
+const NA = 300
+const kitchen = [roomX(SIZE.kitchenCol), CY0 / 2]
 const agents = []
 const tracks = []
 const events = []
@@ -133,12 +149,12 @@ function walk(tr, t, from, pts, fl, v) {
 }
 
 for (let fi = 0; fi < 2; fi++) {
-  for (let k = 0; k < 150; k++) {
-    const idx = fi * 150 + k
+  for (let k = 0; k < NA / 2; k++) {
+    const idx = fi * (NA / 2) + k
     // pick a non-stair room: columns 0..11, south or north; north corner columns are stairs
-    let col = Math.floor(rnd() * 12)
+    let col = Math.floor(rnd() * NCOL)
     let north = rnd() < 0.5
-    if (north && (col === 0 || col === 11)) north = false
+    if (north && SIZE.stairCols.includes(col)) north = false
     const p = [r2(col * RW + between(0.5, RW - 0.5)), r2(north ? between(CY1 + 0.5, H - 0.5) : between(0.5, CY0 - 0.5))]
     const room = `F${fi + 1}-${north ? 'N' : 'S'}${col + 1}`
     const u = rnd()
@@ -159,16 +175,20 @@ for (let fi = 0; fi < 2; fi++) {
       events.push({ t: r2(t), type: 'exit', idx, exit: ex })
       exitCounts[ex]++
     } else {
-      const sx = west ? roomX(0) : roomX(11)
-      const grp = west ? 'SA' : 'SB'
+      let si = 0
+      for (let j = 1; j < SIZE.stairCols.length; j++)
+        if (Math.abs(roomX(SIZE.stairCols[j]) - cx) < Math.abs(roomX(SIZE.stairCols[si]) - cx)) si = j
+      const sx = roomX(SIZE.stairCols[si])
+      const grp = `S${'ABC'[si]}`
       ;({ t, p: cur } = walk(tr, t, cur, [[sx, CMID], [sx, CY1], [sx, 23.25]], 1, v0))
       tr.push({ t0: t, t1: t + 10, from: cur, to: cur, fl: 1, st: 3 })
       const enter = t
       t += 10
       events.push({ t: r2(enter), type: 'stair', idx, floor: 'F2', group: grp, to: 'F1', enter: r2(enter), arrive: r2(t) })
       ;({ t, p: cur } = walk(tr, t, cur, [[sx, CY1], [sx, CMID]], 0, v0))
-      const ex = west ? 'E1' : 'E2'
-      ;({ t, p: cur } = walk(tr, t, cur, [[west ? -0.5 : W + 0.5, CMID]], 0, v0))
+      const exW = sx < W / 2
+      const ex = exW ? 'E1' : 'E2'
+      ;({ t, p: cur } = walk(tr, t, cur, [[exW ? -0.5 : W + 0.5, CMID]], 0, v0))
       events.push({ t: r2(t), type: 'exit', idx, exit: ex })
       exitCounts[ex]++
     }
@@ -193,9 +213,9 @@ for (let f = 0; f < NF; f++) {
 }
 
 // ---- smoke ----
-const COLS = 120
-const ROWS = 60
 const CELL = 0.5
+const COLS = Math.round(W / CELL)
+const ROWS = 60
 function smokeLayer(floorId, sources) {
   const fr = []
   for (let t = 0; t < NF * FR; t += 2) {
@@ -216,18 +236,15 @@ function smokeLayer(floorId, sources) {
 }
 const smoke = [
   smokeLayer('F1', [{ c: kitchen, t0: 10, speed: 0.5 }]),
-  smokeLayer('F2', [
-    { c: [roomX(0), 23.25], t0: 90, speed: 0.3 },
-    { c: [roomX(11), 23.25], t0: 90, speed: 0.3 },
-  ]),
+  smokeLayer('F2', SIZE.stairCols.map((c) => ({ c: [roomX(c), 23.25], t0: 90, speed: 0.3 }))),
 ]
 
 exitT.sort((a, b) => a - b)
-const q = (f) => (exitT.length >= Math.ceil(300 * f) ? r2(exitT[Math.ceil(300 * f) - 1]) : null)
+const q = (f) => (exitT.length >= Math.ceil(NA * f) ? r2(exitT[Math.ceil(NA * f) - 1]) : null)
 const run = {
   version: 'run/v0',
   id: 'stress-run',
-  buildingId: 'stress-campus',
+  buildingId: SIZE.id,
   seed: 1,
   frameInterval: FR,
   floors: ['F1', 'F2'],
@@ -237,11 +254,11 @@ const run = {
   fire: { floor: 'F1', x: kitchen[0], y: kitchen[1], hrr: [[0, 0], [60, 1500], [300, 1500]] },
   events,
   metrics: {
-    agents: 300,
+    agents: NA,
     evacuated: exitT.length,
     trapped: 0,
     inStairs: 0,
-    remaining: 300 - exitT.length,
+    remaining: NA - exitT.length,
     t50: q(0.5),
     t90: q(0.9),
     t100: q(1),
@@ -251,8 +268,11 @@ const run = {
 
 const out = join(dirname(fileURLToPath(import.meta.url)), '..', '.fixtures')
 mkdirSync(out, { recursive: true })
-for (const [name, data] of [['stress.building.json', building], ['stress.run.json', run]]) {
+for (const [name, data] of [[`${SIZE.out}.building.json`, building], [`${SIZE.out}.run.json`, run]]) {
   const p = join(out, name)
   writeFileSync(p, JSON.stringify(data))
   console.log(`${name}: ${(statSync(p).size / 1e6).toFixed(2)} MB`)
 }
+const nr = building.floors.reduce((n, f) => n + f.rooms.length, 0)
+const nd = building.floors.reduce((n, f) => n + f.doors.length, 0)
+console.log(`${nr} rooms, ${nd} doors, ${SIZE.stairCols.length} stair groups, ${NA} agents, ${W} x ${H} m`)
