@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { useApp } from './store/app'
 import type { LoadedRun } from './store/app'
@@ -6,9 +6,15 @@ import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
 import SplitView from './scene/SplitView'
 import Toolbar3D from './ui/Toolbar3D'
+import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import Scrubber from './ui/Scrubber'
+import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
+import AgentLegend from './ui/AgentLegend'
+import ErrorBoundary from './ui/ErrorBoundary'
+import TourCaption from './tour/TourCaption'
+import { useTour, useTourKeys } from './tour/tour'
 import { makeDraft } from './model/scenarioDraft'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
@@ -117,26 +123,51 @@ function s_notice(m: string) {
 }
 
 export default function App() {
-  const { view, building, split, runs, runOrder, activeRunKey } = useApp()
+  const { view, building, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
-    useApp.getState().setBuildings(await listBuildings())
-    useApp.getState().setView('replay')
-    await selectBuilding(id)
+    try {
+      useApp.getState().setBuildings(await listBuildings())
+      useApp.getState().setView('replay')
+      await selectBuilding(id)
+    } catch (e) {
+      useApp.getState().setNotice(msg(e))
+    }
+  }, [])
+  const [phone, setPhone] = useState(() => window.matchMedia('(max-width: 900px)').matches)
+  const [openPanel, setOpenPanel] = useState<'left' | 'right' | null>(null)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 900px)')
+    const on = () => setPhone(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
   }, [])
 
+  useTourKeys()
   useEffect(() => {
-    void startup()
+    void startup().then(() => {
+      if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
+      else if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
+    })
   }, [])
 
   return (
     <div className="app">
       <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
-      <aside className="left">
+      <aside className={'left' + (phone && openPanel !== 'left' ? ' collapsed' : '')}>
         <h3>Scenario</h3>
         <ScenarioPanel />
       </aside>
+      {phone && (
+        <div className="toggles">
+          {(['left', 'right'] as const).map((k) => (
+            <button key={k} className={openPanel === k ? 'on' : ''} onClick={() => setOpenPanel(openPanel === k ? null : k)}>
+              {k === 'left' ? 'Scenario' : 'Results'}
+            </button>
+          ))}
+        </div>
+      )}
       <main className="center">
         {view === 'tracer' ? (
           <Suspense fallback={<div className="pad">Loading tracer…</div>}>
@@ -144,18 +175,37 @@ export default function App() {
           </Suspense>
         ) : (
           <>
-            {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
+            <ErrorBoundary label="3D view">
+              {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
+            </ErrorBoundary>
             <Toolbar3D />
+            {notice && (
+              <div className="banner" role="status">
+                <span>{notice}</span>
+                <button aria-label="Dismiss" onClick={() => useApp.getState().setNotice(null)}>×</button>
+              </div>
+            )}
+            {loading && !activeRunKey && (
+              <div className="loadingcover">
+                <span className="spinner" /> {loading}
+              </div>
+            )}
+            <AgentLegend />
+            <AgentReadout />
+            <TourCaption />
           </>
         )}
       </main>
-      <aside className="right">
+      <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>
         <Suspense fallback={<div className="pad dim">Loading…</div>}>
-          <ResultsPanel />
+          <ErrorBoundary label="Results">
+            <ResultsPanel />
+          </ErrorBoundary>
         </Suspense>
       </aside>
       <footer className="bottom"><Scrubber /></footer>
       <ClockDriver />
+      <AboutOverlay />
       <div className="credits">{building?.credits ?? ''}</div>
     </div>
   )

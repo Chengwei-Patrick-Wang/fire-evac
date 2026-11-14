@@ -10,6 +10,7 @@ export default function WeakSpots() {
   const risk = useApp((s) => s.layers.risk)
   const crowding = useApp((s) => s.crowding)
   const visible = useApp((s) => s.visibleFloors)
+  const activeSpot = useApp((s) => s.activeSpot)
   const running = useApp((s) => s.batchRunning)
   const err = useApp((s) => s.batchError)
   const runBatch = useApp((s) => s.runBatch)
@@ -22,7 +23,7 @@ export default function WeakSpots() {
       console.warn(`weak spot ${id} not found in ${building.id}`)
       return set({ notice: `Unknown spot ${id}` })
     }
-    set({ notice: null })
+    set({ notice: null, activeSpot: id })
     useApp.getState().flyTo(p.floorId, p.pos)
   }
 
@@ -35,7 +36,7 @@ export default function WeakSpots() {
       )}
       {err && <p className="err">{err}</p>}
       {!batch ? (
-        <p className="dim">No batch for this building. {mode === 'live' ? 'Run a batch to see the risk map.' : 'Static mode needs a precomputed batch.'}</p>
+        <div className="empty"><b>No batch for this building</b><span>{mode === 'live' ? 'Run a batch to see the risk map.' : 'Static mode needs a precomputed batch.'}</span></div>
       ) : (
         <>
           <Stamps />
@@ -57,13 +58,18 @@ export default function WeakSpots() {
           <RiskLegend />
           <h4>Weak spots</h4>
           <p className="dim">
-            {batch.runs.length} fires simulated{batch.failed?.length ? `, ${batch.failed.length} failed` : ''}; {batch.base.occupants.total} occupants,
-            alarm at {batch.base.alarmTime ?? '?'} s.
+            {batch.runs.length} fires simulated{batch.failed?.length ? (
+              <span title={(batch.failed as unknown as { scenarioId: string; error: string }[])
+                .slice(0, 3).map((f) => `${f.scenarioId}: ${f.error}`).join('\n')}>
+                {`, ${batch.failed.length} failed`}
+              </span>
+            ) : ''}; {batch.base?.occupants?.total ?? '?'} occupants,
+            alarm at {batch.base?.alarmTime ?? '?'} s.
           </p>
           {batch.top.length === 0 && <p className="dim">No weak spots listed.</p>}
           <ol className="spots">
             {batch.top.map((t, i) => (
-              <li key={t.kind + t.id + i} onClick={() => go(t.id, t.floor)}>
+              <li key={t.kind + t.id + i} className={activeSpot === t.id ? 'on' : ''} onClick={() => go(t.id, t.floor)}>
                 <b>#{i + 1}</b> <span className="badge">{t.kind}</span> <b>{t.id}</b> · {t.floor} · score {t.score.toFixed(1)}
                 <div className="dim">{t.why}</div>
               </li>

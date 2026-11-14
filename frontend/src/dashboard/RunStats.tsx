@@ -4,7 +4,7 @@ const fmt = (v: number | null) => (v == null ? 'not reached' : `${v.toFixed(0)} 
 
 export default function RunStats() {
   const lr = useApp((s) => (s.activeRunKey ? s.runs[s.activeRunKey] : null))
-  if (!lr) return <p className="dim">Load a run</p>
+  if (!lr) return <div className="empty"><b>Load a run</b><span>Run statistics appear here.</span></div>
   const r = lr.run
   const m = r.metrics
   const rows: [string, string][] = [

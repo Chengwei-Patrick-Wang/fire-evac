@@ -15,11 +15,28 @@
       "label": "Kitchen R101, baseline",
       "file": "run.example.json",
       "whatIf": null,
-      "fire": { "floor": "F1", "room": "R101", "x": 8, "y": 3, "type": "kitchen" },
-      "doors": {}
+      "fire": {
+        "floor": "F1",
+        "room": "R101",
+        "x": 8,
+        "y": 3,
+        "type": "kitchen"
+      },
+      "doors": {},
+      "metrics": {
+        "t50": 97.04,
+        "t90": 124.21,
+        "t100": null,
+        "evacuated": 159,
+        "trapped": 1
+      }
     }
   ],
   "batches": [
-    { "id": "example-kitchen-fire-batch", "buildingId": "example-office", "file": "batch.example.json" }
+    {
+      "id": "example-kitchen-fire-batch",
+      "buildingId": "example-office",
+      "file": "batch.example.json"
+    }
   ]
 }

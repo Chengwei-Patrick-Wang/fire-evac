@@ -24,7 +24,7 @@ export default function EvacCurve() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs, keyStr])
 
-  if (order.length === 0) return <p className="dim">Load a run</p>
+  if (order.length === 0) return <div className="empty"><b>Load a run</b><span>Pick a precomputed run or open a file.</span></div>
   const color = (k: string) => RUN_COLORS[order.indexOf(k) % RUN_COLORS.length]
   const toggle = (k: string) =>
     useApp.setState({ compareKeys: compare.includes(k) ? compare.filter((x) => x !== k) : [...compare, k] })

@@ -28,8 +28,15 @@ function SmokePlane({ layer, runKey }: { layer: SmokeLayer; runKey: string }) {
 
   useFrame(() => {
     if (state.warned || times.length === 0) return
-    const i = nearestIndex(times, useClock.getState().t)
+    const t = useClock.getState().t
+    const i = t < times[0] ? -1 : nearestIndex(times, t)
     if (i === state.shown) return
+    if (i === -1) {
+      ;(tex.image.data as Uint8Array).fill(0)
+      tex.needsUpdate = true
+      state.shown = -1
+      return
+    }
     const bytes = b64ToBytes(layer.frames[i].d)
     if (bytes.length !== cols * rows) {
       console.warn(`smoke ${layer.floor}: ${bytes.length} bytes, expected ${cols * rows}; layer skipped`)

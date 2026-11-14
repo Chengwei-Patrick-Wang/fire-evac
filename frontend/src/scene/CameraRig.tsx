@@ -39,8 +39,21 @@ export default function CameraRig() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topNonce])
 
-  // flyTo: damp camera and target toward the spot (eye 9 m above and 9 m back).
   const goal = useRef<{ p: [number, number, number]; t: [number, number, number] } | null>(null)
+  // fitView: fly back to the overview pose; damping ends after 2 s so auto-rotate and the user never fight it.
+  const fitView = useApp((s) => s.fitView)
+  const until = useRef(0)
+  useEffect(() => {
+    if (!building || !fitView) return
+    const b = buildingBounds(building)
+    const [cx, , cz] = toWorld(b.cx, b.cy)
+    const cy = (b.minZ + b.maxZ) / 2
+    goal.current = { p: [cx, cy + 0.8 * b.span, cz + 0.9 * b.span], t: [cx, cy, cz] }
+    until.current = performance.now() + 2000
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitView])
+
+  // flyTo: damp camera and target toward the spot (eye 9 m above and 9 m back).
   const focus = useApp((s) => s.focus)
   useEffect(() => {
     if (!building || !focus) return
@@ -48,10 +61,16 @@ export default function CameraRig() {
     const y = fl ? floorY(fl, useApp.getState().explode) : 0
     const [x, , z] = toWorld(focus.pos[0], focus.pos[1])
     goal.current = { p: [x, y + 9, z + 9], t: [x, y, z] }
+    until.current = 0
   }, [focus, building])
   useFrame((_, dt) => {
     const g = goal.current
-    if (!g) return
+    if (!g || useApp.getState().follow !== null) return
+    if (until.current && performance.now() > until.current) {
+      goal.current = null
+      until.current = 0
+      return
+    }
     const k = 1 - Math.exp(-4 * dt)
     camera.position.x += (g.p[0] - camera.position.x) * k
     camera.position.y += (g.p[1] - camera.position.y) * k
