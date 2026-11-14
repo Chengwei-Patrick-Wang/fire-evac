@@ -38,3 +38,7 @@ select { background: #1e293b; color: inherit; border: 1px solid #334155; border-
 .scrubber .track input { width: 100%; }
 .scrubber .mark { position: absolute; top: -2px; width: 6px; height: 10px; padding: 0; border: 0; border-radius: 2px; transform: translateX(-3px); }
 .scrubber .time { font-variant-numeric: tabular-nums; min-width: 120px; text-align: right; }
+.results h4 { margin: 12px 0 4px; }
+.results .legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.results .stats td { padding: 2px 8px 2px 0; }
+.results .foot { font-size: 11px; margin-top: 16px; }

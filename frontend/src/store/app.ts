@@ -36,6 +36,7 @@ interface AppState {
   runs: Record<string, LoadedRun>
   runOrder: string[]
   activeRunKey: string | null
+  compareKeys: string[]
   notice: string | null
   batch: Batch | null
   explode: number
@@ -61,6 +62,7 @@ export const useApp = create<AppState>((set) => ({
   runs: {},
   runOrder: [],
   activeRunKey: null,
+  compareKeys: [],
   notice: null,
   batch: null,
   explode: 0,
@@ -72,7 +74,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set({ building, visibleFloors: null, runs: {}, runOrder: [], activeRunKey: null }),
+  setBuilding: (building) => set({ building, visibleFloors: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] }),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
@@ -83,6 +85,7 @@ export const useApp = create<AppState>((set) => ({
         runs: { ...s.runs, [r.key]: { ...r, index } },
         runOrder: s.runOrder.includes(r.key) ? s.runOrder : [...s.runOrder, r.key],
         activeRunKey: r.key,
+        compareKeys: s.compareKeys.includes(r.key) ? s.compareKeys : [...s.compareKeys, r.key],
       }
     }),
   switchRun: (key) =>

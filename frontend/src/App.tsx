@@ -6,6 +6,7 @@ import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
 import Toolbar3D from './ui/Toolbar3D'
 import ClockDriver from './ui/ClockDriver'
+import ResultsPanel from './ui/ResultsPanel'
 import Scrubber from './ui/Scrubber'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
@@ -133,8 +134,7 @@ export default function App() {
         )}
       </main>
       <aside className="right">
-        <h3>Results</h3>
-        <p className="dim">Illustrative fire model. Not a compliance tool.</p>
+        <ResultsPanel />
       </aside>
       <footer className="bottom"><Scrubber /></footer>
       <ClockDriver />
