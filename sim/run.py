@@ -1,20 +1,21 @@
-"""Sim v0 (spec §7.2, scaffold Task S3): one JuPedSim simulation per floor; stairs are sinks.
+"""Multi-floor evacuation with width-limited FIFO stair transfers (spec §7.2).
 
-C owns this module and replaces it (stair transfer, brain, reroutes, blocked doors).
+C owns this module (stair transfer, brain, reroutes, blocked doors).
 
     python -m sim.run BUILDING SCENARIO OUT
 
-v0 behavior:
+Behavior:
 - Occupants are split over rooms (not corridor/stair/restroom/storage) by area, or
   scenario.occupants.perRoom; profile, v0 and startDelay come from sim.profiles.
 - One CollisionFreeSpeedModel sim per floor. Stages: every exit on the floor, plus
-  every stair zone on floors above the lowest (sinks: a "stair" event, never "exit").
-- Each agent heads for the nearest stage (straight line) and stands still
+  connected downward stairs. Arrivals wait for a clear spot before re-entry.
+- Each agent heads for the nearest exit, or stair on floors without exits, and stands still
   (desired_speed 0) until alarmTime + startDelay.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
 """
 from __future__ import annotations
 
+from collections import deque
 import json
 import math
 import sys
@@ -28,6 +29,7 @@ from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
 from sim.profiles import PROFILES
+from sim.floors import StairNet, find_spot
 
 DT = 0.01
 FRAME_EVERY = 50     # steps (0.5 s)
@@ -150,22 +152,24 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator) ->
 class _FloorSim:
     """One JuPedSim simulation for one floor, plus our jps-id -> idx map."""
 
-    def __init__(self, floor: dict, index: int, has_stair_sinks: bool):
+    def __init__(self, floor: dict, index: int, net: StairNet):
         self.id = floor["id"]
         self.index = index
         self.walk = floor_walkable(floor)
         self.sim = jps.Simulation(model=jps.CollisionFreeSpeedModel(), geometry=self.walk, dt=DT)
         self.stages: list[dict] = []
         self.jid2idx: dict[int, int] = {}
-        zones = [("exit", e["id"], None, e["polygon"]) for e in floor["exits"]]
-        if has_stair_sinks:
-            zones += [("stair", s["id"], s["group"], s["polygon"]) for s in floor["stairs"]]
-        for kind, zid, group, ring in zones:
-            poly = Polygon(ring)
-            stage = self.sim.add_exit_stage(poly)
+        widths = {d["id"]: d["width"] for d in floor["doors"]}
+        zones = [{"kind": "exit", "id": e["id"], "group": None,
+                  "poly": Polygon(e["polygon"]), "to": None,
+                  "width": widths.get(e["door"], 1.0)} for e in floor["exits"]]
+        zones += [{"kind": "stair", "id": link["stair"], "group": link["group"],
+                   "poly": link["polygon"], "to": link["to"], "width": link["width"]}
+                  for link in net.links(self.id)]
+        for zone in zones:
+            stage = self.sim.add_exit_stage(zone["poly"])
             journey = self.sim.add_journey(jps.JourneyDescription([stage]))
-            self.stages.append({"kind": kind, "id": zid, "group": group, "poly": poly,
-                                "stage": stage, "journey": journey})
+            self.stages.append(dict(zone, stage=stage, journey=journey))
         # Agents who have not started yet "park" on a direct-steering stage aimed at their own
         # position: they still stand as obstacles, but skip JuPedSim's per-step routing, which
         # is ~5x the cost of everything else on this geometry.
@@ -173,15 +177,26 @@ class _FloorSim:
         self.park_journey = self.sim.add_journey(jps.JourneyDescription([self.park_stage]))
 
 
-def _frame(sims: list[_FloorSim], trapped: set, status: list[int]) -> list[list]:
+def pick_target(fs, pt, exclude=()):
+    """Nearest exit, or nearest downward stair if this floor has no exits."""
+    options = [st for st in fs.stages if st["id"] not in exclude] or fs.stages
+    exits = [st for st in options if st["kind"] == "exit"]
+    return min(exits or options, key=lambda st: st["poly"].distance(pt))
+
+
+def _frame(sims: list[_FloorSim], trapped: set, status: list[int], transit: dict) -> list[list]:
     rows = []
     for fs in sims:
         for ag in fs.sim.agents():
             i = fs.jid2idx.get(ag.id)
-            if i is None or i in trapped:
+            if i is None or i in trapped or status[i] not in (0, 1):
                 continue
             x, y = ag.position
             rows.append([i, round(x, 2) + 0.0, round(y, 2) + 0.0, fs.index, status[i]])
+    indices = {fs.id: fs.index for fs in sims}
+    for i, entry in transit.items():
+        x, y = entry["pos"]
+        rows.append([i, round(x, 2), round(y, 2), indices[entry["to"]], 3])
     rows.sort(key=lambda r: r[0])
     return rows
 
@@ -199,12 +214,13 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         fire = NoFire(building, scenario)
     seed = int(scenario.get("seed", 0))
     rng = np.random.default_rng(seed)
+    net = StairNet(building)
     agents = place_occupants(building, scenario, rng)
+    net.check({a["floor"] for a in agents})
     n = len(agents)
 
     floors = building["floors"]
-    lowest = min(f.get("level", 0) for f in floors)
-    sims = [_FloorSim(f, i, f.get("level", 0) > lowest) for i, f in enumerate(floors)]
+    sims = [_FloorSim(f, i, net) for i, f in enumerate(floors)]
     by_id = {fs.id: fs for fs in sims}
 
     status = [0] * n
@@ -215,7 +231,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         if not fs.stages:
             raise ValueError(f"floor {fs.id} has occupants but no exits or stairs to go to")
         pt = Point(a["x"], a["y"])
-        st = min(fs.stages, key=lambda s: s["poly"].distance(pt))
+        st = pick_target(fs, pt)
         jid = fs.sim.add_agent(jps.CollisionFreeSpeedModelAgentParameters(
             position=(a["x"], a["y"]), desired_speed=STOPPED, radius=a["radius"],
             journey_id=fs.park_journey, stage_id=fs.park_stage))
@@ -234,7 +250,22 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     smoke: dict[str, dict] = {}
     hrr: list[list] = []
     trapped: set[int] = set()
-    active = n  # agents still inside a floor sim
+    transit = {}
+    arrivals = {}
+
+    def enter_stair(i, t, fs, st):
+        entry = net.enter(i, t, fs.id, st["group"], rng)
+        link = next(link for link in net.links(fs.id) if link["group"] == st["group"])
+        entry["arrival"] = link["arrival"]
+        entry["group"] = st["group"]
+        transit[i] = entry
+        arrivals.setdefault((entry["to"], st["group"]), deque()).append(i)
+        status[i] = 3
+        where[i] = None
+        events.append({"t": t, "type": "stair", "idx": i, "floor": fs.id,
+                       "group": st["group"], **{key: entry[key] for key in ("to", "enter", "arrive")}})
+
+    active = n  # agents not yet exited or trapped, including stair transit
     k, t = 0, 0.0
     while True:
         t = round(k * DT, 2)
@@ -246,6 +277,34 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
                 fs.sim.agent(jid).model.desired_speed = agents[i]["v0"]
                 status[i] = 1
+
+        # One queue per destination stair; a blocked head holds all later arrivals.
+        for (fid, group), queue in list(arrivals.items()):
+            fs = by_id[fid]
+            while queue:
+                i = queue[0]
+                entry = transit[i]
+                if entry["arrive"] > t + 1e-9:
+                    break
+                st = pick_target(fs, entry["arrival"].centroid)
+                if st["kind"] == "stair" and st["group"] == group:
+                    queue.popleft()
+                    enter_stair(i, t, fs, st)
+                    continue
+                region = entry["arrival"].buffer(-0.3)
+                if region.is_empty:
+                    region = entry["arrival"].buffer(-0.1)
+                positions = [ag.position for ag in fs.sim.agents()]
+                pos = find_spot(region, positions, rng)
+                if pos is None:
+                    break
+                jid = fs.sim.add_agent(jps.CollisionFreeSpeedModelAgentParameters(
+                    position=pos, desired_speed=agents[i]["v0"], radius=agents[i]["radius"],
+                    journey_id=st["journey"], stage_id=st["stage"]))
+                fs.jid2idx[jid] = i
+                where[i], target[i], status[i] = (fs, jid), st, 1
+                queue.popleft()
+                del transit[i]
 
         if k % FIRE_EVERY == 0:
             fire.step(t)
@@ -267,7 +326,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                         ag.model.desired_speed = min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - vis)))
 
         if k % FRAME_EVERY == 0:
-            frames.append({"t": t, "a": _frame(sims, trapped, status)})
+            frames.append({"t": t, "a": _frame(sims, trapped, status, transit)})
 
         if k % SMOKE_EVERY == 0:
             for fs in sims:
@@ -291,16 +350,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         t_now = round(k * DT, 2)
         for fs in sims:
             for jid in fs.sim.removed_agents():  # last iteration only: check every step
-                i = fs.jid2idx.get(jid)
+                i = fs.jid2idx.pop(jid, None)
                 if i is None or i in trapped:
                     continue
-                active -= 1
-                status[i] = -1
                 st = target[i]
                 if st["kind"] == "exit":
+                    active -= 1
+                    status[i] = -1
+                    where[i] = None
                     events.append({"t": t_now, "type": "exit", "idx": i, "exit": st["id"]})
                 else:
-                    events.append({"t": t_now, "type": "stair", "idx": i, "floor": fs.id, "group": st["group"]})
+                    enter_stair(i, t_now, fs, st)
 
     if active <= 0 and frames and frames[-1]["t"] < t:
         # Close the replay with an empty frame on the 0.5 s grid.
@@ -315,8 +375,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "agents": n,
         "evacuated": len(exit_events),
         "trapped": len(trapped),
-        "inStairs": sum(1 for e in events if e["type"] == "stair"),
-        "remaining": active,
+        "inStairs": len(transit),
+        "remaining": active - len(transit),
         "t50": _t_share(exit_times, n, 0.5),
         "t90": _t_share(exit_times, n, 0.9),
         "t100": _t_share(exit_times, n, 1.0),
