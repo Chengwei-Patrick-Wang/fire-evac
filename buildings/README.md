@@ -89,3 +89,13 @@ sanitizing a proposed floor. It returns a cleaned copy and notes describing
 squaring, merges, trims and dropped rooms; doors and other metadata are kept.
 Run `python -m buildings.tidy IN OUT` to process a floor or every floor in a
 plan and print the notes. This cleanup is geometric and does not verify doors.
+
+## Building index
+
+`data/buildings/index.json` has version `buildings-index/v0` and a `buildings`
+array with each public building's identity, source, full and short credits, file
+and scenario names, floor and feature counts, stair groups, walkable area,
+vertex count, extents and per-floor counts. It contains no top-level building
+ID or floors. Rerun `python -m buildings.summary` after changing any building in
+`data/buildings/`; use `python -m buildings.summary --check` to detect a stale
+index without writing it. A folder and `--out PATH` may also be supplied.

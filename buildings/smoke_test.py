@@ -1,4 +1,4 @@
-﻿"""Smoke test for the normalizer: python -m buildings.smoke_test
+"""Smoke test for the normalizer: python -m buildings.smoke_test
 
 Normalizes contracts/plan.example.json, writes debug/building.example.json,
 and checks the review-focus geometry (rooms separated by walls, exits, stairs).
@@ -259,6 +259,7 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_summary()
     check_tidy()
     check_traced()
     check_one_door()
@@ -283,6 +284,27 @@ def main() -> int:
 
 
 
+
+
+def check_summary():
+    from buildings.summary import build_index, summarize
+    folder = ROOT / "data/buildings"
+    office_path = folder / "office.json"
+    office = summarize(json.loads(office_path.read_text(encoding="utf-8")), str(office_path))
+    expected = {"floors": 2, "rooms": 109, "doors": 104, "exits": 6,
+                "stairGroups": ["S1", "S2"], "walkableArea": 3479.5,
+                "vertices": 1173, "size": [54.2, 38.4],
+                "shortCredit": "NIBS Common BIM File, US Army ERDC/CERL, free download"}
+    for key, value in expected.items():
+        assert office[key] == value, (key, office[key], value)
+    index = json.loads((folder / "index.json").read_text(encoding="utf-8"))
+    assert index == build_index(folder), "index.json is stale: run python -m buildings.summary"
+    assert "id" not in index and "floors" not in index
+    assert "umass" not in json.dumps(index).lower()
+    expected_files = {p.name for p in folder.glob("*.json")
+                      if json.loads(p.read_text(encoding="utf-8")).get("version") == "building/v0"
+                      and not json.loads(p.read_text(encoding="utf-8")).get("private", False)}
+    assert {b["file"] for b in index["buildings"]} == expected_files
 
 
 def check_tidy():
