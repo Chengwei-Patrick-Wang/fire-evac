@@ -1,5 +1,7 @@
 """Repeatable room-ignition batches. Run from the repo root: python -m fire.batch."""
 import argparse
+import base64
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from concurrent.futures.process import BrokenProcessPool
 from copy import deepcopy
@@ -122,10 +124,97 @@ def _records(building, tasks, workers, timeout_s, progress):
     return [records[i] for i in range(len(tasks))]
 
 
+def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
+    """Summarize successful runs without importing the simulator or mutating inputs."""
+    records = [record for record in records if record["ok"]]
+    by_room, by_door, by_floor = defaultdict(list), defaultdict(list), defaultdict(list)
+    for record in records:
+        ignition = record["ignition"]
+        by_room[(ignition["floor"], ignition["room"])].append(record)
+        for door in record["doors"]:
+            by_door[(door["floor"], door["id"])].append(door)
+        for heatmap in record["heatmaps"]:
+            by_floor[heatmap["floor"]].append(heatmap)
+    rooms = []
+    for (floor, room), runs in by_room.items():
+        times = [r["t90"] for r in runs]
+        risk = (sum(t if t is not None else base["maxTime"] for t in times) / len(runs)
+                if any(t is not None for t in times) else None)
+        rooms.append({"id": room, "floor": floor, "riskT90": risk,
+                      "riskTrapped": sum(r["trapped"] for r in runs) / len(runs), "n": len(runs)})
+    doors = [{"id": door, "floor": floor,
+              "meanWait": sum(d["waitPersonSeconds"] for d in values) / len(records),
+              "peakQueue": max(d["peakQueue"] for d in values)}
+             for (floor, door), values in by_door.items()]
+    max_wait = max((d["meanWait"] for d in doors), default=0)
+    max_queue = max((d["peakQueue"] for d in doors), default=0)
+    for door in doors:
+        door["score"] = round(100 * (0.7 * door["meanWait"] / (max_wait or 1)
+                                     + 0.3 * door["peakQueue"] / (max_queue or 1)), 1)
+
+    heatmaps = []
+    for floor, maps in by_floor.items():
+        header = {key: maps[0][key] for key in ("floor", "origin", "cell", "cols", "rows")}
+        total = np.zeros(header["cols"] * header["rows"], dtype=float)
+        for heatmap in maps:
+            if any(heatmap[key] != value for key, value in header.items()):
+                raise ValueError(f"Incompatible heatmap grids on floor {floor}")
+            values = np.frombuffer(base64.b64decode(heatmap["d"]), dtype=np.uint8)
+            if values.size != total.size:
+                raise ValueError(f"Invalid heatmap size on floor {floor}")
+            total += values
+        mean = total / len(records)
+        scaled = np.rint(mean * 100 / mean.max()).astype(np.uint8) if mean.size and mean.max() else mean.astype(np.uint8)
+        heatmaps.append({**header, "d": base64.b64encode(scaled.tobytes()).decode("ascii")})
+
+    room_info = {(f["id"], r["id"]): r for f in building["floors"] for r in f["rooms"]}
+    door_info = {(f["id"], d["id"]): (f, d) for f in building["floors"] for d in f["doors"]}
+    top = []
+    for door in sorted(doors, key=lambda d: -d["score"])[:4]:
+        if door["score"] <= 0:
+            continue
+        floor, info = door_info[(door["floor"], door["id"])]
+        connected = [room_info.get((floor["id"], rid), {}) for rid in info["connects"]]
+        stair = next((r for r in connected if r.get("type") == "stair"), None)
+        if "outside" in info["connects"]:
+            kind = "exit"
+            exit_info = next((e for e in floor["exits"] if e["door"] == door["id"]), {})
+            label = f"Exit {exit_info.get('name', door['id'])}"
+        elif stair:
+            kind, label = "stair", f"Stair {stair.get('group', stair['id'])} door"
+        else:
+            kind, label = "door", f"Door {door['id']}"
+        why = (f"{label}: {door['peakQueue']} people queued at peak; "
+               f"{door['meanWait']:,.0f} person-seconds of waiting on average across {len(records)} fires.")
+        top.append({"kind": kind, "id": door["id"], "floor": door["floor"],
+                    "score": door["score"], "why": why.encode("ascii", "replace").decode("ascii")})
+    if rooms:
+        def effective_time(room):
+            return room["riskT90"] if room["riskT90"] is not None else base["maxTime"]
+
+        max_time = max(effective_time(r) for r in rooms)
+        max_trapped = max(1.0, max(r["riskTrapped"] for r in rooms))
+
+        def room_score(room):
+            return round(100 * (0.5 * effective_time(room) / (max_time or 1)
+                                + 0.5 * room["riskTrapped"] / max_trapped), 1)
+
+        worst = max(rooms, key=room_score)
+        info = room_info[(worst["floor"], worst["id"])]
+        evacuation = (f"90% out after {worst['riskT90']:.0f} s"
+                      if worst["riskT90"] is not None else f"90% not out by {base['maxTime']:g} s in any run")
+        why = (f"Fire in {info.get('name', worst['id'])} ({worst['id']}): "
+               f"{worst['riskTrapped']:.1f} people trapped on average; {evacuation} ({worst['n']} fires).")
+        top.append({"kind": "room", "id": worst["id"], "floor": worst["floor"],
+                    "score": room_score(worst), "why": why.encode("ascii", "replace").decode("ascii")})
+    return {"rooms": rooms, "doors": doors, "heatmaps": heatmaps,
+            "top": sorted(top, key=lambda item: -item["score"])}
+
+
 def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
              seeds=(1, 2, 3), workers: int | None = None, timeout_s: float = 7200,
              progress: bool = True) -> dict:
-    """Build batch/v0; ranking and heatmap aggregation follow in D7.
+    """Build batch/v0 with room risks, chokepoint ranking and mean heatmaps.
 
     Inline execution (one worker or one task) checks the deadline between runs;
     a running inline simulation cannot be interrupted by this deadline.
@@ -140,11 +229,12 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
     records = _records(building, tasks, workers, timeout_s, progress)
     return {"version": "batch/v0", "id": f"batch-{building['id']}-{base['id']}",
             "buildingId": building["id"], "base": deepcopy(base),
+            "note": "Simulated rule-based batch; fire and smoke model is illustrative.",
             "runs": [{key: record[key] for key in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped")}
                      for record in records if record["ok"]],
             "failed": [{"scenarioId": record["scenarioId"], "error": record["error"]}
                        for record in records if not record["ok"]],
-            "rooms": [], "doors": [], "heatmaps": [], "top": []}
+            **aggregate(building, base, records)}
 
 
 def main():
@@ -166,6 +256,8 @@ def main():
     out.write_text(json.dumps(batch, separators=(",", ":")), encoding="utf-8")
     print(f"runtime {time.perf_counter() - started:.1f} s", flush=True)
     print(f"wrote {out} ({len(batch['runs'])} runs, {len(batch['failed'])} failed)", flush=True)
+    for item in batch["top"]:
+        print(item["why"], flush=True)
 
 
 if __name__ == "__main__":

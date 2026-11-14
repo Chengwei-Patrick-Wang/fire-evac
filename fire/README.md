@@ -227,7 +227,7 @@ Default output is `data/runs/batch-<buildingId>.json`; parent folders are create
 For UMass-derived buildings, explicitly use `--out data/private/<name>.json`.
 The output is batch/v0 with a copied scenario object in `base`, compact `runs`,
 and optional `failed: [{scenarioId, error}]`. Ranking fields (`rooms`, `doors`,
-`heatmaps`, `top`) are empty until D7. Workers retain compact door measurements
+`heatmaps`, `top`) are filled by the D7 aggregation below. Workers retain compact door measurements
 and heatmaps internally for that aggregation, without transferring full replays.
 
 | Setting | Default | Meaning |
@@ -257,3 +257,58 @@ D6 verification: `python -m fire.checks --slow` passed, including two 60-person,
 a timeout that records both failures promptly. `python -m fire.smoke_test`
 also passed. The four-room CLI check wrote `debug/batch-test.json` with four
 runs and no failures. Git syncing is left to the overnight runner.
+
+
+## Batch ranking and risk map (D7)
+
+`aggregate(building, base, records)` is a pure summary of successful worker
+records; failed runs are excluded from every denominator. `run_many` merges
+its four result fields into batch/v0 and the CLI prints each `top[].why` after
+writing the file. All numeric explanations are ASCII, including building labels.
+
+- `rooms`: one row per ignition room, with `riskT90`, mean `riskTrapped`, and
+  successful run count `n`. A missing t90 is censored to `base.maxTime` in the
+  mean. If all runs miss 90% evacuation, `riskT90` stays null for the dark-red
+  risk-map state; its ranking time is still `maxTime`.
+- `doors`: mean waiting person-seconds over all successful runs (an absent door
+  contributes zero), maximum queue, and score rounded to one decimal. The score
+  is 100 times (0.7 times mean wait / maximum mean wait + 0.3 times peak queue /
+  maximum peak queue). A zero maximum contributes zero.
+- `heatmaps`: decode each floor's Uint8 grids, average across successful runs,
+  then rescale the busiest cell to 100 and encode again. Headers are preserved;
+  inconsistent headers or byte counts raise ValueError. Empty grids stay zero.
+  Per-run maps were already normalized, so this combines relative occupancy,
+  not absolute crowd counts or smoke exposure.
+- `top`: the four highest positive door scores plus the room with the highest
+  room score, sorted by score, at most five entries. The room score is 100 times
+  (0.5 times effective t90 / maximum effective t90 + 0.5 times mean trapped /
+  max(1, maximum mean trapped)). Door and room scores are relative within this
+  batch; they are not calibrated probabilities. A small or empty batch can
+  produce fewer than three entries.
+
+Top kinds use `exit` for a door connected to outside, otherwise `stair` for a
+connection to a stair room, otherwise `door`. Kind `corridor` is never produced.
+Labels use `Exit <name>`, `Stair <group> door`, or `Door <id>`. Explanations give
+peak queues, mean waiting person-seconds and successful fire-run counts. Room
+explanations give mean trapped, mean censored t90 and that room's run count;
+when no run reaches 90%, the explanation says it was not reached by maxTime.
+Stable ties retain worker record order, which follows ignition and seed order.
+
+A handoff: wire `POST /batch` to `run_many` and copy the generated example batch
+into demo data. UMass batches must use `--out data/private/...`. E handoff:
+`base` is a scenario object; risk-map headers match smoke; `rooms[].riskT90`
+can be null; `top[].kind` includes stair entries identified by door id. The
+optional `failed` list records unsuccessful scenarios; per-run metrics also
+include the previously added optional `doors[].crossed` distinct-agent count.
+No contract examples or shared frontend files were changed.
+
+
+D7 verification: `python -m fire.smoke_test` passed, including handmade formula,
+null-censoring, kind, ASCII explanation, heatmap, empty-batch and example-shape
+checks. The default CLI completed all 18 rooms x 3 seeds (54 successful runs,
+0 failures) in 18.0 s and wrote `data/runs/batch-example-office.json` (gitignored),
+then printed five explanations. D202 led the door scores; Lobby L1 was the worst
+ignition room with 38.0 people trapped on average. All t90 values are null with
+the current scaffold's upper-floor stair sinks; rankings retain this limitation
+and report that 90% evacuation was not reached by 400 s. C's stair transfers
+will change those results. Git syncing remains the overnight runner's job.

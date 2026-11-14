@@ -407,6 +407,75 @@ def check_batch_setup():
     json.dumps(error)
 
 
+def check_aggregate():
+    from copy import deepcopy
+    from fire.batch import aggregate
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    records = []
+    for index, (room, t90, trapped) in enumerate((("R101", 100, 1), ("R101", None, 3),
+                                               ("R102", None, 0))):
+        records.append({"ok": True, "scenarioId": f"hand-{index}", "seed": index,
+                        "ignition": {"floor": "F1", "room": room}, "t90": t90,
+                        "t100": None, "trapped": trapped,
+                        "doors": [{"id": door, "floor": "F1", "peakQueue": peak,
+                                   "waitPersonSeconds": wait}
+                                  for door, peak, wait in (("E1", 2, 100), ("DSB1", 10, 40),
+                                                           ("D101", 1, 80))],
+                        "heatmaps": [{"floor": "F1", "origin": [0, 0], "cell": 0.5,
+                                      "cols": 2, "rows": 1,
+                                      "d": base64.b64encode(bytes(([100, 0], [0, 100], [0, 100])[index])).decode("ascii")}]})
+    original = deepcopy(records)
+    result = aggregate(building, base, records + [{"ok": False, "error": "ignored"}])
+    assert records == original
+    assert result["rooms"][0]["riskT90"] == (100 + base["maxTime"]) / 2
+    assert result["rooms"][0]["riskTrapped"] == 2 and result["rooms"][0]["n"] == 2
+    assert result["rooms"][1]["riskT90"] is None
+    scores = {door["id"]: door["score"] for door in result["doors"]}
+    assert scores == {"E1": 76.0, "DSB1": 58.0, "D101": 59.0}, scores
+    top = result["top"]
+    assert 3 <= len(top) <= 5 and top == sorted(top, key=lambda item: -item["score"])
+    assert {item["id"]: item["kind"] for item in top if item["kind"] != "room"} == {
+        "E1": "exit", "DSB1": "stair", "D101": "door"}
+    assert all(item["why"].isascii() and any(c.isdigit() for c in item["why"]) for item in top)
+    assert "Stair SB door" in next(item["why"] for item in top if item["id"] == "DSB1")
+    heatmap = result["heatmaps"][0]
+    raw = base64.b64decode(heatmap["d"])
+    assert len(raw) == heatmap["cols"] * heatmap["rows"] and list(raw) == [50, 100]
+    assert aggregate(building, base, []) == {"rooms": [], "doors": [], "heatmaps": [], "top": []}
+    zeros = deepcopy(records[:1])
+    for door in zeros[0]["doors"]:
+        door.update(peakQueue=0, waitPersonSeconds=0)
+    zeros[0]["heatmaps"][0]["d"] = base64.b64encode(bytes(2)).decode("ascii")
+    zero_result = aggregate(building, base, zeros)
+    assert all(d["score"] == 0 for d in zero_result["doors"])
+    assert base64.b64decode(zero_result["heatmaps"][0]["d"]) == bytes(2)
+    censored = aggregate(building, base, records[2:])
+    assert "not out by" in next(item["why"] for item in censored["top"] if item["kind"] == "room")
+    invalid = deepcopy(records[:1])
+    invalid[0]["heatmaps"][0]["d"] = ""
+    try:
+        aggregate(building, base, invalid)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("malformed heatmap must fail")
+    example_path = root / "contracts/batch.example.json"
+    if example_path.exists():
+        from fire.batch import run_many
+        batch = run_many(building, base, [], progress=False)
+        batch.update(result, runs=[{k: v for k, v in records[0].items()
+                                    if k in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped")}])
+        example = json.loads(example_path.read_text())
+        assert set(batch) >= set(example) - {"placeholder"}
+        assert isinstance(batch["base"], type(example["base"]))
+        for key in ("runs", "rooms", "doors", "top"):
+            assert set(batch[key][0]) >= set(example[key][0]), key
+    json.dumps(result, allow_nan=False)
+
+
 def check_batch_pool_slow():
     from copy import deepcopy
     from fire.batch import run_many
