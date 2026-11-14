@@ -289,6 +289,24 @@ def checkpoint_path(building_id: str, stage: str = "batch") -> Path:
     return CACHE_DIR / f"precompute-{safe_name(building_id)}-{stage}.json"
 
 
+def building_digest(building: dict) -> str:
+    """What a simulation can depend on in a building file: all of it but the name and credits (a credits line was
+    reworded on the example building at 11:12 and made every saved batch look stale)."""
+    import hashlib
+
+    body = {k: v for k, v in building.items() if k not in ("name", "credits")}
+    return hashlib.sha1(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def checkpoint_stale(saved: dict, path: Path, building: dict, source: Path) -> str | None:
+    """Why a saved checkpoint cannot be reused for this building file, or None. A checkpoint that carries the
+    building's digest is judged by it; an older one by the file times."""
+    digest = saved.get("building")
+    if digest is not None:
+        return None if digest == building_digest(building) else "the building changed"
+    return "the building file is newer" if path.stat().st_mtime < source.stat().st_mtime else None
+
+
 def run_batch(building: dict, source: Path, base: dict, ignitions: list[dict], seeds: list[int], workers: int,
               resume: bool) -> dict:
     """fire.batch.run_many, or the raw batch of an earlier run (--resume) when it still fits."""
@@ -304,8 +322,8 @@ def run_batch(building: dict, source: Path, base: dict, ignitions: list[dict], s
         reason = None
         if saved.get("request") != json.loads(json.dumps(request)):
             reason = "scenario, seeds or rooms changed"
-        elif path.stat().st_mtime < source.stat().st_mtime:
-            reason = "the building file is newer"
+        else:
+            reason = checkpoint_stale(saved, path, building, source)
         if reason is None:
             batch = saved["batch"]
             say(f"  --resume: reusing the batch saved {datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M} "
@@ -337,7 +355,8 @@ def run_batch(building: dict, source: Path, base: dict, ignitions: list[dict], s
     if lost:
         say(f"  WARNING: {lost} of {n} fires failed and are left out; first: {batch['failed'][0].get('error')}")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    text = json.dumps({"request": request, "batch": batch}, default=_json_default, separators=(",", ":"))
+    text = json.dumps({"request": request, "building": building_digest(building), "batch": batch},
+                      default=_json_default, separators=(",", ":"))
     path.write_text(text, encoding="utf-8")
     to_text(batch)  # raises on a NaN, which the final file could not hold; the checkpoint is already saved
     return batch
@@ -417,12 +436,12 @@ def _sweeps(building: dict, source: Path, base: dict, batch: dict, skip: set[str
         return batch
     path = checkpoint_path(building["id"], "sweeps")
     request = {"base": base, "rooms": rooms, "skip": sorted(skip), "runs": batch["runs"]}
-    if args.resume and path.is_file() and path.stat().st_mtime >= source.stat().st_mtime:
+    if args.resume and path.is_file():
         try:
             saved = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             saved = {}
-        if saved.get("request") == json.loads(json.dumps(request)):
+        if saved.get("request") == json.loads(json.dumps(request)) and not checkpoint_stale(saved, path, building, source):
             say(f"  --resume: reusing the sweeps saved {datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}")
             return saved["batch"]
         say("  --resume: not reusing the saved sweeps (the batch, scenario or rooms changed)")
@@ -463,8 +482,8 @@ def _sweeps(building: dict, source: Path, base: dict, batch: dict, skip: set[str
         from backend.app.jobs import _json_default
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"request": request, "batch": batch}, default=_json_default, separators=(",", ":")),
-                        encoding="utf-8")
+        path.write_text(json.dumps({"request": request, "building": building_digest(building), "batch": batch},
+                                   default=_json_default, separators=(",", ":")), encoding="utf-8")
     return batch
 
 
