@@ -485,6 +485,7 @@ for the sprinkler variant.
 | `dTrapped` | Mean variant-minus-baseline trapped count over matched pairs |
 | `dDosed`, `dSmokeSeconds` | Mean variant-minus-baseline illustrative dose count and person-seconds in smoke; each included only if both sides of every matched pair carry that measure |
 | `baseSmokeSeconds`, `smokePct` | With `dSmokeSeconds` (D18): the mean person-seconds in smoke of the baseline runs that a successful variant run matches, and `100 * dSmokeSeconds / baseSmokeSeconds` (null when that mean is 0). The `why` line then reads `+427 person-seconds in smoke (+22%)` |
+| `dTrappedRooms` | (D22, optional) The up to three ignition rooms that move `dTrapped` most: `[{floor, room, label, delta, fires, opensOnto}]`, `delta` the summed variant-minus-baseline trapped count in that room |
 | `why` | ASCII explanation of paired time, exposure and trapped differences |
 | Batch `runs[].exitCounts` | Per-exit evacuated counts retained from simulator metrics |
 
@@ -622,9 +623,11 @@ new exits.
 Every rerun pairs the same ignition and seed with the baseline. Deltas are fix
 minus baseline; a null t90 counts as `maxTime`. `smokePct` is the mean change in
 person-seconds in smoke divided by the matched baseline mean, times 100; it is
-null when exposure is absent or the denominator is zero. `helps` means at least
-1 s sooner to 90% out, fewer trapped, or at least 5% less smoke exposure. Results
-sort helping fixes first, then lower dT90, then lower dSmokeSeconds. Failed or
+null when exposure is absent or the denominator is zero. `helps` once meant at least
+1 s sooner to 90% out, fewer trapped, or at least 5% less smoke exposure; D22
+replaced that with one rule for gains and costs, so `helps` now excludes fixes that
+cost something (see "Trade-offs (D22)" below). Results sort helping fixes first,
+then trade-offs, then the rest, each by lower dT90, then lower dSmokeSeconds. Failed or
 unmatched runs do not contribute to comparisons; `n` is the matched count.
 
 With `--whatif`, closing already-closed stair doors is instead compared against
@@ -634,8 +637,9 @@ reverse their ranges and faster/slower counts without rerunning. Their
 `derivedFrom` names the comparison and their labels say "vs propped open" or
 "vs blocked". Their `smokePct` is `100 * dSmokeSeconds / (b - dSmokeSeconds)`,
 where b is the named what-if's `baseSmokeSeconds` (D18; the fix's own baseline is
-the propped or blocked state), and null for a batch saved without it. Any
-reduction in smoke exposure qualifies a derived fix as helping.
+the propped or blocked state), and null for a batch saved without it. (Until D22 any
+reduction in smoke exposure qualified a derived fix as helping; now it must reach
+the 5-point line like any other fix, or be negative when there is no percent.)
 Derived results retain the original what-if's matched fires, even if a different
 `--fix-rooms` subset is requested. Inapplicable or unsafe suggestions are recorded
 in `fixesSkipped` with a reason.
@@ -892,7 +896,7 @@ missing section or field is left out, never null; readers ignore unknown fields;
 times are ISO 8601 UTC ending in `Z`; all text is ASCII):
 
 ```text
-headlines/v0 = {version, buildingId, buildingName, generated, note, sources: {batch: {file, id, modified}, sensitivity: {file, modified}}, scenario: {id, occupants, mix, fireType, growth, sprinklers, alarmTime, maxTime, doors, exitChoice, seeds, rooms, runs, failed}, headline, weakSpots: [{rank, kind, id, floor, label, score, why, scoreRange, riskT90Range, seedsInTop3}], whatIf: [{id, label, n, dT90, slower, faster, dTrapped, dSmokeSeconds, baseSmokeSeconds, smokePct, dDosed, why}], fixes: [{id, kind, label, helps, n, dT90, dTrapped, dSmokeSeconds, smokePct, derivedFrom, why}], stability: {why, heldIn, n}, sensitivity: {note, why, variants: [{id, why}]}, timing}
+headlines/v0 = {version, buildingId, buildingName, generated, note, sources: {batch: {file, id, modified}, sensitivity: {file, modified}}, scenario: {id, occupants, mix, fireType, growth, sprinklers, alarmTime, maxTime, doors, exitChoice, seeds, rooms, runs, failed}, headline, weakSpots: [{rank, kind, id, floor, label, score, why, scoreRange, riskT90Range, seedsInTop3}], whatIf: [{id, label, n, dT90, slower, faster, dTrapped, dSmokeSeconds, baseSmokeSeconds, smokePct, dDosed, why}], fixes: [{id, kind, label, helps, tradeoff, costs, n, dT90, dTrapped, dSmokeSeconds, smokePct, derivedFrom, why}], stability: {why, heldIn, n}, sensitivity: {note, why, variants: [{id, why}]}, timing}
 ```
 
 - `scenario` is the batch's `base` (`id`, `occupants.total` as `occupants`, `mix`,
@@ -1186,3 +1190,175 @@ Handoff for E: the current pack may carry `features`, `legacyHeadline` and `chan
 headline as "Updated for smoke-aware exit choice" (each `why` is ready to print and each entry has `changed: true`),
 and say nothing when `changes` is absent. The `-c14off` pack has the same shape as any other pack and carries no
 `changes`; its `scenario.exitChoice` is `{"smoke": 0, "unfamiliar": 0}`.
+
+## Trade-offs (D22)
+
+D14's `helps` counted any gain, so a fix that is faster and less smoky but traps people still read as a win. The
+example's "Keep Exit Main entrance clear (vs blocked)" was the first measured fix, with `+1.3 trapped per fire` at
+the end of a line that otherwise reads as good news. Fixes that cost something now say so, in a `Trade-off:` line
+that names the fires behind the number.
+
+**Where the +1.3 comes from.** It is the same 47 people as the blocked-exit what-if's "-1.3 trapped per fire".
+The lead's rerun of the demo batch's three Lobby (L1) fires (160 occupants, kitchen, seeds 1-3) shows all 47 are in
+those fires. `remaining` is 0 in all six runs, so this is the model's behaviour and not a counting artifact: E1 is
+the lobby's own exit, so in a lobby fire the people heading for it walk past the fire. Sprinklers trap 0 there
+as well, which is why the sprinkler what-if shows the same -1.3.
+
+| Lobby (L1) fire, 160 occupants, kitchen | Seed 1 | Seed 2 | Seed 3 |
+| --- | --- | --- | --- |
+| E1 open: trapped | 16 | 13 | 18 |
+| of those, `untenable` / `no route` | 11 / 5 | 10 / 3 | 14 / 4 |
+| E1 open: leave through E1 | 77 | 79 | 68 |
+| E1 open: 90% out | 221.8 s | 169.2 s | not reached |
+| E1 open: person-seconds in smoke | 4,132 | 3,986 | 4,082 |
+| E1 blocked: trapped | 0 | 0 | 0 |
+| E1 blocked: leave through E2 | 160 | 160 | 160 |
+| E1 blocked: 90% out | 186.0 s | 185.9 s | 190.4 s |
+| E1 blocked: person-seconds in smoke | 5,624 | 5,191 | 5,812 |
+
+The batch's L1 `riskTrapped` is 15.7 (47 over 3 fires) and the what-if's `dTrapped` is -47/36 = -1.31 over 36 fires,
+all of it in L1. Blocking E1 sends everyone to E2 (nobody is trapped), and the same fires cost more person-seconds
+in smoke; the counting note below is the model's accounting for that.
+
+### The rule
+
+One rule for a measured gain and a measured cost, shared with E34 (`fire.fixes.VERDICT = {"t90": 1.0, "trapped":
+0.05, "smokePct": 5.0}`):
+
+| | Gain | Cost |
+| --- | --- | --- |
+| 90% out | `dT90 <= -1` s | `dT90 >= +1` s |
+| People trapped | `dTrapped <= -0.05` per fire | `dTrapped >= +0.05` per fire |
+| Smoke | `smokePct <= -5` (`dSmokeSeconds < 0` when `smokePct` is null) | `smokePct >= +5` (`dSmokeSeconds > 0` when null) |
+
+`verdict(fix) -> {"helps", "tradeoff", "costs"}` uses only the fix's numbers. `helps` means a gain and no cost,
+`tradeoff` a gain and a cost, and with `n == 0` neither. `costs` lists the cost phrases: `1.3 more trapped per
+fire`, `18% more time in smoke` (`427 more person-seconds in smoke` without `smokePct`), `90% out 12 s later on
+average`, each list in the order time, smoke, trapped. A smoke cost adds ` (people no longer trapped keep counting)`
+when trapped is a gain: people who stop being trapped stay in the replay frames, and their time in smoke counts
+(D15's sprinkler caveat). `add_fixes` writes `helps`, `tradeoff` and `costs` on every fix, and sorts helping fixes
+first, then trade-offs, then the rest, each by `dT90`, then `dSmokeSeconds`. A fix with no gain (neither, so no
+`Trade-off:` line) keeps D14's sentence, and its `costs` are still listed. The 5-point smoke line now also applies
+to a fix derived from a what-if, which used to help on any smoke reduction.
+
+### Which fires
+
+`fire.whatif.room_deltas(baseline_runs, variant_runs, key="trapped", building=None, doors=())` pairs runs as
+`compare` does (same floor, room and seed; failed runs dropped), sums `variant[key] - baseline[key]` per ignition
+room, drops rooms that sum to zero and sorts by |delta|, then floor, room. Each row is `{floor, room, label, delta,
+fires, opensOnto}`: `label` is `<room name> (<id>)`, `fires` the matched fires in the room, and `opensOnto` is
+`"exit"` when one of `doors` (the variant's or the fix's door overrides) joins that room to outside, `"door"` when
+it joins it to another room, else null. `add_whatif` stores the first three rows as `dTrappedRooms` (when there are
+any), `add_fixes` does the same for a rerun fix, a fix derived from a what-if inherits them with each `delta`
+negated, and the sprinkler fix reused from its what-if copies them.
+
+`trapped_note(stats)` turns them into the parenthesis after a trapped number. The total is `round(dTrapped * n)`.
+When it is at least 1 in size and the first row has the same sign and holds at least half of it, the number gets
+` (47 of 47 in fires in Lobby (L1), which this exit opens onto)`. It says `door` for `opensOnto == "door"` and
+drops the `which ...` part when it is null. A row that holds more than the whole total (other rooms moving the
+other way) gets no note, so the "of" never exceeds the total.
+
+### Wording
+
+- A helping or no-gain fix keeps D14's sentence, with the parenthesis after its trapped number when there is one:
+  `Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 11 s sooner on average and 3% less time in smoke across 36 fires (faster in 23); -0.2 trapped per fire.`
+- A trade-off lists its gains, then `but` and its costs (commas and a final `and`):
+  `Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34), but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).`
+- A what-if keeps its sentence and gets the same parenthesis:
+  `... -1.3 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).`
+
+`fire.fixes.restate(batch)` returns a copy of a saved batch with `helps`, `tradeoff`, `costs` and `why` written again
+on every fix (re-sorted) and every what-if `why` written again, from the numbers the batch holds. Nothing reruns, so
+a saved batch gets the `Trade-off:` wording but no "in fires in ..." parenthesis: that needs `dTrappedRooms`, which
+only a sweep run with this code writes. `FIX_KEYS` in `fire/headlines.py` gains `tradeoff` and `costs`.
+
+### Changed lines
+
+`restate` on the three demo batches (`frontend/public/demo/batch-<id>.json`, written to
+`debug/d22-restated-<id>.json`) changes five fix lines and no what-if line (none of them has `dTrappedRooms`). Each
+`helps` flips from true to false, and the fix moves behind the fixes that only gain. Before, then after:
+
+```text
+Example (36 fires):
+Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34); +1.3 trapped per fire.
+Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34), but 1.3 more trapped per fire.
+
+Office (24 fires):
+Keep Exit Stair S1 (west) clear (vs blocked): 90% out 11 s sooner on average and 43% less time in smoke across 24 fires (faster in 21); +0.4 trapped per fire.
+Trade-off: Keep Exit Stair S1 (west) clear (vs blocked): 90% out 11 s sooner on average and 43% less time in smoke across 24 fires (faster in 21), but 0.4 more trapped per fire.
+Sprinklers: 90% out 7 s sooner on average and 18% more time in smoke across 24 fires (faster in 2); -2.2 trapped per fire.
+Trade-off: Sprinklers: 90% out 7 s sooner on average and 2.2 fewer trapped per fire across 24 fires (faster in 2), but 18% more time in smoke (people no longer trapped keep counting).
+Self-closers on stair doors (vs propped open): 90% out 0 s later on average and 37% less time in smoke across 24 fires (faster in 2); +0.4 trapped per fire.
+Trade-off: Self-closers on stair doors (vs propped open): 37% less time in smoke across 24 fires (faster in 2), but 0.4 more trapped per fire.
+
+Clinic (9 fires):
+Keep Exit Corridor (north) clear (vs blocked): 90% out 4 s sooner on average and 37% more time in smoke across 9 fires (faster in 5); -0.2 trapped per fire.
+Trade-off: Keep Exit Corridor (north) clear (vs blocked): 90% out 4 s sooner on average and 0.2 fewer trapped per fire across 9 fires (faster in 5), but 37% more time in smoke (people no longer trapped keep counting).
+```
+
+In the example, "Best measured fix" (the first fix with `helps`, E31's scene 5) is now `Widen Exit East stair exit from
+1.00 m to 1.50 m`; the order is widen-E2, sprinklers, widen-DL1, self-closers, then the trade-off. The office's two
+widened exits still help and come first. All other fix lines are unchanged.
+
+### Rerun: the example, with the fires named
+
+```sh
+OPENBLAS_NUM_THREADS=1 python -m fire.batch contracts/building.example.json contracts/scenario.example.json --seeds 1,2,3 --whatif --whatif-rooms 3 --fixes --fix-rooms 3 --workers 4 --out data/runs/batch-example-tradeoff.json > debug/d22-example.log 2>&1
+```
+
+Windows 11 Pro, Intel Core i9-10885H (8 cores, 16 threads), 16 GB RAM, 4 workers on a shared laptop: 99 runs (the 54
+baseline fires, 27 what-if reruns and 18 for the two widened doors; the sprinkler fix is the what-if's, and the
+other two fixes are derived), none failed, 1,159.5 s. Every `dTrappedRooms` is Lobby (L1) alone: blocked E1 -47
+(`exit`), sprinklers -47, keep E1 clear +47 (`exit`), widened DL1 -5 (`door`), widened E2 -7, propped stairs +1
+and self-closers -1. The what-if and fix lines the batch printed:
+
+```text
+Stair doors propped open: 90% out 1 s later on average (slower in 3 of 9 fires); +789 person-seconds in smoke (+32%), +1.2 people at an illustrative smoke dose of 1, +0.1 trapped per fire (1 of 1 in fires in Lobby (L1)).
+Exit Main entrance blocked: 90% out 10 s later on average (slower in 7 of 9 fires); +2,662 person-seconds in smoke (+109%), +7.1 people at an illustrative smoke dose of 1, -5.2 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).
+Sprinklers on: 90% out 36 s sooner on average (slower in 0 of 9 fires); -153 person-seconds in smoke (-6%), -6.7 people at an illustrative smoke dose of 1, -5.2 trapped per fire (47 of 47 in fires in Lobby (L1)).
+
+Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 36 s sooner on average and 3% less time in smoke across 9 fires (faster in 8); -0.8 trapped per fire (7 of 7 in fires in Lobby (L1)).
+Sprinklers: 90% out 36 s sooner on average and 6% less time in smoke across 9 fires (faster in 7); -5.2 trapped per fire (47 of 47 in fires in Lobby (L1)).
+Widen Door DL1 (Lobby to Corridor 1) from 4.00 m to 4.50 m: 90% out 8 s sooner on average and 0% more time in smoke across 9 fires (faster in 6); -0.6 trapped per fire (5 of 5 in fires in Lobby (L1), which this door opens onto).
+Self-closers on stair doors (vs propped open): 90% out 1 s sooner on average and 24% less time in smoke across 9 fires (faster in 3); -0.1 trapped per fire (1 of 1 in fires in Lobby (L1)).
+Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 10 s sooner on average and 52% less time in smoke across 9 fires (faster in 7), but 5.2 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).
+```
+
+The fixes come in the new order, widen E2, sprinklers, widen DL1, self-closers, then the trade-off, and `restate` on
+this batch returns it unchanged (the saved numbers and the restated ones agree). The six lobby fires were rerun with
+this branch's code, E1 open from this batch's baseline and E1 blocked in a separate three-fire run, and every number in
+the table matches: trapped, exit counts, 90% out and person-seconds in smoke (the table rounds the half seconds).
+
+### Verification
+
+`python -m fire.smoke_test` and `python -m fire.checks --slow` both print `fire checks OK` (the slow suite took 9
+minutes on the shared laptop). `check_tradeoffs` (fast, no simulation) pins the verdicts on the demo numbers and their
+boundaries, `room_deltas`, `trapped_note`, the exact trade-off sentence, `restate` on the example's five fixes and the
+office's three, and the `dTrappedRooms` that `add_whatif` and `add_fixes` write (a what-if, a derived fix, a rerun fix
+and a reused sprinkler what-if). `check_tradeoffs_slow` reruns the example's L1 and R105 fires (seed 1, 160 occupants)
+with E1 blocked: the lobby accounts for 16 of the people the blocked main entrance spares, and the line names it.
+`check_fixes` changed one assertion: its hand-made sprinkler rerun is 2 s slower, a cost, so the sprinklers there are
+now a trade-off and no longer helping.
+
+To see any saved batch in the new wording without rerunning it:
+
+```sh
+python -c "import json; from fire.fixes import restate; b = json.load(open('frontend/public/demo/batch-office.json')); print(*[f['why'] for f in restate(b)['fixes']], sep=chr(10))"
+```
+
+The three restated demo batches are in `debug/d22-restated-example-office.json`, `-office.json` and `-clinic.json`, and
+the rerun batch is `data/runs/batch-example-tradeoff.json` (all gitignored).
+
+### Handoffs
+
+- **A:** call `fire.fixes.restate(batch)` on each batch in the precompute before writing `batch-<id>.json` and the pack
+  (no reruns; `_why(fix)` and `whatif._why(label, stats)` keep their signatures). Rerun the sweeps without `--resume`
+  to get the "in fires in ..." parentheses: a `--resume` run reuses saved sweeps, which have no `dTrappedRooms`.
+- **E:** E34 mirrors `VERDICT` (above). `tradeoff` and `costs` are optional (older batches lack them) and `helps` now
+  excludes trade-offs, so a reader that shows only `helps` stops showing the trade-offs as good news. `why` already
+  holds the whole line, starting `Trade-off:`; `costs` has the cost phrases alone, for a badge or a second line. They
+  are in the headline pack's `fixes[]` too (`FIX_KEYS`).
+- The report card quotes `fixes[].why` verbatim, so it now says "Trade-off" and the parenthesis for a rerun batch.
+
+All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
+compliance results.

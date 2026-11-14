@@ -17,7 +17,7 @@ NOTE = ("Illustrative fire model and rule-based simulated occupants; "
         "ideas for a fire protection engineer to check, not a compliance result.")
 WHATIF_KEYS = ("id", "label", "n", "dT90", "slower", "faster", "dTrapped",
                "dSmokeSeconds", "baseSmokeSeconds", "smokePct", "dDosed", "why")
-FIX_KEYS = ("id", "kind", "label", "helps", "n", "dT90", "dTrapped",
+FIX_KEYS = ("id", "kind", "label", "helps", "tradeoff", "costs", "n", "dT90", "dTrapped",
             "dSmokeSeconds", "smokePct", "derivedFrom", "why")
 
 

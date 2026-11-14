@@ -1078,7 +1078,11 @@ def check_fixes():
         result = add_fixes(building, base, batch, workers=1, timeout_s=12, progress=False)
         subset = add_fixes(building, base, batch, rooms=1, workers=1, timeout_s=12, progress=False)
     assert result["fixes"][0]["id"] == "widen-DSB1"
-    assert all(f["helps"] and np.isclose(f["smokePct"], -20) for f in result["fixes"])
+    assert all(np.isclose(f["smokePct"], -20) for f in result["fixes"])
+    # D22: the hand-made sprinkler rerun is 2 s slower (a cost) as well as 20% less smoke (a gain), so it is a
+    # trade-off and sorts after the widened door, which only gains.
+    assert [(f["id"], f["helps"], f["tradeoff"]) for f in result["fixes"]] == [
+        ("widen-DSB1", True, False), ("sprinklers", False, True)]
     assert all(f["n"] == 1 for f in subset["fixes"])
     assert calls[0] == [dict(floor="F1", room="R101"), dict(floor="F1", room="R105")]
     assert calls[-1] == [dict(floor="F1", room="R105")]
@@ -1151,6 +1155,255 @@ def check_fixes_slow():
     assert all(f["n"] == 2 and all(np.isfinite(f[k]) for k in ("dT90", "dTrapped", "dSmokeSeconds"))
                for f in result["fixes"])
     print("fixes: widened door and sprinklers with two matched fires each", flush=True)
+
+
+def check_tradeoffs():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.fixes import VERDICT, _inverse, _join, _why, add_fixes, restate, verdict
+    from fire.headlines import build_headlines
+    from fire.whatif import _why as whatif_why, add_whatif, room_deltas, trapped_note
+
+    root = Path(__file__).resolve().parents[1]
+    example = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    counting = " (people no longer trapped keep counting)"
+    assert VERDICT == {"t90": 1.0, "trapped": 0.05, "smokePct": 5.0}
+
+    def numbers(dT90, smokePct, dTrapped, n=36, **more):
+        return {"n": n, "dT90": dT90, "smokePct": smokePct, "dTrapped": dTrapped, **more}
+
+    # The verdict, on numbers measured in the demo batches (dT90, smokePct, dTrapped, in this order).
+    assert verdict(numbers(-58.29, -67.7, 1.31)) == {"helps": False, "tradeoff": True,
+                                                      "costs": ["1.3 more trapped per fire"]}
+    assert verdict(numbers(-10.6, -2.9, -0.19)) == {"helps": True, "tradeoff": False, "costs": []}
+    assert verdict(numbers(-6.7, 18.2, -2.25)) == {"helps": False, "tradeoff": True,
+                                                    "costs": ["18% more time in smoke" + counting]}
+    assert verdict(numbers(18, -3, 0.5)) == {"helps": False, "tradeoff": False,
+                                              "costs": ["90% out 18 s later on average", "0.5 more trapped per fire"]}
+    assert verdict(numbers(-58.29, -67.7, 1.31, n=0)) == {"helps": False, "tradeoff": False, "costs": []}
+    assert verdict({"n": 4, "dT90": 0.0, "dTrapped": 0.0}) == {"helps": False, "tradeoff": False, "costs": []}
+    assert verdict(numbers(12.0, 18.0, 1.3))["costs"] == [
+        "90% out 12 s later on average", "18% more time in smoke", "1.3 more trapped per fire"]  # no gain: no note
+    assert verdict(numbers(-6.7, 18.2, 0.0))["costs"] == ["18% more time in smoke"]  # trapped is no gain: no note
+    # A change counts from VERDICT's size: 1 s, 0.05 people per fire, 5 points of smoke.
+    assert verdict(numbers(-1.0, 0.0, 0.0))["helps"] and not verdict(numbers(-0.99, 0.0, 0.0))["helps"]
+    assert verdict(numbers(0.0, 0.0, -0.05))["helps"] and not verdict(numbers(0.0, 0.0, -0.04))["helps"]
+    assert verdict(numbers(0.0, -5.0, 0.0))["helps"] and not verdict(numbers(0.0, -4.9, 0.0))["helps"]
+    assert verdict(numbers(1.0, 0.0, 0.0))["costs"] == ["90% out 1 s later on average"]
+    assert verdict(numbers(0.99, 0.0, 0.0))["costs"] == [] and verdict(numbers(0.0, 4.9, 0.0))["costs"] == []
+    assert verdict(numbers(0.0, 5.0, 0.0))["costs"] == ["5% more time in smoke"]
+    assert verdict(numbers(0.0, 0.0, 0.05))["costs"] == ["0.1 more trapped per fire"]
+    assert verdict(numbers(0.0, 0.0, 0.04))["costs"] == []
+    # Without a percent the sign of the person-seconds decides (the null percent of a saved batch).
+    raw = {"n": 3, "dT90": 0.0, "dTrapped": 0.0, "smokePct": None}
+    assert verdict({**raw, "dSmokeSeconds": 427.0}) == {"helps": False, "tradeoff": False,
+                                                         "costs": ["427 more person-seconds in smoke"]}
+    assert verdict({**raw, "dSmokeSeconds": -20.0}) == {"helps": True, "tradeoff": False, "costs": []}
+    assert verdict({**raw, "dSmokeSeconds": 427.0, "dTrapped": -1.0}) == {
+        "helps": False, "tradeoff": True, "costs": ["427 more person-seconds in smoke" + counting]}
+    assert verdict({**raw, "dSmokeSeconds": 0.0})["helps"] is False and verdict(raw)["helps"] is False
+
+    # room_deltas: where a trapped change comes from, on hand-made lobby fires (16, 13 and 18 trapped, then 0).
+    def run(room, seed, trapped, ok=True, floor="F1", **more):
+        return {"ignition": {"floor": floor, "room": room}, "seed": seed, "trapped": trapped, "ok": ok, **more}
+
+    before = [run("L1", 1, 16), run("L1", 2, 13), run("L1", 3, 18), run("R105", 1, 0)]
+    after = [run("L1", 1, 0), run("L1", 2, 0), run("L1", 3, 0), run("R105", 1, 0)]
+    lobby = {"floor": "F1", "room": "L1", "label": "Lobby (L1)", "delta": -47, "fires": 3, "opensOnto": "exit"}
+    assert room_deltas(before, after, "trapped", example, ("E1",)) == [lobby]
+    assert room_deltas(before, after, building=example, doors={"E1": "blocked"}) == [lobby]  # overrides, as a mapping
+    assert room_deltas(before, after, "trapped", example, "E1") == [lobby]  # or one door id
+    assert room_deltas(before, after, "trapped", example, ("DL1",))[0]["opensOnto"] == "door"
+    assert room_deltas(before, after, "trapped", example, ("E2", "D105"))[0]["opensOnto"] is None
+    assert room_deltas(before, after) == [{**lobby, "label": "L1", "opensOnto": None}]
+    assert room_deltas(before, after, "trapped", {"floors": []}, ("E1",)) == [{**lobby, "label": "L1", "opensOnto": None}]
+    # Failed runs and unmatched fires drop out, as in compare; the largest change comes first.
+    partial = [run("L1", 1, 0), run("L1", 2, 0, ok=False), run("L1", 4, 0), run("R105", 1, 3)]
+    assert room_deltas(before, partial, "trapped", example, ("E1",)) == [
+        {**lobby, "delta": -16, "fires": 1},
+        {"floor": "F1", "room": "R105", "label": "Office 105 (R105)", "delta": 3, "fires": 1, "opensOnto": None}]
+    assert room_deltas([run("L1", 1, 16, ok=False)], [run("L1", 1, 0)]) == []
+    tied = room_deltas([run("R101", 1, 0), run("L1", 1, 1), run("R201", 1, 0, floor="F2")],
+                       [run("R101", 1, 1), run("L1", 1, 0), run("R201", 1, 1, floor="F2")])
+    assert [(row["floor"], row["room"], row["delta"]) for row in tied] == [("F1", "L1", -1), ("F1", "R101", 1), ("F2", "R201", 1)]
+    smoke = room_deltas([run("L1", 1, 0, smokeSeconds=100.5)], [run("L1", 1, 0, smokeSeconds=90.25)], "smokeSeconds")
+    assert [(row["room"], row["delta"]) for row in smoke] == [("L1", -10.25)]
+    named = deepcopy(example)
+    next(r for r in named["floors"][0]["rooms"] if r["id"] == "L1")["name"] = "L1"
+    assert room_deltas(before, after, "trapped", named, ("E1",))[0]["label"] == "L1"  # a name that is the id: once
+
+    # trapped_note: the fires behind a number, only when one room holds half of it or more (and no more than all).
+    def note(total, delta, onto="exit", n=36):
+        return trapped_note({"n": n, "dTrapped": total / n, "dTrappedRooms": [dict(lobby, delta=delta, opensOnto=onto)]})
+
+    assert note(-47, -47) == "(47 of 47 in fires in Lobby (L1), which this exit opens onto)"
+    assert note(47, 47, "door") == "(47 of 47 in fires in Lobby (L1), which this door opens onto)"
+    assert note(47, 47, None) == "(47 of 47 in fires in Lobby (L1))"
+    assert note(-40, -20) == "(20 of 40 in fires in Lobby (L1), which this exit opens onto)"
+    assert note(-1, -1) == "(1 of 1 in fires in Lobby (L1), which this exit opens onto)"
+    assert note(-47, -20) == "" and note(-47, 47) == "" and note(-10, -14) == "" and note(0, -3) == ""
+    assert trapped_note({"n": 36, "dTrapped": -47 / 36}) == ""
+    assert trapped_note({"n": 36, "dTrapped": -47 / 36, "dTrappedRooms": []}) == ""
+
+    # The wording. A what-if names the fires after its trapped number; without dTrappedRooms nothing changes.
+    blocked = {"id": "blockedExit", "label": "Exit Main entrance blocked", "doors": {"E1": "blocked"},
+               "sprinklers": False, "n": 36, "dT90": 58.29, "dT90Min": -209.6, "dT90Max": 267.08, "slower": 34,
+               "faster": 2, "dTrapped": -47 / 36, "dDosed": 9.222, "dSmokeSeconds": 3021.917,
+               "baseSmokeSeconds": 1439.306, "smokePct": 209.957, "dTrappedRooms": [dict(lobby)]}
+    plain = {k: v for k, v in blocked.items() if k != "dTrappedRooms"}
+    old_why = ("Exit Main entrance blocked: 90% out 58 s later on average (slower in 34 of 36 fires); +3,022 "
+               "person-seconds in smoke (+210%), +9.2 people at an illustrative smoke dose of 1, -1.3 trapped per fire.")
+    assert whatif_why(blocked["label"], plain) == old_why
+    assert whatif_why(blocked["label"], blocked) == (
+        old_why[:-1] + " (47 of 47 in fires in Lobby (L1), which this exit opens onto).")
+    inverse = _inverse(blocked)
+    assert inverse["dTrappedRooms"] == [dict(lobby, delta=47)] and blocked["dTrappedRooms"] == [lobby]
+    assert inverse["dTrapped"] == 47 / 36 and inverse["dT90"] == -58.29 and "dTrappedRooms" not in _inverse(plain)
+    keep = {"id": "keepClear-E1", "kind": "keepClear", "door": "E1", "floor": "F1", "derivedFrom": "whatIf.blockedExit",
+            "label": "Keep Exit Main entrance clear (vs blocked)", **inverse, "smokePct": -67.737}
+    trade_off = ("Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less "
+                 "time in smoke across 36 fires (faster in 34), but 1.3 more trapped per fire "
+                 "(47 of 47 in fires in Lobby (L1), which this exit opens onto).")
+    assert _why(keep) == trade_off and verdict(keep)["costs"] == [
+        "1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)"]
+    assert _why({k: v for k, v in keep.items() if k != "dTrappedRooms"}) == (
+        trade_off.replace(" (47 of 47 in fires in Lobby (L1), which this exit opens onto)", ""))
+    widen = {"id": "widen-E2", "kind": "widen", "label": "Widen Exit East stair exit from 1.00 m to 1.50 m", "n": 36,
+             "dT90": -10.552, "faster": 23, "dTrapped": -7 / 36, "dSmokeSeconds": -41.681, "smokePct": -2.896}
+    d14 = ("Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 11 s sooner on average and 3% less time in "
+           "smoke across 36 fires (faster in 23); -0.2 trapped per fire.")
+    assert _why(widen) == d14  # a helping fix keeps D14's sentence, and gets the fires behind its trapped number
+    assert _why({**widen, "dTrappedRooms": [dict(lobby, delta=-7)]}) == (
+        d14[:-1] + " (7 of 7 in fires in Lobby (L1), which this exit opens onto).")
+    loser = {**widen, "dT90": 18.0, "dTrapped": 0.5, "dSmokeSeconds": -20.0, "smokePct": -3.0}
+    assert _why(loser) == ("Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 18 s later on average and 3% "
+                           "less time in smoke across 36 fires (faster in 23); +0.5 trapped per fire.")
+    assert _why({**widen, "n": 0}) == "Widen Exit East stair exit from 1.00 m to 1.50 m: no successful matched fires (0 pairs)."
+    assert _join(["a"]) == "a" and _join(["a", "b"]) == "a and b" and _join(["a", "b", "c"]) == "a, b and c"
+
+    # restate: the example demo's five fixes as saved (before D22), then three of the office's.
+    def saved(rows, n):
+        fixes = []
+        for ident, label, dT90, dTrapped, dSmoke, pct, derived, faster in rows:
+            fix = {"id": ident, "label": label, "n": n, "dT90": dT90, "dTrapped": dTrapped, "dSmokeSeconds": dSmoke,
+                   "smokePct": pct, "faster": faster, "helps": True, "why": "saved"}
+            fixes.append({**fix, "derivedFrom": derived} if derived else fix)
+        return {"version": "batch/v0", "id": "hand-made", "buildingId": example["id"], "fixes": fixes}
+
+    demo = saved([
+        ("keepClear-E1", "Keep Exit Main entrance clear (vs blocked)", -58.29, 47 / 36, -3021.917, -67.737, "whatIf.blockedExit", 34),
+        ("widen-E2", "Widen Exit East stair exit from 1.00 m to 1.50 m", -10.552, -7 / 36, -41.681, -2.896, None, 23),
+        ("sprinklers", "Sprinklers", -9.617, -47 / 36, -86.25, -5.992, None, 17),
+        ("widen-DL1", "Widen Door DL1 (Lobby to Corridor 1) from 4.00 m to 4.50 m", -2.119, -5 / 36, -9.694, -0.674, None, 13),
+        ("selfClosers", "Self-closers on stair doors (vs propped open)", 0.07, -1 / 36, -446.972, -23.696, "whatIf.proppedStairs", 4)], 36)
+    demo["whatIf"] = [plain]
+    snapshot = deepcopy(demo)
+    restated = restate(demo)
+    assert demo == snapshot and restated is not demo and restate(restated) == restated
+    assert [f["id"] for f in restated["fixes"]] == ["widen-E2", "sprinklers", "widen-DL1", "selfClosers", "keepClear-E1"]
+    assert all(f["helps"] and not f["tradeoff"] and f["costs"] == [] for f in restated["fixes"][:4])
+    last = restated["fixes"][4]
+    assert last["helps"] is False and last["tradeoff"] is True and last["costs"] == ["1.3 more trapped per fire"]
+    assert last["why"].startswith("Trade-off: Keep Exit Main entrance clear (vs blocked):")
+    assert "but 1.3 more trapped per fire" in last["why"] and "in fires in" not in last["why"]  # nothing saved to name
+    assert restated["fixes"][0]["why"] == d14 and restated["whatIf"][0]["why"] == old_why
+    assert restate(dict(demo, whatIf=[blocked]))["whatIf"][0]["why"].endswith(
+        "(47 of 47 in fires in Lobby (L1), which this exit opens onto).")
+    office = restate(saved([
+        ("keepClear-D$77wwb", "Keep Exit Stair S1 (west) clear (vs blocked)", -11.487, 10 / 24, -631.333, -42.756, "whatIf.blockedExit", 21),
+        ("sprinklers", "Sprinklers", -6.718, -2.25, 153.771, 18.192, None, 2),
+        ("selfClosers", "Self-closers on stair doors (vs propped open)", 0.489, 10 / 24, -486.958, -36.553, "whatIf.proppedStairs", 2)], 24))
+    assert [f["id"] for f in office["fixes"]] == ["keepClear-D$77wwb", "sprinklers", "selfClosers"]
+    assert all(f["tradeoff"] and not f["helps"] for f in office["fixes"])
+    assert [f["why"] for f in office["fixes"]] == [
+        "Trade-off: Keep Exit Stair S1 (west) clear (vs blocked): 90% out 11 s sooner on average and 43% less time in "
+        "smoke across 24 fires (faster in 21), but 0.4 more trapped per fire.",
+        "Trade-off: Sprinklers: 90% out 7 s sooner on average and 2.2 fewer trapped per fire across 24 fires "
+        "(faster in 2), but 18% more time in smoke" + counting + ".",
+        "Trade-off: Self-closers on stair doors (vs propped open): 37% less time in smoke across 24 fires "
+        "(faster in 2), but 0.4 more trapped per fire."]
+    assert office["fixes"][1]["costs"] == ["18% more time in smoke" + counting]
+    for each in (restated, office):
+        assert all(f["why"].isascii() and all(c.isascii() for c in f["costs"]) for f in each["fixes"])
+        json.dumps(each, allow_nan=False)
+    # The headline pack keeps both fields.
+    pack = build_headlines(example, restated, generated="2026-11-14T15:00:00Z")
+    by_id = {f["id"]: f for f in pack["fixes"]}
+    assert by_id["keepClear-E1"]["tradeoff"] is True and by_id["keepClear-E1"]["helps"] is False
+    assert by_id["keepClear-E1"]["costs"] == ["1.3 more trapped per fire"] and by_id["widen-E2"]["costs"] == []
+
+    # The sweeps write dTrappedRooms: what-if, then the fix derived from it, a rerun fix and a reused sprinkler what-if.
+    def stub(room, seed, trapped, t90=100.0, smoke=1000.0):
+        return {"ignition": {"floor": "F1", "room": room}, "seed": seed, "t90": t90, "trapped": trapped,
+                "dosed": 1, "smokeSeconds": smoke, "exitCounts": {"E1": 80, "E2": 80}}
+
+    baseline = [stub("L1", 1, 16), stub("L1", 2, 13), stub("L1", 3, 18), stub("R105", 1, 0)]
+    batch = {"runs": baseline, "top": [], "rooms": [dict(id="L1", floor="F1", riskT90=100.0),
+                                                        dict(id="R105", floor="F1", riskT90=100.0)]}
+    closed = [stub("L1", s, 0, 150.0, 1500.0) for s in (1, 2, 3)] + [stub("R105", 1, 0)]
+    variant = {"id": "blockedExit", "label": "Exit Main entrance blocked", "doors": {"E1": "blocked"}, "sprinklers": False}
+    original = deepcopy(batch)
+    with patch("fire.whatif.run_many", return_value={"runs": closed}):
+        swept = add_whatif(example, base, batch, variants=[variant], workers=1, progress=False)
+    entry = swept["whatIf"][0]
+    assert entry["dTrappedRooms"] == [lobby]  # R105 (0 to 0) has no row
+    assert entry["why"].endswith("-11.8 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).")
+    trash = deepcopy(base)
+    trash["fire"]["type"] = "trash"  # sprinklers cannot matter; its stair doors are closed: only the keep-clear fix remains
+    with patch("fire.fixes.run_many", side_effect=AssertionError("derived fix reran")):
+        derived = add_fixes(example, trash, swept)
+    assert [f["id"] for f in derived["fixes"]] == ["keepClear-E1"]
+    fix = derived["fixes"][0]
+    assert fix["tradeoff"] is True and fix["helps"] is False and fix["dTrappedRooms"] == [dict(lobby, delta=47)]
+    assert fix["why"].startswith("Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out ")
+    assert fix["why"].endswith(", but 11.8 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).")
+    assert fix["costs"] == ["11.8 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)"]
+    widened = {**batch, "top": [{"kind": "exit", "id": "E1", "floor": "F1"}]}
+
+    def rerun(b, scenario, ignitions, seeds, workers, timeout, progress):
+        return {"runs": [{**r, "trapped": 0 if r["ignition"]["room"] == "L1" else r["trapped"]} for r in baseline]}
+
+    with patch("fire.fixes.run_many", side_effect=rerun):
+        rerun_fixes = add_fixes(example, trash, widened, workers=1, progress=False)
+    fix = next(f for f in rerun_fixes["fixes"] if f["id"] == "widen-E1")
+    assert fix["dTrappedRooms"] == [lobby] and fix["helps"] is True and fix["tradeoff"] is False and fix["costs"] == []
+    assert fix["why"].endswith("-11.8 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).")
+    sprinkled = {**batch, "whatIf": [dict(
+        id="sprinklers", label="Sprinklers on", doors={}, sprinklers=True, n=4, dT90=-3.0, dT90Min=-4.0, dT90Max=-2.0,
+        slower=0, faster=3, dTrapped=-47 / 4, dDosed=0.0, dSmokeSeconds=-50.0, baseSmokeSeconds=200.0,
+        smokePct=-25.0, dTrappedRooms=[dict(lobby, opensOnto=None)])]}
+    with patch("fire.fixes.run_many", side_effect=AssertionError("the sprinkler what-if was not reused")):
+        reused = add_fixes(example, base, sprinkled)
+    assert [f["id"] for f in reused["fixes"]] == ["sprinklers"]
+    assert reused["fixes"][0]["dTrappedRooms"] == [dict(lobby, opensOnto=None)]
+    assert reused["fixes"][0]["why"].endswith("-11.8 trapped per fire (47 of 47 in fires in Lobby (L1)).")
+    assert batch == original
+    for each in (swept, derived, rerun_fixes, reused):
+        json.dumps(each, allow_nan=False)
+        assert all(f.get("why", "").isascii() for f in each.get("fixes", []) + each.get("whatIf", []))
+    print("tradeoffs: verdicts, room deltas, wording, restate and the sweeps' dTrappedRooms checked", flush=True)
+
+
+def check_tradeoffs_slow():
+    from fire.batch import run_many
+    from fire.whatif import add_whatif
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    base["maxTime"] = 400
+    base["occupants"] = {"total": 160, "mix": base["occupants"]["mix"]}
+    ignitions = [{"floor": "F1", "room": room} for room in ("L1", "R105")]
+    batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=600)
+    assert len(batch["runs"]) == 2 and not batch["failed"], batch["failed"]
+    blocked = {"id": "blockedExit", "label": "Exit Main entrance blocked", "doors": {"E1": "blocked"}, "sprinklers": False}
+    result = add_whatif(building, base, batch, variants=[blocked], workers=2, timeout_s=600, progress=False)
+    entry = result["whatIf"][0]
+    first = entry["dTrappedRooms"][0]
+    assert (first["floor"], first["room"], first["opensOnto"]) == ("F1", "L1", "exit") and first["delta"] < 0, first
+    assert "in fires in Lobby (L1), which this exit opens onto" in entry["why"], entry["why"]
+    print(f"tradeoffs: the lobby fire accounts for {-first['delta']} of the people the blocked main entrance spares", flush=True)
 
 
 def check_headlines():
