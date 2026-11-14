@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+node_modules/
+frontend/dist/
+data/raw/
+data/runs/
+data/private/
+debug/
+*.ifc
+.DS_Store
+.claude/settings.local.json
