@@ -128,6 +128,8 @@ Override format (all keys optional): `{"doors": {"add": [{"floor": "F1", "id": "
 
 ### Task B6: Real building end to end with C (P0, Sat 10 AM sync)
 
+BLOCKED: No supplied IFC candidate satisfies B1, so B2–B5 cannot produce the extracted and validated building required for the end-to-end run.
+
 **Files:** Create `buildings/make_scenario.py`, `data/buildings/<id>.json` (the committed demo building), `data/buildings/<id>.scenario.json`, and `buildings/overrides/<id>.json` if fixes are needed; modify `buildings/smoke_test.py`, `buildings/README.md`.
 
 **Interfaces:** Consumes the pick (B1), `extract`, `plan_to_building` with overrides (B2–B5), C's `python -m sim.run BUILDING SCENARIO OUT` and A's `tools/plot_building.py` (both from main). Produces `python -m buildings.make_scenario BUILDING OUT [--total 120]` → scenario/v0 with `id` `<building id>-fire`, `buildingId`, `seed` 1, `occupants {total, mix {typical 0.85, older 0.1, visitor 0.05}}`, `sprinklers` false, `doors` {}, `alarmTime` 30, `maxTime` 400 and `fire {floor, room, x, y, type, start: 0}` in the largest room of the lowest floor that is not a corridor or stair (`x, y` = `representative_point()`; `type` kitchen for a kitchen, bedroom for a bedroom, else trash); and the committed `data/buildings/<id>.json`. (C writes its own `data/runs/real-scenario.json` for the real run; this scenario is for your checks.)
