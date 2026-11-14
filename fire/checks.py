@@ -550,6 +550,67 @@ def check_batch_pool_slow():
     print("batch: 2 spawned runs match inline runs; timeout records both failures", flush=True)
 
 
+def check_exit_comparison():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.batch import add_exit_criticality
+
+    building = {"floors": [{"id": "F1", "exits": [{"door": "E1"}, {"door": "E2"}]}]}
+    base = {"maxTime": 120, "doors": {"D1": "propped"}}
+
+    def record(room, seed, t90, trapped):
+        return {"ignition": {"floor": "F1", "room": room}, "seed": seed,
+                "t90": t90, "trapped": trapped}
+
+    batch = {"rooms": [{"id": "A", "floor": "F1", "riskT90": 60},
+                        {"id": "B", "floor": "F1", "riskT90": None}],
+             "runs": [record("A", 1, 60, 0), record("B", 1, None, 1), record("B", 2, 80, 0)],
+             "top": [{"kind": "exit", "id": "E2", "floor": "F1", "score": 30, "why": "old"}]}
+    original = deepcopy(batch)
+
+    def rerun(b, sc, ignitions, seeds, workers, timeout):
+        assert ignitions == [{"floor": "F1", "room": "B"}] and seeds == [1, 2]
+        assert sc["doors"]["D1"] == "propped" and timeout == 12 and workers == 1
+        if sc["doors"].get("E1") == "blocked":
+            return {"runs": [record("B", 1, None, 3), record("B", 2, None, 2)]}
+        # Seed 1 failed: compare only seed 2 on both sides.
+        return {"runs": [record("B", 2, 90, 1)]}
+
+    with patch("fire.batch.run_many", side_effect=rerun):
+        result = add_exit_criticality(building, base, batch, workers=1, timeout_s=12, top_rooms=1)
+    assert result["exits"] == [
+        {"id": "E1", "floor": "F1", "dT90": 20, "dTrapped": 2, "n": 2},
+        {"id": "E2", "floor": "F1", "dT90": 10, "dTrapped": 1, "n": 1}]
+    assert [item["score"] for item in result["top"]] == [100, 50]
+    assert batch == original and base["doors"] == {"D1": "propped"}
+    assert "mean of 2 fires" in result["top"][0]["why"]
+    with patch("fire.batch.run_many", return_value={"runs": []}):
+        empty = add_exit_criticality(building, base, batch, top_rooms=0)
+    assert all(e["n"] == 0 and e["dT90"] == 0 for e in empty["exits"])
+    assert empty["top"] == batch["top"]
+
+
+def check_exits_slow():
+    from copy import deepcopy
+    from fire.batch import run_many, add_exit_criticality
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 120
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    original = deepcopy(base)
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert len(batch["runs"]) == 2 and not batch["failed"]
+    result = add_exit_criticality(building, base, batch, workers=2, timeout_s=240)
+    assert {e["id"] for e in result["exits"]} == {"E1", "E2"}
+    assert all(np.isfinite(e["dT90"]) and np.isfinite(e["dTrapped"]) and e["n"] == 2
+               for e in result["exits"])
+    assert len(result["top"]) <= 5 and base == original and "exits" not in batch
+    print("exits: E1/E2 blocked comparisons completed with two matched runs each", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

@@ -237,6 +237,60 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
             **aggregate(building, base, records)}
 
 
+def _exit_why(exit_result: dict) -> str:
+    return (f"Blocking Exit {exit_result['id']} adds {exit_result['dT90']:.0f} s "
+            f"to 90% evacuation (mean of {exit_result['n']} fires).")
+
+
+def add_exit_criticality(building: dict, base: dict, batch: dict,
+                         workers: int | None = None, timeout_s: float = 7200,
+                         top_rooms: int = 6) -> dict:
+    """Compare blocked exits against successful baseline room/seed pairs.
+
+    Return a copy; failed reruns are excluded from both sides of the comparison.
+    The timeout applies separately to each exit's batch.
+    """
+    if top_rooms < 0:
+        raise ValueError("top_rooms must be non-negative")
+    result = deepcopy(batch)
+    rooms = sorted(batch["rooms"], key=lambda room: -(
+        room["riskT90"] if room["riskT90"] is not None else base["maxTime"]))[:top_rooms]
+    ignitions = [{"floor": room["floor"], "room": room["id"]} for room in rooms]
+    selected = {(room["floor"], room["id"]) for room in rooms}
+
+    def key(run):
+        return (run["ignition"]["floor"], run["ignition"]["room"], run["seed"])
+
+    baseline = {key(run): run for run in batch["runs"]
+                if (run["ignition"]["floor"], run["ignition"]["room"]) in selected}
+    seeds = sorted({run["seed"] for run in baseline.values()})
+
+    def effective_time(run):
+        return run["t90"] if run["t90"] is not None else base["maxTime"]
+
+    exits = []
+    for floor in building["floors"]:
+        for exit_info in floor["exits"]:
+            blocked = deepcopy(base)
+            blocked.setdefault("doors", {})[exit_info["door"]] = "blocked"
+            rerun = run_many(building, blocked, ignitions, seeds, workers, timeout_s)
+            pairs = [(run, baseline[key(run)]) for run in rerun["runs"] if key(run) in baseline]
+            n = len(pairs)
+            exits.append({"id": exit_info["door"], "floor": floor["id"],
+                          "dT90": sum(effective_time(a) - effective_time(b) for a, b in pairs) / n if n else 0.0,
+                          "dTrapped": sum(a["trapped"] - b["trapped"] for a, b in pairs) / n if n else 0.0,
+                          "n": n})
+    maximum = max((exit_result["dT90"] for exit_result in exits), default=0)
+    critical = [{"kind": "exit", "id": e["id"], "floor": e["floor"],
+                 "score": round(100 * max(0, e["dT90"]) / maximum, 1) if maximum > 0 else 0.0,
+                 "why": _exit_why(e)} for e in exits if e["n"]]
+    replaced = {(e["floor"], e["id"]) for e in critical}
+    existing = [item for item in batch["top"]
+                if not (item["kind"] == "exit" and (item["floor"], item["id"]) in replaced)]
+    result.update(exits=exits, top=sorted(critical + existing, key=lambda item: -item["score"])[:5])
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("building", type=Path)
@@ -244,6 +298,7 @@ def main():
     parser.add_argument("--rooms", type=int)
     parser.add_argument("--seeds", default="1,2,3")
     parser.add_argument("--workers", type=int)
+    parser.add_argument("--exits", action="store_true", help="rerun worst ignition rooms with each exit blocked")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     building = json.loads(args.building.read_text(encoding="utf-8"))
@@ -251,6 +306,8 @@ def main():
     seeds = tuple(int(seed) for seed in args.seeds.split(","))
     started = time.perf_counter()
     batch = run_many(building, base, _ignitions(building, base, args.rooms), seeds, args.workers)
+    if args.exits:
+        batch = add_exit_criticality(building, base, batch, workers=args.workers)
     out = args.out if args.out is not None else Path(f"data/runs/batch-{building['id']}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(batch, separators=(",", ":")), encoding="utf-8")
@@ -258,6 +315,11 @@ def main():
     print(f"wrote {out} ({len(batch['runs'])} runs, {len(batch['failed'])} failed)", flush=True)
     for item in batch["top"]:
         print(item["why"], flush=True)
+    printed = {item["why"] for item in batch["top"]}
+    for exit_result in batch.get("exits", []):
+        why = _exit_why(exit_result)
+        if exit_result["n"] and why not in printed:
+            print(why, flush=True)
 
 
 if __name__ == "__main__":

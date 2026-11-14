@@ -352,3 +352,54 @@ passed. The kitchen scenario gives R101 smoke ASET 169 s and R102 null through
 400 s. Checks cover early/late clearance, a missing occupant, stair fallback,
 exit precedence, delayed ignition, and flame exclusion. Spawned and inline
 batches still match; coupled metrics retain the D4 results.
+
+## Exit criticality (D9)
+
+`add_exit_criticality(building, base, batch, workers=None, timeout_s=7200,
+top_rooms=6)` returns a copy of the batch with optional `exits` results and an
+updated `top`. Enable it in the CLI with `--exits`:
+
+```sh
+python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 4 --seeds 1 --exits --out debug/batch-exits.json
+```
+
+The highest-risk ignition rooms are selected by descending `riskT90`, treating
+null as `base.maxTime` and keeping original room order for ties. Each exterior
+exit door is blocked in a separate deep copy of the base scenario; other door
+states stay in effect. Reruns use the selected baseline seeds and rule brains.
+The timeout applies to each exit batch separately, with the same inline
+execution limitation as `run_many`.
+
+| Field | Definition |
+| --- | --- |
+| `exits[].id`, `floor` | Exterior exit door id and floor, suitable for lookup in building doors |
+| `dT90` | Mean blocked t90 minus baseline t90, seconds; null t90 counts as maxTime on either side |
+| `dTrapped` | Mean blocked trapped count minus baseline trapped count |
+| `n` | Successful matched ignition-floor/room/seed pairs used for both means |
+| Criticality score | 100 times positive dT90 / greatest positive dT90, rounded to one decimal; zero when no increase is measured |
+
+Failed reruns are excluded from both means, so different success counts do not
+change the baseline cohort. An exit with no matched runs has zero deltas and
+`n=0`, and contributes no ranking entry. Negative deltas remain visible in
+`exits` but score zero. Zero deltas with positive n can also reflect censored
+evacuation times; they do not establish that an exit is unimportant.
+
+Exit criticality entries replace existing queue-based `top` entries for the
+same exit, then merge with other entries, sort by score and retain at most five.
+The scores compare different illustrative measures, not calibrated risk. The
+CLI prints every measured exit explanation even if it falls outside `top`.
+
+D9 verification: smoke test and `python -m fire.checks --slow` passed. The slow
+check compared E1 and E2 with two ignition rooms, seed 1, 60 occupants and a
+120 s horizon. Handmade checks verify null censoring, worst-room selection,
+nonzero deltas and scores, matching after failure, no-data handling and input
+immutability. The four-room `--exits` CLI completed in 5.2 s (four baseline and
+eight blocked simulations), wrote `debug/batch-exits.json`, and printed both
+exit explanations. Both dT90 values are zero because all t90 values are null
+with the current scaffold stair sinks; the capped comparison cannot resolve
+exit importance in that case.
+
+A/E handoff: opt in through `add_exit_criticality` after `run_many`; optional
+`exits` contains door ids, floor, dT90, dTrapped and n. Existing batch fields
+are preserved. No shared contract or frontend files changed. Git syncing and
+integration are left to the overnight runner.
