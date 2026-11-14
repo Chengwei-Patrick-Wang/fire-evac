@@ -3,6 +3,7 @@ import type { ResultsTab } from '../store/app'
 import EvacCurve from '../dashboard/EvacCurve'
 import ExitBars from '../dashboard/ExitBars'
 import RunStats from '../dashboard/RunStats'
+import AccessStats from '../dashboard/AccessStats'
 
 import ReportCard from '../dashboard/ReportCard'
 import Credibility from '../dashboard/Credibility'
@@ -35,6 +36,7 @@ export default function ResultsPanel() {
           <ExitBars />
           <h4>Run</h4>
           <RunStats />
+          <AccessStats />
         </>
       )}
       {tab === 'risk' && <WeakSpots />}

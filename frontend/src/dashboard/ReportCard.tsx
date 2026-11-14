@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
+import WhatIfHeadline from './WhatIfHeadline'
 import { fetchReport } from '../data/loader'
 
 export default function ReportCard() {
@@ -43,6 +44,7 @@ export default function ReportCard() {
   if (!ref) return <div className="empty"><b>Load a run</b><span>Its report appears here.</span></div>
   return (
     <div className="report">
+      <WhatIfHeadline />
       {mode === 'live' && (
         <button disabled={busy} onClick={() => void load(md !== null)}>
           {busy ? 'Generating…' : md !== null ? 'Regenerate' : 'Generate'}

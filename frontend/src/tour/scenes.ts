@@ -1,8 +1,9 @@
-import { useApp } from '../store/app'
+import { labelsFor, useApp } from '../store/app'
 import { useClock } from '../store/clock'
 import { listDemoRuns, loadDemoRun } from '../data/loader'
 import { compareRuns, findPrecomputedVariant } from '../model/whatif'
 import { spotPosition } from '../model/spots'
+import { batchHeadline, pairHeadline } from '../model/exposure'
 
 export interface TourCtx {
   after: (ms: number, fn: () => void) => void
@@ -19,6 +20,7 @@ const DEFAULT_LAYERS = { rooms: true, labels: true, smoke: true, fire: true, hea
 
 /** Same starting picture for every scene, so a key pressed twice shows the same thing. */
 export function resetStage() {
+  const b = useApp.getState().building
   useApp.setState({
     view: 'replay',
     split: false,
@@ -35,7 +37,7 @@ export function resetStage() {
     riskMetric: 'riskT90',
     resultsTab: 'results',
     lens: [true, true, true, true, true, true],
-    layers: { ...DEFAULT_LAYERS },
+    layers: { ...DEFAULT_LAYERS, labels: b ? labelsFor(b) : DEFAULT_LAYERS.labels },
   })
   useClock.setState({ playing: false })
 }
@@ -97,7 +99,12 @@ const sec = (v: number | null) => (v == null ? 'not reached' : `${v.toFixed(0)} 
 function variantCaption(): string {
   const st = useApp.getState()
   const [a, b] = st.compareKeys.map((k) => st.runs[k])
-  if (!a || !b || !b.whatIf) return ''
+  if (!a || !b || !b.whatIf) {
+    const bh = batchHeadline(st.batch)
+    return bh ? `${bh.main} (mean of ${bh.n} fires)` : ''
+  }
+  const h = pairHeadline(a.run, b.run, `Stair door ${b.whatIf.door} propped open`)
+  if (h) return h.secondary ? `${h.main} · ${h.secondary}` : h.main
   const c = compareRuns(a.run, b.run)
   return `Stair door ${b.whatIf.door} propped open: t90 ${sec(c.t90[0])} → ${sec(c.t90[1])}${c.dT90 != null ? ` (${sgn(c.dT90)})` : ''}, trapped ${a.run.metrics.trapped} → ${b.run.metrics.trapped}`
 }

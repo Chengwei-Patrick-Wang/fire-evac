@@ -30,23 +30,33 @@ export default function Toolbar3D() {
   const nRuns =useApp((s) => s.runOrder.length)
   if (!building) return null
   const set = useApp.setState
-  const isOn = (id: string) => !visible || visible.includes(id)
-  const toggleFloor = (id: string) => {
-    const cur = visible ?? building.floors.map((f) => f.id)
-    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
-    set({ visibleFloors: next.length === building.floors.length ? null : next })
-  }
+  const floorsByLevel = [...building.floors].sort((a, b) => a.level - b.level)
   return (
     <div className="toolbar3d">
       <label>
         Explode{' '}
         <input type="range" min={0} max={1} step={0.05} value={explode} onChange={(e) => set({ explode: +e.target.value })} />
       </label>
-      {building.floors.map((f) => (
-        <label key={f.id}>
-          <input type="checkbox" checked={isOn(f.id)} onChange={() => toggleFloor(f.id)} /> {f.id}
-        </label>
-      ))}
+      {building.floors.length >= 2 && (
+        <select
+          aria-label="Floor"
+          value={visible && visible.length === 1 ? visible[0] : ''}
+          onChange={(e) =>
+            set((s) => ({
+              visibleFloors: e.target.value ? [e.target.value] : null,
+              focus: null,
+              fitView: s.fitView + 1,
+            }))
+          }
+        >
+          <option value="">All floors</option>
+          {floorsByLevel.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.id}
+            </option>
+          ))}
+        </select>
+      )}
       <label>
         <input
           type="checkbox"

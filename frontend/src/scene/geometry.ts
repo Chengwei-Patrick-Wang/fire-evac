@@ -43,12 +43,14 @@ export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
   return inside
 }
 
-export function buildingBounds(b: Building) {
+export function buildingBounds(b: Building, floorIds?: string[] | null, explode = 0) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   let minZ = Infinity, maxZ = -Infinity
   for (const f of b.floors) {
-    minZ = Math.min(minZ, f.elevation)
-    maxZ = Math.max(maxZ, f.elevation + f.height)
+    if (floorIds && !floorIds.includes(f.id)) continue
+    const y = floorY(f, explode)
+    minZ = Math.min(minZ, y)
+    maxZ = Math.max(maxZ, y + f.height)
     for (const w of f.walkable)
       for (const [x, y] of w.outer) {
         minX = Math.min(minX, x); maxX = Math.max(maxX, x)
@@ -57,6 +59,19 @@ export function buildingBounds(b: Building) {
   }
   if (!isFinite(minX)) { minX = minY = 0; maxX = maxY = 10; minZ = 0; maxZ = 3 }
   return { minX, minY, maxX, maxY, minZ, maxZ, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, span: Math.max(maxX - minX, maxY - minY, maxZ - minZ) }
+}
+
+/** Camera distance that fits the box's bounding sphere-ish diagonal in both the vertical and horizontal FOV. */
+export function fitDistance(
+  b: { minX: number; minY: number; maxX: number; maxY: number; minZ: number; maxZ: number },
+  fovDeg: number,
+  aspect: number,
+  margin = 1.15,
+): number {
+  const half = Math.hypot(b.maxX - b.minX, b.maxY - b.minY, b.maxZ - b.minZ) / 2
+  const v = (fovDeg * Math.PI) / 360
+  const limit = Math.min(v, Math.atan(Math.tan(v) * aspect))
+  return (half / Math.sin(limit)) * margin
 }
 
 export function gridPlacement(g: { origin: Vec2; cell: number; cols: number; rows: number }) {

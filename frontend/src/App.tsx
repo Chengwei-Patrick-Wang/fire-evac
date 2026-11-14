@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { useApp } from './store/app'
+import { useClock } from './store/clock'
 import type { LoadedRun } from './store/app'
 import TopBar from './ui/TopBar'
 import Scene from './scene/Scene'
@@ -13,6 +14,7 @@ import Scrubber from './ui/Scrubber'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
 import AgentLegend from './ui/AgentLegend'
 import ErrorBoundary from './ui/ErrorBoundary'
+import NewBuildingCard from './ui/NewBuildingCard'
 import TourCaption from './tour/TourCaption'
 import { useTour, useTourKeys } from './tour/tour'
 import { makeDraft } from './model/scenarioDraft'
@@ -20,6 +22,7 @@ import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
   detectMode,
+  getMode,
   listBuildings,
   listDemoRuns,
   loadBatch,
@@ -27,6 +30,9 @@ import {
   loadDemoRun,
   openLocalFile,
 } from './data/loader'
+
+if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
+  Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour })
 
 const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
@@ -122,15 +128,52 @@ function s_notice(m: string) {
   useApp.getState().setNotice(m)
 }
 
+function Credits() {
+  const building = useApp((s) => s.building)
+  if (!building) return <div className="credits" />
+  const text = building.credits ? `${building.name}: ${building.credits}` : `${building.name}: no credits in this building file`
+  const parts: (string | { url: string; tail: string })[] = []
+  let last = 0
+  for (const m of text.matchAll(/https?:\/\/[^\s]+/g)) {
+    const raw = m[0]
+    const url = raw.replace(/[.,;:)]+$/, '')
+    parts.push(text.slice(last, m.index))
+    parts.push({ url, tail: raw.slice(url.length) })
+    last = m.index + raw.length
+  }
+  parts.push(text.slice(last))
+  return (
+    <div className="credits" title={text}>
+      {parts.map((p, i) =>
+        typeof p === 'string' ? (
+          p
+        ) : (
+          <span key={i}>
+            <a href={p.url} target="_blank" rel="noreferrer">{p.url}</a>
+            {p.tail}
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
 export default function App() {
-  const { view, building, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
+  const { view, split, runs, runOrder, activeRunKey, notice, loading } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
     try {
+      if (getMode() !== 'live') useApp.getState().setMode(await detectMode())
+      if (getMode() !== 'live') {
+        useApp.getState().setView('replay')
+        useApp.getState().setNotice(`Building ${id} was saved by the backend, but this page can't reach it. Start the backend, then reload with ?building=${id}.`)
+        return
+      }
       useApp.getState().setBuildings(await listBuildings())
       useApp.getState().setView('replay')
       await selectBuilding(id)
+      if (useApp.getState().building?.id === id) useApp.setState({ fromTracer: id })
     } catch (e) {
       useApp.getState().setNotice(msg(e))
     }
@@ -146,14 +189,30 @@ export default function App() {
 
   useTourKeys()
   useEffect(() => {
+    if (view === 'tracer') useClock.setState({ playing: false })
+  }, [view])
+  useEffect(() => {
     void startup().then(() => {
       if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
       else if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
     })
   }, [])
 
+  if (view === 'tracer')
+    return (
+      <div className="app tracing" key="tracing">
+        <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
+        <main className="center">
+          <Suspense fallback={<div className="pad">Loading tracer…</div>}>
+            <TracerPage onOpenBuilding={(id) => void onOpenBuilding(id)} />
+          </Suspense>
+        </main>
+        <AboutOverlay />
+      </div>
+    )
+
   return (
-    <div className="app">
+    <div className="app" key="replay">
       <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
       <aside className={'left' + (phone && openPanel !== 'left' ? ' collapsed' : '')}>
         <h3>Scenario</h3>
@@ -169,12 +228,7 @@ export default function App() {
         </div>
       )}
       <main className="center">
-        {view === 'tracer' ? (
-          <Suspense fallback={<div className="pad">Loading tracer…</div>}>
-            <TracerPage onOpenBuilding={(id) => void onOpenBuilding(id)} />
-          </Suspense>
-        ) : (
-          <>
+        <>
             <ErrorBoundary label="3D view">
               {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
             </ErrorBoundary>
@@ -192,9 +246,9 @@ export default function App() {
             )}
             <AgentLegend />
             <AgentReadout />
+            <NewBuildingCard />
             <TourCaption />
           </>
-        )}
       </main>
       <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>
         <Suspense fallback={<div className="pad dim">Loading…</div>}>
@@ -206,7 +260,8 @@ export default function App() {
       <footer className="bottom"><Scrubber /></footer>
       <ClockDriver />
       <AboutOverlay />
-      <div className="credits">{building?.credits ?? ''}</div>
+      <Credits />
+
     </div>
   )
 }

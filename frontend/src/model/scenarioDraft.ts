@@ -1,4 +1,4 @@
-import type { Building, DemoRun, Scenario } from '../data/types'
+import type { Building, DemoRun, Scenario, Vec2 } from '../data/types'
 import { pointInPolygon } from '../scene/geometry'
 
 export const FIRE_TYPES = ['kitchen', 'bedroom', 'battery', 'trash', 'liquid']
@@ -59,4 +59,46 @@ export function normalizeMix(mix: Scenario['occupants']['mix']) {
   if (sum <= 0) return { typical: 1 }
   for (const [k, v] of Object.entries(mix)) out[k as keyof typeof out] = Math.max(0, v ?? 0) / sum
   return out
+}
+
+function shoelace(p: Vec2[]) {
+  let a = 0
+  for (let i = 0; i < p.length; i++) {
+    const [x1, y1] = p[i]
+    const [x2, y2] = p[(i + 1) % p.length]
+    a += x1 * y2 - x2 * y1
+  }
+  return Math.abs(a) / 2
+}
+
+function insidePoint(poly: Vec2[]): Vec2 | null {
+  if (poly.length < 3) return null
+  const n = poly.length
+  const avg: Vec2 = [poly.reduce((s, p) => s + p[0], 0) / n, poly.reduce((s, p) => s + p[1], 0) / n]
+  if (pointInPolygon(avg, poly)) return avg
+  for (let i = 1; i < n - 1; i++) {
+    const c: Vec2 = [(poly[0][0] + poly[i][0] + poly[i + 1][0]) / 3, (poly[0][1] + poly[i][1] + poly[i + 1][1]) / 3]
+    if (pointInPolygon(c, poly)) return c
+  }
+  return null
+}
+
+/** Default fire spot, following B6's make_scenario rule; null when the building has no usable room. */
+export function defaultFire(building: Building): Scenario['fire'] | null {
+  if (building.floors.length === 0) return null
+  const floor = building.floors.reduce((a, b) => (b.level < a.level ? b : a))
+  const stairRooms = new Set(floor.stairs.map((s) => s.room))
+  const nonStair = floor.rooms.filter((r) => r.type !== 'stair' && !stairRooms.has(r.id))
+  let pool = nonStair.filter((r) => !['corridor', 'lobby'].includes(r.type))
+  if (pool.length === 0) pool = nonStair
+  const ranked = pool
+    .map((r) => ({ r, a: shoelace(r.polygon) }))
+    .sort((p, q) => q.a - p.a)
+  for (const { r } of ranked) {
+    const pt = insidePoint(r.polygon)
+    if (!pt) continue
+    const type = r.type === 'kitchen' || r.type === 'bedroom' ? r.type : 'trash'
+    return { floor: floor.id, room: r.id, x: pt[0], y: pt[1], type, start: 0 }
+  }
+  return null
 }
