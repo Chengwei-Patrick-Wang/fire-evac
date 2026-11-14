@@ -1,20 +1,23 @@
 """Backend smoke test. From the repo root: python -m backend.smoke_test
 
-Needs contracts/building.example.json and plan.example.json plus sim.run and fire.metrics.
-Goes through the API with TestClient: buildings, from-plan (private and public), the batch,
-report and trace routes, and a real run (example scenario, maxTime 60) polled until saved.
+Needs contracts/building.example.json and plan.example.json plus sim.run, fire.metrics and
+fire.batch. Goes through the API with TestClient: buildings, from-plan (private and public), the
+batch (a real two-ignition batch, maxTime 60, polled until saved), report and trace routes, and a
+real run (example scenario, maxTime 60) polled until saved.
 check_batch, check_report and check_trace are one function per route file, so A4, A7 and A8
 each rewrite only their own.
 """
 import io
 import json
 import sys
+import threading
 import time
 from contextlib import redirect_stderr
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 POLL_TIMEOUT = 180  # seconds
+BATCH_TIMEOUT = 300  # seconds
 
 
 def check_buildings(client):
@@ -97,16 +100,156 @@ def check_from_plan(client):
     assert "smoke-public" not in listed and "smoke-private" not in listed, listed
 
 
-def check_batch(client):
-    if (ROOT / "contracts" / "batch.example.json").is_file():  # made in task S6
-        r = client.post("/api/batch")
-        assert r.status_code == 200, r.text
-        r = client.get(f"/api/batch/{r.json()['batchId']}")
-        assert r.status_code == 200, r.text
-        assert r.json().get("version", "").startswith("batch/"), r.text[:200]
-    else:
-        print("note: contracts/batch.example.json not generated yet, batch check skipped")
+def poll_batch(client, batch_id: str, timeout: float = BATCH_TIMEOUT) -> dict:
+    """GET /api/batch/{id} until it stops saying "running"; returns that body."""
+    t0 = time.time()
+    while True:
+        r = client.get(f"/api/batch/{batch_id}")
+        assert r.status_code == 200, r.text[:300]
+        body = r.json()
+        if body.get("status") != "running":
+            return body
+        assert time.time() - t0 < timeout, f"batch {batch_id} not done after {timeout} s"
+        time.sleep(1)
+
+
+def check_batch_placeholder(client):
+    """S5's placeholder, served while fire.batch does not import: the example batch for any request."""
+    if not (ROOT / "contracts" / "batch.example.json").is_file():
+        print("note: contracts/batch.example.json not generated yet, placeholder check skipped")
         assert client.post("/api/batch").status_code == 404
+        return
+    r = client.post("/api/batch")
+    assert r.status_code == 200, r.text
+    r = client.get(f"/api/batch/{r.json()['batchId']}")
+    assert r.status_code == 200, r.text
+    assert r.json().get("version", "").startswith("batch/") and r.json().get("placeholder") is True, r.text[:200]
+
+
+def check_batch(client):
+    """POST /api/batch on fire.batch.run_many: bad requests, the placeholder fallback, a short real
+    batch (two ignitions, one seed, maxTime 60) and two that fail. Needs fire.batch to import;
+    while the placeholder is served, only the placeholder is checked. The module is imported
+    here, not at the top: pool workers re-import this file under spawn."""
+    try:
+        import fire.batch as fire_batch
+    except ImportError:
+        print("note: fire.batch does not import yet, the real batch check is skipped")
+        return check_batch_placeholder(client)
+
+    from backend.app import batch as batch_api
+
+    # with fire.batch gone the API falls back to the placeholder
+    sys.modules["fire.batch"] = None  # an import of it now fails, as before D's module landed
+    try:
+        check_batch_placeholder(client)
+    finally:
+        sys.modules["fire.batch"] = fire_batch
+
+    base = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
+    base["maxTime"] = 60
+    base["brain"] = "llm"  # the API must force rules
+    ignitions = [{"floor": "F1", "room": "R101"}, {"floor": "F1", "room": "R102"}]
+    body = {"base": base, "ignitions": ignitions, "seeds": [1]}
+
+    # bad requests
+    assert client.post("/api/batch").status_code == 422  # no body
+    assert client.post("/api/batch", json={}).status_code == 422  # no base
+    assert client.post("/api/batch", json=dict(body, base=dict(base, buildingId=None))).status_code == 422
+    assert client.post("/api/batch", json=dict(body, base=dict(base, fire={}))).status_code == 422
+    r = client.post("/api/batch", json=dict(body, base=dict(base, buildingId="no-such-building")))
+    assert r.status_code == 404, r.text
+    for bad in (
+        {"ignitions": [{"floor": "F1", "room": "no-such-room"}]},
+        {"ignitions": []},
+        {"ignitions": ["R101"]},
+        {"seeds": []},
+        {"seeds": ["1"]},
+    ):
+        r = client.post("/api/batch", json=dict(body, **bad))
+        assert r.status_code == 422, (bad, r.status_code, r.text[:200])
+    assert client.get("/api/batch/doesnotexist").status_code == 404
+
+    # a real batch. The job is held until the check has seen it running (it runs off the request
+    # thread), then released to run the real run_many: two fires, one seed, in run_many's own pool.
+    real_run_many = fire_batch.run_many
+    gate = threading.Event()
+
+    def held(*args, **kwargs):
+        assert gate.wait(60), "the batch was never released"
+        return real_run_many(*args, **kwargs)
+
+    fire_batch.run_many = held
+    saved = None
+    t0 = time.time()
+    try:
+        r = client.post("/api/batch", json=body)
+        assert r.status_code == 200, r.text
+        batch_id = r.json()["batchId"]
+        saved = ROOT / "data" / "runs" / f"batch-{batch_id}.json"
+        assert client.get(f"/api/batch/{batch_id}").json() == {"status": "running"}
+        gate.set()
+        batch = poll_batch(client, batch_id)
+        elapsed = time.time() - t0
+    finally:
+        gate.set()
+        fire_batch.run_many = real_run_many
+    try:
+        if batch.get("status") == "error":
+            raise AssertionError(f"batch failed: {batch.get('error')}\n{batch.get('traceback', '')}")
+        keys = ("version", "id", "buildingId", "base", "runs", "rooms", "doors", "heatmaps", "top")
+        missing = [k for k in keys if k not in batch]
+        assert not missing, f"batch/v0 keys missing: {missing}"
+        assert batch["version"].startswith("batch/") and not batch.get("placeholder"), batch["version"]
+        assert batch["id"] == batch_id and batch["buildingId"] == "example-office", (batch["id"], batch["buildingId"])
+        assert batch["base"]["brain"] == "rules", batch["base"].get("brain")
+        assert batch["base"]["maxTime"] == 60
+        assert not batch.get("failed"), batch.get("failed")
+        ran = {(r["ignition"]["floor"], r["ignition"]["room"]) for r in batch["runs"]}
+        assert ran == {("F1", "R101"), ("F1", "R102")}, ran
+        assert [r["seed"] for r in batch["runs"]] == [1, 1], batch["runs"]
+        assert {r["id"] for r in batch["rooms"]} == {"R101", "R102"} and batch["doors"], batch["rooms"]
+        assert batch["top"], "top is empty"
+        for item in batch["top"]:
+            missing = [k for k in ("kind", "id", "floor", "score", "why") if k not in item]
+            assert not missing, f"top entry lacks {missing}: {item}"
+            assert isinstance(item["why"], str) and item["why"], item
+        assert saved.is_file(), f"{saved} was not written"
+
+        # after a "restart" (no jobs in memory) the batch is read back from disk
+        batch_api._jobs.clear()
+        r = client.get(f"/api/batch/{batch_id}")
+        assert r.status_code == 200 and r.json() == batch
+    finally:
+        if saved is not None:
+            saved.unlink(missing_ok=True)
+
+    # a run_many that raises, and one that returns nothing but failures: both end as status "error"
+    def boom(*args, **kwargs):
+        raise RuntimeError("smoke: run_many failed on purpose")
+
+    def all_failed(*args, **kwargs):
+        failed = [{"scenarioId": "x-R101-s1", "error": "KeyError('type')"}]
+        return {"version": "batch/v0", "runs": [], "failed": failed}
+
+    for fake, expect in ((boom, "failed on purpose"), (all_failed, "KeyError('type')")):
+        fire_batch.run_many = fake
+        try:
+            r = client.post("/api/batch", json=body)
+            assert r.status_code == 200, r.text
+            failed_id = r.json()["batchId"]
+            state = poll_batch(client, failed_id, 30)
+        finally:
+            fire_batch.run_many = real_run_many
+        assert state.get("status") == "error" and expect in state.get("error", ""), state
+        assert "version" not in state, state  # the frontend tells a pending state from a batch by `version`
+        assert not (ROOT / "data" / "runs" / f"batch-{failed_id}.json").exists()
+
+    top = batch["top"][0]
+    print(
+        f"OK  batch {batch_id}: {len(batch['runs'])} runs, {len(batch['rooms'])} rooms, {len(batch['doors'])} doors, "
+        f"top {len(batch['top'])} (first: {top['kind']} {top['id']} {top['score']}), {elapsed:.1f} s through the API"
+    )
 
 
 def check_report(client):
