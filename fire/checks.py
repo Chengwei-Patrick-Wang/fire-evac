@@ -342,6 +342,57 @@ def check_metrics():
     assert heatmap["cell"] > 0.5 and not any(base64.b64decode(heatmap["d"]))
 
 
+def check_smoke_queues():
+    from copy import deepcopy
+    from fire.metrics import compute
+    from fire.batch import aggregate
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    door = next(d for d in building["floors"][0]["doors"] if d["id"] == "D101")
+    mx, my = (np.asarray(door["a"]) + np.asarray(door["b"])) / 2
+    pair = [[0, float(mx - 0.5), float(my - 0.5), 0, 1],
+            [1, float(mx + 0.5), float(my + 0.5), 0, 1]]
+    for start, expected in ((100, 10.0), (0, 0.0)):
+        # The early warm-up uses t=0; queue frames start at .01 to avoid negative time.
+        offset = 0.01 if start == 0 else 0
+        frames = [{"t": max(0, start - 0.5), "a": [[*r[:4], 0] for r in pair]}]
+        frames += [{"t": start + offset + k * 0.5, "a": pair} for k in range(10)]
+        run = {"floors": [f["id"] for f in building["floors"]],
+               "frameInterval": 0.5, "frames": frames}
+        result = compute(run, building, scenario)
+        measured = next(d for d in result["doors"] if d["id"] == "D101")
+        assert measured["waitPersonSeconds"] == 10.0 and measured["smokeWait"] == expected, measured
+        assert all("smokeWait" not in d for d in compute(run, building)["doors"])
+        json.dumps(result, allow_nan=False)
+
+    records = [{"ok": True, "ignition": {"floor": "F1", "room": "R101"},
+                "t90": 100, "trapped": 0, "heatmaps": [],
+                "doors": [{"id": ident, "floor": "F1", "peakQueue": peak,
+                           "waitPersonSeconds": wait, "smokeWait": smoke}
+                          for ident, peak, wait, smoke in
+                          (("E1", 2, 100, 0), ("DSB1", 10, 40, 40), ("D101", 1, 80, 0))]}]
+    original = deepcopy(records)
+    result = aggregate(building, scenario, records)
+    assert {d["id"]: d["score"] for d in result["doors"]} == {"E1": 54.0, "DSB1": 70.0, "D101": 42.0}
+    assert next(d for d in result["doors"] if d["id"] == "DSB1")["meanSmokeWait"] == 40
+    assert "40 of them in smoke" in next(t["why"] for t in result["top"] if t["id"] == "DSB1")
+    assert records == original
+    # Missing doors contribute zero over successful runs, like meanWait.
+    absent = {**records[0], "doors": []}
+    assert next(d for d in aggregate(building, scenario, records + [absent])["doors"]
+                if d["id"] == "DSB1")["meanSmokeWait"] == 20
+    for record in records:
+        for d in record["doors"]:
+            d["smokeWait"] = 0
+    assert {d["id"]: d["score"] for d in aggregate(building, scenario, records)["doors"]} == {
+        "E1": 76.0, "DSB1": 58.0, "D101": 59.0}
+    for d in records[0]["doors"]:
+        del d["smokeWait"]
+    assert all("meanSmokeWait" not in d for d in aggregate(building, scenario, records)["doors"])
+
+
 def check_exposure():
     from copy import deepcopy
     from fire.metrics import DOSE_UNIT, SMOKE_D, compute, exposure

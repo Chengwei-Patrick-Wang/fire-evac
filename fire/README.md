@@ -272,8 +272,9 @@ writing the file. All numeric explanations are ASCII, including building labels.
   risk-map state; its ranking time is still `maxTime`.
 - `doors`: mean waiting person-seconds over all successful runs (an absent door
   contributes zero), maximum queue, and score rounded to one decimal. The score
-  is 100 times (0.7 times mean wait / maximum mean wait + 0.3 times peak queue /
-  maximum peak queue). A zero maximum contributes zero.
+  uses the smoke-aware weights in D12 below when any door has positive mean
+  smoke waiting; otherwise it is 100 times (0.7 times mean wait / maximum mean
+  wait + 0.3 times peak queue / maximum peak queue). A zero maximum contributes zero.
 - `heatmaps`: decode each floor's Uint8 grids, average across successful runs,
   then rescale the busiest cell to 100 and encode again. Headers are preserved;
   inconsistent headers or byte counts raise ValueError. Empty grids stay zero.
@@ -514,3 +515,42 @@ lead's overnight notes, pending C10. The lobby rank and the reduction in
 trapped people when blocking the main entrance must not be used as demo
 headlines; regenerate these comparisons after the routing fix. Propping
 stair doors increases exposure despite the nearly unchanged t90.
+
+
+## Queues in smoke (D12)
+
+With a scenario, `compute` adds optional `doors[].smokeWait`: person-seconds
+queued within 2 m of an opening, moving below 0.3 m/s with status 1, at smoke
+density at least `SMOKE_D` (10). This is the smoky subset of
+`waitPersonSeconds`, sampled from the same snap-grid row-density calculation
+as illustrative exposure. Calls without a scenario retain the existing shape.
+
+Batch workers carry `smokeWait` in door records. `aggregate` adds optional
+`doors[].meanSmokeWait` when all available records for that door carry the
+measure. As with `meanWait`, the denominator is all successful runs; a missing
+door contributes zero. Failed runs contribute to neither measure.
+
+When any door has positive `meanSmokeWait`, the relative score is
+`round(100 * (0.5 * wait/maxWait + 0.2 * peak/maxPeak + 0.3 * smoke/maxSmoke), 1)`.
+Otherwise the original 0.7 wait / 0.3 peak weights apply, including to old
+records without smoke waits. Zero maxima contribute zero. Explanations include
+", N of them in smoke" when mean smoke waiting is at least one person-second.
+These model-based relative scores are illustrative, not calibrated risk.
+
+A/E handoff: optional per-run `metrics.doors[].smokeWait` and batch
+`doors[].meanSmokeWait` support smoky-queue displays. Scores now weight waiting,
+peak queue and smoky waiting by 50%, 20% and 30% when smoky queues exist.
+
+D12 verification: `python -m fire.smoke_test` prints `fire checks OK`.
+The six-room, seed-1 CLI completed in 3.3 s with six successful runs and no
+failures, writing `debug/batch-smoke.json`. Its smoky-queue explanations were:
+
+```text
+Exit East stair exit: 12 people queued at peak; 182 person-seconds of waiting on average, 6 of them in smoke, across 6 fires.
+Door D106: 3 people queued at peak; 44 person-seconds of waiting on average, 8 of them in smoke, across 6 fires.
+Door D104: 4 people queued at peak; 54 person-seconds of waiting on average, 4 of them in smoke, across 6 fires.
+Exit Main entrance: 3 people queued at peak; 28 person-seconds of waiting on average, 5 of them in smoke, across 6 fires.
+```
+
+The sampled lobby fire still has the C10 routing artifact noted by the lead;
+its room ranking is not suitable for a demo headline pending that fix.

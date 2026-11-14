@@ -65,7 +65,7 @@ def _run_one(task: dict) -> dict:
                 "trapped": metrics["trapped"], "exitCounts": metrics["exitCounts"],
                 "dosed": metrics["exposure"]["dosed"],
                 "smokeSeconds": metrics["exposure"]["personSecondsInSmoke"],
-                "doors": [{key: door[key] for key in ("id", "floor", "peakQueue", "waitPersonSeconds")}
+                "doors": [{key: door[key] for key in ("id", "floor", "peakQueue", "waitPersonSeconds", "smokeWait")}
                           for door in metrics["doors"]], "heatmaps": metrics["heatmaps"]}
     except Exception as error:
         return {"ok": False, "scenarioId": scenario["id"], "error": repr(error)}
@@ -150,11 +150,21 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
               "meanWait": sum(d["waitPersonSeconds"] for d in values) / len(records),
               "peakQueue": max(d["peakQueue"] for d in values)}
              for (floor, door), values in by_door.items()]
+    for door in doors:
+        values = by_door[(door["floor"], door["id"])]
+        if all("smokeWait" in value for value in values):
+            door["meanSmokeWait"] = sum(d["smokeWait"] for d in values) / len(records)
+    max_smoke = max((d.get("meanSmokeWait", 0) for d in doors), default=0)
     max_wait = max((d["meanWait"] for d in doors), default=0)
     max_queue = max((d["peakQueue"] for d in doors), default=0)
     for door in doors:
-        door["score"] = round(100 * (0.7 * door["meanWait"] / (max_wait or 1)
-                                     + 0.3 * door["peakQueue"] / (max_queue or 1)), 1)
+        if max_smoke > 0:
+            door["score"] = round(100 * (0.5 * door["meanWait"] / (max_wait or 1)
+                                         + 0.2 * door["peakQueue"] / (max_queue or 1)
+                                         + 0.3 * door.get("meanSmokeWait", 0) / max_smoke), 1)
+        else:
+            door["score"] = round(100 * (0.7 * door["meanWait"] / (max_wait or 1)
+                                         + 0.3 * door["peakQueue"] / (max_queue or 1)), 1)
 
     heatmaps = []
     for floor, maps in by_floor.items():
@@ -188,8 +198,10 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
             kind, label = "stair", f"Stair {stair.get('group', stair['id'])} door"
         else:
             kind, label = "door", f"Door {door['id']}"
+        smoke_clause = (f", {door['meanSmokeWait']:,.0f} of them in smoke,"
+                        if door.get("meanSmokeWait", 0) >= 1 else "")
         why = (f"{label}: {door['peakQueue']} people queued at peak; "
-               f"{door['meanWait']:,.0f} person-seconds of waiting on average across {len(records)} fires.")
+               f"{door['meanWait']:,.0f} person-seconds of waiting on average{smoke_clause} across {len(records)} fires.")
         top.append({"kind": kind, "id": door["id"], "floor": door["floor"],
                     "score": door["score"], "why": why.encode("ascii", "replace").decode("ascii")})
     if rooms:
