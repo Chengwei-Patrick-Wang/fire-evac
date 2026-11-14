@@ -283,6 +283,7 @@ D13 completed: smoke test and slow checks both printed `fire checks OK`. The bud
 Verification note: office output has 213 successful runs and 3 excluded R203b failures (narrow IFC fragment below smoke-grid resolution); ranges and stability cover all 3 seeds over the 71 successful rooms. Details and handoff in fire/README.md.
 
 ### Task D14b (P0 · Sat 6 AM): Office label and width checks follow the building file (unblocks B13/B16)
+BLOCKED: taken over by the lead's machine at 06:20; skip
 
 **Files:** Modify `fire/checks.py` (`check_labels` and any check pinning office exit names, door widths or zone areas).
 
