@@ -8,6 +8,7 @@ import re
 
 import ifcopenshell
 import ifcopenshell.geom
+import ifcopenshell.util.element
 import ifcopenshell.util.unit
 import numpy as np
 import shapely
@@ -97,6 +98,72 @@ def _suffix(index):
             return result
 
 
+def group_stairs(floors):
+    """Greedily match overlapping stair rooms on adjacent floors."""
+    stairs = [[r for r in floor["rooms"] if r["type"] == "stair"] for floor in floors]
+    parents = {id(r): id(r) for rooms in stairs for r in rooms}
+
+    def root(key):
+        while parents[key] != key:
+            key = parents[key]
+        return key
+
+    for lower, upper in zip(stairs, stairs[1:]):
+        candidates = []
+        for a in lower:
+            pa = Polygon(a["polygon"])
+            for b in upper:
+                pb = Polygon(b["polygon"])
+                overlap = pa.intersection(pb).area
+                if overlap >= 0.3 * min(pa.area, pb.area) and overlap > 0:
+                    candidates.append((overlap, a, b))
+        used_a, used_b = set(), set()
+        for _, a, b in sorted(candidates, key=lambda item: (-item[0], item[1]["id"], item[2]["id"])):
+            if id(a) not in used_a and id(b) not in used_b:
+                parents[root(id(b))] = root(id(a))
+                used_a.add(id(a))
+                used_b.add(id(b))
+    groups = {}
+    for level, rooms in enumerate(stairs):
+        for room in rooms:
+            key = root(id(room))
+            centroid = Polygon(room["polygon"]).centroid
+            groups.setdefault(key, []).append((level, centroid.x, centroid.y, room))
+    ordered = sorted(groups.values(), key=lambda group: min((level, x, y) for level, x, y, _ in group))
+    for i, group in enumerate(ordered, 1):
+        for _, _, _, room in group:
+            room["group"] = f"S{i}"
+
+
+def _door(element, scale):
+    geom = footprint(element)
+    if geom is None:
+        return None
+    rect = geom.minimum_rotated_rectangle
+    if rect.geom_type != "Polygon":
+        LOG.warning("Degenerate door footprint for %s", element)
+        return None
+    coords = list(rect.exterior.coords)[:4]
+    edges = [(np.array(coords[(i + 1) % 4]) - np.array(coords[i])) for i in range(4)]
+    edge = max(edges, key=np.linalg.norm)
+    length = float(np.linalg.norm(edge))
+    depth = min(float(np.linalg.norm(e)) for e in edges) + 0.3
+    u = edge / length
+    n = np.array([-u[1], u[0]])
+    center = np.array([rect.centroid.x, rect.centroid.y])
+    given = getattr(element, "OverallWidth", None)
+    width = given * scale if given is not None and 0.5 <= given * scale <= 4 else length
+    a, b = center - u * width / 2, center + u * width / 2
+    ring = [center + su * u * width / 2 + sn * n * depth / 2
+            for su, sn in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
+    rating = ifcopenshell.util.element.get_psets(element).get("Pset_DoorCommon", {}).get("FireRating")
+    fire = bool(rating and str(rating).strip())
+    return {"id": "D" + element.GlobalId[-6:], "name": element.Name or "",
+            "a": a.tolist(), "b": b.tolist(), "width": round(width, 2),
+            "rect": [p.tolist() for p in ring], "fireDoor": fire,
+            "state": "closed" if fire else "open"}
+
+
 def extract(path, *, id=None, name=None, credits=None):
     path = Path(path)
     model = ifcopenshell.open(str(path))
@@ -162,6 +229,44 @@ def extract(path, *, id=None, name=None, credits=None):
                                        "name": room_name, "type": _room_type(room_name),
                                        "polygon": [[x, y] for x, y in ring]})
         floors.append(floor)
+    floor_index = {storey.id(): i for i, storey in enumerate(kept)}
+    for door in model.by_type("IfcDoor"):
+        storey = storey_of(door)
+        if storey is not None and storey.id() in floor_index:
+            result = _door(door, scale)
+            if result is not None:
+                floors[floor_index[storey.id()]]["doors"].append(result)
+
+    def has_stair_parent(element):
+        parent = ifcopenshell.util.element.get_aggregate(element)
+        while parent is not None:
+            if parent.is_a("IfcStair"):
+                return True
+            parent = ifcopenshell.util.element.get_aggregate(parent)
+        return False
+
+    stairs = list(model.by_type("IfcStair")) + [flight for flight in model.by_type("IfcStairFlight")
+                                                   if not has_stair_parent(flight)]
+    for stair in stairs:
+        storey = storey_of(stair)
+        if storey is None or storey.id() not in floor_index:
+            continue
+        shapes = [footprint(part) for part in [stair, *ifcopenshell.util.element.get_decomposition(stair)]]
+        geom = unary_union([part for part in shapes if part is not None])
+        if geom.area < 2:
+            continue
+        for i in (floor_index[storey.id()], floor_index[storey.id()] + 1):
+            if i >= len(floors):
+                continue
+            rooms = floors[i]["rooms"]
+            if any(Polygon(r["polygon"]).intersection(geom).area >= 0.3 * geom.area
+                   for r in rooms if r["type"] == "stair"):
+                continue
+            buffered = geom.buffer(0.3, join_style="mitre")
+            poly = max(_parts(buffered), key=lambda p: p.area)
+            rooms.append({"id": "S" + stair.GlobalId[-6:] + ("_upper" if i != floor_index[storey.id()] else ""),
+                          "name": "Stair", "type": "stair",
+                          "polygon": [list(p) for p in list(orient(poly, sign=1).exterior.coords)[:-1]]})
     points = [p for f in floors for room in f["rooms"] for p in room["polygon"]]
     if not points:
         raise ValueError("No usable room footprints")
@@ -169,6 +274,14 @@ def extract(path, *, id=None, name=None, credits=None):
     miny = min(p[1] for p in points)
     for p in points:
         p[0], p[1] = round(p[0] - minx, 3), round(p[1] - miny, 3)
+    for floor in floors:
+        for door in floor["doors"]:
+            for p in [door["a"], door["b"], *door["rect"]]:
+                p[0], p[1] = round(p[0] - minx, 3), round(p[1] - miny, 3)
+            if any(Polygon(door["rect"]).intersects(Polygon(room["polygon"]))
+                   for room in floor["rooms"] if room["type"] == "stair"):
+                door["fireDoor"], door["state"] = True, "closed"
+    group_stairs(floors)
     project = model.by_type("IfcProject")
     return {"version": "plan/v0", "id": id or re.sub(r"[^a-z0-9]+", "-", path.stem.lower()).strip("-"),
             "name": name or (project[0].Name if project and project[0].Name else path.stem),

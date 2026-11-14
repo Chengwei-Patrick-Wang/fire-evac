@@ -21,6 +21,13 @@ IFC_PATH = ROOT / "data" / "raw" / "team-downloads" / "Office_A_20110811.ifc"
 
 
 def check_ifc():
+    from buildings.ifc import group_stairs
+    def stair(id, x):
+        return {"id": id, "type": "stair", "polygon": [[x, 0], [x+3, 0], [x+3, 5], [x, 5]]}
+    sample = [{"rooms": [stair("a", 0)]}, {"rooms": [stair("b", 0.5), stair("c", 10)]}]
+    group_stairs(sample)
+    assert sample[0]["rooms"][0]["group"] == sample[1]["rooms"][0]["group"]
+    assert sample[1]["rooms"][0]["group"] != sample[1]["rooms"][1]["group"]
     if not IFC_PATH.exists():
         print("SKIP ifc: file missing")
         return
@@ -34,6 +41,16 @@ def check_ifc():
     minx, miny, maxx, maxy = unary_union(polygons).bounds
     assert minx == 0 and miny == 0
     assert 10 <= maxx <= 500 and 10 <= maxy <= 500
+    doors = [d for f in floors for d in f["doors"]]
+    assert len(doors) >= 5 and all(0.6 <= d["width"] <= 3 for d in doors)
+    groups = {}
+    for floor in floors:
+        stairs = [r["group"] for r in floor["rooms"] if r["type"] == "stair"]
+        assert len(stairs) == len(set(stairs))
+        for group in stairs:
+            groups.setdefault(group, set()).add(floor["id"])
+    assert sum(len(levels) >= 2 for levels in groups.values()) >= 2
+    assert plan["credits"]
     print(f"IFC: {len(floors)} floors, {len(polygons)} rooms, {maxx:.1f} x {maxy:.1f} m")
 
 
