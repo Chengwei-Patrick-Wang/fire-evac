@@ -63,6 +63,8 @@ def _run_one(task: dict) -> dict:
         return {"ok": True, "scenarioId": scenario["id"], "seed": scenario["seed"],
                 "ignition": task["ignition"], "t90": metrics["t90"], "t100": metrics["t100"],
                 "trapped": metrics["trapped"],
+                "dosed": metrics["exposure"]["dosed"],
+                "smokeSeconds": metrics["exposure"]["personSecondsInSmoke"],
                 "doors": [{key: door[key] for key in ("id", "floor", "peakQueue", "waitPersonSeconds")}
                           for door in metrics["doors"]], "heatmaps": metrics["heatmaps"]}
     except Exception as error:
@@ -142,6 +144,8 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
                 if any(t is not None for t in times) else None)
         rooms.append({"id": room, "floor": floor, "riskT90": risk,
                       "riskTrapped": sum(r["trapped"] for r in runs) / len(runs), "n": len(runs)})
+        if all("dosed" in record for record in records):
+            rooms[-1]["riskDosed"] = sum(r["dosed"] for r in runs) / len(runs)
     doors = [{"id": door, "floor": floor,
               "meanWait": sum(d["waitPersonSeconds"] for d in values) / len(records),
               "peakQueue": max(d["peakQueue"] for d in values)}
@@ -230,7 +234,8 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
     return {"version": "batch/v0", "id": f"batch-{building['id']}-{base['id']}",
             "buildingId": building["id"], "base": deepcopy(base),
             "note": "Simulated rule-based batch; fire and smoke model is illustrative.",
-            "runs": [{key: record[key] for key in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped")}
+            "runs": [{key: record[key] for key in ("scenarioId", "seed", "ignition", "t90", "t100", "trapped",
+                                                  "dosed", "smokeSeconds") if key in record}
                      for record in records if record["ok"]],
             "failed": [{"scenarioId": record["scenarioId"], "error": record["error"]}
                        for record in records if not record["ok"]],

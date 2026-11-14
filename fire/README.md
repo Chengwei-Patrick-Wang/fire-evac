@@ -403,3 +403,54 @@ A/E handoff: opt in through `add_exit_criticality` after `run_many`; optional
 `exits` contains door ids, floor, dT90, dTrapped and n. Existing batch fields
 are preserved. No shared contract or frontend files changed. Git syncing and
 integration are left to the overnight runner.
+
+## Smoke exposure and illustrative dose (D10)
+
+`exposure(run, building, scenario)` replays one fresh `FireModel` at the saved
+frame times, reading unrounded density through each floor's snap grid. Density
+lookups are vectorized per floor with the same cell arithmetic as `_node`;
+off-grid positions and unknown floors count as clear air. Every inside status
+(0 through 3, including waiting, landing and stair-transfer rows) contributes.
+Exited people disappear from frames and stop accumulating exposure.
+
+| Constant or field | Definition |
+| --- | --- |
+| `DOSE_UNIT`, `doseUnit` | 2,700 density-seconds = `UNTENABLE_D * UNTENABLE_HOLD_S`, or 30 s at density 90 |
+| `SMOKE_D`, `smokeD` | Density 10, corresponding to visibility at or below 10 m |
+| Per-agent dose | Sum of density times `run.frameInterval`, divided by `DOSE_UNIT` |
+| `personSecondsInSmoke` | Sum of `frameInterval` across all inside rows with density at least `SMOKE_D` |
+| `agentsInSmoke` | Distinct people with at least one row at or above `SMOKE_D` |
+| `meanDose` | Total dose divided by `len(run.agents)`, including unexposed people; 0 with no agents |
+| `maxDose` | Greatest observed individual dose; 0 with no rows |
+| `dosed`, `dosedIdx` | Count and sorted agent indexes whose accumulated dose reached 1 |
+| `stairs[].floor`, `group`, `smokeAt` | First whole second when any grid node inside that stair polygon reaches `SMOKE_D`; null if never observed through `scenario.maxTime` |
+| Batch `runs[].dosed`, `smokeSeconds` | Run dose count and `personSecondsInSmoke`, respectively |
+| Batch `rooms[].riskDosed` | Mean dosed count for fires ignited in that room; included only when every successful record carries `dosed` |
+
+This is an illustrative FED-style sum of the model's illustrative smoke
+density, not gas concentrations. It is not a prediction of injury or survival.
+`dosed` removes nobody from the replay. Exposure uses the saved position:
+stairwell time is sampled at the arrival stair below during a transfer, and at
+the landing during a wait. It does not reconstruct motion between frames.
+Whole-second stair probes and frame times share one forward model timeline;
+stair probes continue to `maxTime` even when the replay ends early or has no
+frames. Stair polygons are measured separately on each floor.
+
+A/E handoff: passing a scenario to `compute(run, building, scenario)` adds the
+optional `metrics.exposure` object. Batch `runs[].dosed`, `runs[].smokeSeconds`
+and `rooms[].riskDosed` are optional additions; older records still aggregate
+without them. Use exposure for the propped-stair-door comparison: the lead's
+paired runs show an exposure increase despite nearly unchanged evacuation
+times and trapped counts. D10 does not change the ranking formula.
+
+D10 fixed-position checks give doses 3.413 and 1.386 for two people remaining
+until 200 s, and 0.015 for a person present only through 40 s. On the example
+kitchen fire, F1 Stair A reaches the smoke threshold at 93 s with the doors as
+built and 62 s with DSA1 propped, including when no replay frames are supplied.
+Checks also cover all inside statuses, off-grid positions, floor lookup,
+empty runs, unchanged inputs and finite JSON output.
+
+D10 verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
+both print `fire checks OK`. Spawned and inline batches match with the new
+fields, room dose risks are present, and older hand-made records retain their
+previous output shape when dose data is absent.

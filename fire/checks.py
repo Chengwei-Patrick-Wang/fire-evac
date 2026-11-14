@@ -342,6 +342,67 @@ def check_metrics():
     assert heatmap["cell"] > 0.5 and not any(base64.b64decode(heatmap["d"]))
 
 
+def check_exposure():
+    from copy import deepcopy
+    from fire.metrics import DOSE_UNIT, SMOKE_D, compute, exposure
+    from fire.model import FireModel
+
+    building = fixture_building()
+    scenario = {"fire": {"floor": "F1", "room": "A", "x": 8, "y": 5,
+                         "type": "kitchen", "start": 0},
+                "sprinklers": False, "doors": {}, "maxTime": 400}
+    model = FireModel(building, scenario)
+    x, y = model.source_xy
+    west = [float(x - 3), float(y)]
+    run = {"floors": ["F1"], "frameInterval": 0.5,
+           "agents": [{"idx": idx, "room": "A" if idx != 1 else "B"} for idx in range(3)],
+           "frames": [{"t": k * 0.5,
+                       "a": [[0, *west, 0, 2], [1, 17, 3, 0, 3]] +
+                            ([[2, *west, 0, 0]] if k <= 80 else [])} for k in range(401)]}
+    original = deepcopy(run)
+    result = exposure(run, building, scenario)
+    assert DOSE_UNIT == 2700 and SMOKE_D == 10
+    assert result["dosed"] == 2 and result["dosedIdx"] == [0, 1], result
+    assert result["agentsInSmoke"] == 2 and result["personSecondsInSmoke"] > 0
+    individual = []
+    for idx in range(3):
+        one = {**run, "agents": [run["agents"][idx]],
+               "frames": [{**frame, "a": [row for row in frame["a"] if row[0] == idx]}
+                          for frame in run["frames"]]}
+        individual.append(exposure(one, building, scenario)["meanDose"])
+    assert abs(individual[0] - 3.4) < 0.15, individual
+    assert abs(individual[1] - 1.4) < 0.15 and individual[1] < individual[0], individual
+    assert individual[2] < 0.05, individual
+    assert np.isclose(result["meanDose"], sum(individual) / 3)
+    assert np.isclose(result["maxDose"], individual[0])
+    assert run == original
+    assert compute(run, building, scenario)["exposure"] == result
+    assert "exposure" not in compute(run, building)
+    # Snap lookup equals the scalar query, including off-grid and invalid-floor rows.
+    probe = {"floors": ["unknown", "F1"], "frameInterval": 0.5, "agents": [{"idx": 9}],
+             "frames": [{"t": 200, "a": [[9, *west, 1, 1], [10, -50, -50, 1, 1],
+                                         [11, *west, 0, 1], [12, *west, 1, -1]]}]}
+    model.step(200)
+    expected = float(model._density[model._node("F1", *west)]) * 0.5 / DOSE_UNIT
+    assert np.isclose(exposure(probe, building, scenario)["meanDose"], expected)
+    empty = exposure({"frames": [], "agents": []}, building, scenario)
+    assert empty["meanDose"] == empty["maxDose"] == empty["dosed"] == 0
+    json.dumps(result, allow_nan=False)
+    json.dumps(empty, allow_nan=False)
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    stair_times = []
+    for overrides in ({}, {"DSA1": "propped"}):
+        measured = exposure({"frames": []}, building, {**scenario, "doors": overrides})
+        stair_times.append(next(s["smokeAt"] for s in measured["stairs"]
+                                if s["floor"] == "F1" and s["group"] == "SA"))
+        json.dumps(measured, allow_nan=False)
+    assert abs(stair_times[0] - 93) <= 3 and abs(stair_times[1] - 62) <= 3, stair_times
+    print(f"exposure: doses={individual}; F1/SA closed/propped smokeAt={stair_times}")
+
+
 def check_margins():
     from fire.metrics import compute
     from fire.model import FireModel, aset_by_room
@@ -481,6 +542,13 @@ def check_aggregate():
     assert result["rooms"][0]["riskT90"] == (100 + base["maxTime"]) / 2
     assert result["rooms"][0]["riskTrapped"] == 2 and result["rooms"][0]["n"] == 2
     assert result["rooms"][1]["riskT90"] is None
+    assert all("riskDosed" not in room for room in result["rooms"])
+    with_dose = deepcopy(records)
+    for record, dosed in zip(with_dose, (2, 4, 1)):
+        record["dosed"] = dosed
+    assert [r["riskDosed"] for r in aggregate(building, base, with_dose)["rooms"]] == [3, 1]
+    del with_dose[-1]["dosed"]
+    assert all("riskDosed" not in r for r in aggregate(building, base, with_dose)["rooms"])
     scores = {door["id"]: door["score"] for door in result["doors"]}
     assert scores == {"E1": 76.0, "DSB1": 58.0, "D101": 59.0}, scores
     top = result["top"]
@@ -541,6 +609,8 @@ def check_batch_pool_slow():
     assert time.perf_counter() - started < 240
     serial = run_many(building, base, ignitions, seeds=(1,), workers=1)
     assert parallel["runs"] == serial["runs"], (parallel["runs"], serial["runs"])
+    assert all(r["dosed"] >= 0 and r["smokeSeconds"] >= 0 for r in parallel["runs"])
+    assert all("riskDosed" in room for room in parallel["rooms"])
     assert base == original
     # Kill a spawned batch before any simulation can finish; don't hang shutdown.
     started = time.perf_counter()

@@ -4,12 +4,18 @@ CLI: python -m fire.metrics RUN BUILDING (top five doors by waiting).
 """
 import base64
 import json
+import math
 import sys
 from pathlib import Path
 
 import numpy as np
+import shapely
 
 from fire.grid import grid_specs
+from fire.model import FireModel, UNTENABLE_D, UNTENABLE_HOLD_S
+
+DOSE_UNIT = UNTENABLE_D * UNTENABLE_HOLD_S
+SMOKE_D = 10.0
 
 QUEUE_RADIUS_M = 2.0
 QUEUE_SPEED_MS = 0.3
@@ -49,10 +55,77 @@ def _stack(frames: list):
             np.asarray(previous_rows, dtype=int))
 
 
+def exposure(run: dict, building: dict, scenario: dict) -> dict:
+    """Integrate illustrative smoke density at replay positions, without removing people."""
+    model = FireModel(building, scenario)
+    frames = run.get("frames") or []
+    rows, frame_numbers, _, _ = _stack(frames)
+    floor_ids = list(run.get("floors") or [f["id"] for f in building["floors"]])
+    nodes = np.full(len(rows), -1, dtype=int)
+    for fi, floor_id in enumerate(floor_ids):
+        index = model.graph.floor_index.get(floor_id)
+        if index is None:
+            continue
+        grid = model.graph.floors[index]
+        selected = np.flatnonzero((rows[:, 3] == fi) & np.isfinite(rows[:, 1:3]).all(axis=1)
+                                  & (rows[:, 4] >= 0) & (rows[:, 4] <= 3))
+        cells = np.floor((rows[selected, 1:3] - grid.spec["origin"]) / grid.spec["cell"])
+        inside = ((cells[:, 0] >= 0) & (cells[:, 0] < grid.spec["cols"]) &
+                  (cells[:, 1] >= 0) & (cells[:, 1] < grid.spec["rows"]))
+        selected, cells = selected[inside], cells[inside].astype(int)
+        local = grid.snap[cells[:, 1], cells[:, 0]]
+        valid = local >= 0
+        nodes[selected[valid]] = model.graph.offset[index] + local[valid]
+
+    stairs, stair_nodes = [], []
+    for floor, grid, offset in zip(building["floors"], model.graph.floors, model.graph.offset):
+        for stair in floor.get("stairs", []):
+            inside = shapely.contains_xy(shapely.Polygon(stair["polygon"]), grid.xy[:, 0], grid.xy[:, 1])
+            stairs.append({"floor": floor["id"], "group": stair["group"], "smokeAt": None})
+            stair_nodes.append(offset + np.flatnonzero(inside))
+
+    times = [float(frame["t"]) for frame in frames]
+    horizon = float(scenario["maxTime"])
+    if not math.isfinite(horizon) or horizon < 0:
+        raise ValueError("Exposure horizon must be finite and non-negative")
+    if any(not math.isfinite(t) or t < 0 for t in times) or times != sorted(times):
+        raise ValueError("Exposure frame times must be finite, non-negative and ordered")
+    # Merge whole-second stair probes with frame times to use one forward-only model.
+    at_time = {}
+    for k, t in enumerate(times):
+        at_time.setdefault(t, []).append(k)
+    seconds = range(math.floor(horizon) + 1)
+    density = np.zeros(len(rows))
+    boundaries = np.searchsorted(frame_numbers, np.arange(len(frames) + 1))
+    for t in sorted(set(seconds) | set(at_time)):
+        model.step(t)
+        if t <= horizon and t == math.floor(t):
+            for stair, indexes in zip(stairs, stair_nodes):
+                if stair["smokeAt"] is None and (model._density[indexes] >= SMOKE_D).any():
+                    stair["smokeAt"] = float(t)
+        for k in at_time.get(t, []):
+            selected = np.arange(boundaries[k], boundaries[k + 1])
+            selected = selected[nodes[selected] >= 0]
+            density[selected] = model._density[nodes[selected]]
+
+    dt = float(run.get("frameInterval", 0.5))
+    indexes, inverse = np.unique(rows[:, 0].astype(int), return_inverse=True)
+    doses = np.bincount(inverse, weights=density * dt / DOSE_UNIT, minlength=len(indexes))
+    smoky = np.bincount(inverse, weights=(density >= SMOKE_D).astype(float), minlength=len(indexes))
+    dosed = indexes[doses >= 1].tolist()
+    count = len(run.get("agents") or [])
+    return {"doseUnit": DOSE_UNIT, "smokeD": SMOKE_D,
+            "personSecondsInSmoke": float(np.count_nonzero(density >= SMOKE_D) * dt),
+            "agentsInSmoke": int(np.count_nonzero(smoky)),
+            "meanDose": float(doses.sum() / count) if count else 0.0,
+            "maxDose": float(doses.max()) if len(doses) else 0.0,
+            "dosed": len(dosed), "dosedIdx": dosed, "stairs": stairs}
+
+
 def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
     """Copy sim metrics and add every door's queues/flow and per-floor heatmaps.
 
-    With a scenario, add smoke-only room ASET and observed clearance margins.
+    With a scenario, add smoke-only room ASET, clearance margins and exposure.
     """
     dt = float(run.get("frameInterval", 0.5))
     frames = run.get("frames") or []
@@ -142,6 +215,7 @@ def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
             margin = available - rset if available is not None and rset is not None else None
             rooms.append({"id": room, "rset": rset, "aset": available, "margin": margin})
         result["rooms"] = rooms
+        result["exposure"] = exposure(run, building, scenario)
     return result
 
 
