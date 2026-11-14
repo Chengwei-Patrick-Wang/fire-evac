@@ -135,6 +135,18 @@ def group_stairs(floors):
             room["group"] = f"S{i}"
 
 
+def _door_name(ifc_name: str) -> str:
+    family = ifc_name.split(":", 1)[0].lower()
+    kinds = [("toilet partition", "Toilet stall door"), ("chain link", "Chain-link gate"),
+             ("dbl glass", "Double glass door"), ("sgl glass", "Glass door"),
+             ("double", "Double door"), ("single", "Single door")]
+    name = next((label for key, label in kinds if key in family), "Door")
+    for suffix in ("exterior", "rated"):
+        if suffix in ifc_name.lower():
+            name += ", " + suffix
+    return name
+
+
 def _door(element, scale):
     geom = footprint(element)
     if geom is None:
@@ -158,7 +170,7 @@ def _door(element, scale):
             for su, sn in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
     rating = ifcopenshell.util.element.get_psets(element).get("Pset_DoorCommon", {}).get("FireRating")
     fire = bool(rating and str(rating).strip())
-    return {"id": "D" + element.GlobalId[-6:], "name": element.Name or "",
+    return {"id": "D" + element.GlobalId[-6:], "name": _door_name(element.Name or ""), "ifcName": element.Name or "",
             "a": a.tolist(), "b": b.tolist(), "width": round(width, 2),
             "rect": [p.tolist() for p in ring], "fireDoor": fire,
             "state": "closed" if fire else "open"}

@@ -2909,7 +2909,7 @@
     {
      "id": "R102",
      "name": "DUTY OFCR",
-     "type": "other",
+     "type": "office",
      "polygon": [
       [
        28.779,
@@ -2940,7 +2940,7 @@
     {
      "id": "R103",
      "name": "EXEC OFCR",
-     "type": "other",
+     "type": "office",
      "polygon": [
       [
        32.28,
@@ -3076,7 +3076,7 @@
     {
      "id": "R107",
      "name": "CMD RR",
-     "type": "other",
+     "type": "restroom",
      "polygon": [
       [
        46.352,
@@ -3127,7 +3127,7 @@
     {
      "id": "R108",
      "name": "ELEC RM",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        43.327,
@@ -3495,7 +3495,7 @@
     {
      "id": "R115a",
      "name": "TELE/COMM RM",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        30.53,
@@ -3534,7 +3534,7 @@
     {
      "id": "R115b",
      "name": "TELE/COMM RM",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        28.667,
@@ -3604,7 +3604,7 @@
     {
      "id": "R117",
      "name": "S-1/S-4 STOR",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        33.979,
@@ -4371,7 +4371,7 @@
     {
      "id": "R135",
      "name": "MENS RR",
-     "type": "other",
+     "type": "restroom",
      "polygon": [
       [
        17.542,
@@ -4494,7 +4494,7 @@
     {
      "id": "R136",
      "name": "WOMENS RR",
-     "type": "other",
+     "type": "restroom",
      "polygon": [
       [
        14.246,
@@ -5163,7 +5163,7 @@
     {
      "id": "R145",
      "name": "STOR.",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        6.212,
@@ -5778,7 +5778,8 @@
    "doors": [
     {
      "id": "D$77x1u",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184606",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184606",
      "a": [
       34.027,
       21.6
@@ -5815,7 +5816,8 @@
     },
     {
      "id": "D$77xDb",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184835",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184835",
      "a": [
       28.716,
       21.6
@@ -5852,7 +5854,8 @@
     },
     {
      "id": "D$77x0R",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184701",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184701",
      "a": [
       30.704,
       21.6
@@ -5889,7 +5892,8 @@
     },
     {
      "id": "D$77xRk",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186248",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186248",
      "a": [
       34.901,
       3.995
@@ -5926,7 +5930,8 @@
     },
     {
      "id": "D$77xkJ",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187125",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187125",
      "a": [
       9.621,
       17.279
@@ -5963,7 +5968,8 @@
     },
     {
      "id": "D$77x7o",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184468",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184468",
      "a": [
       46.899,
       22.633
@@ -6000,7 +6006,8 @@
     },
     {
      "id": "D$bK$uj",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:207624",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:207624",
      "a": [
       17.646,
       26.982
@@ -6037,7 +6044,8 @@
     },
     {
      "id": "D$77xei",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187210",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187210",
      "a": [
       10.861,
       17.279
@@ -6074,7 +6082,8 @@
     },
     {
      "id": "D$77x9N",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185137",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185137",
      "a": [
       24.077,
       18.261
@@ -6111,7 +6120,8 @@
     },
     {
      "id": "D$77xRF",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186281",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186281",
      "a": [
       36.237,
       3.995
@@ -6148,7 +6158,8 @@
     },
     {
      "id": "D$77xD6",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184864",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184864",
      "a": [
       27.171,
       21.6
@@ -6185,7 +6196,8 @@
     },
     {
      "id": "D$77xOj",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186187",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186187",
      "a": [
       31.093,
       3.995
@@ -6222,7 +6234,8 @@
     },
     {
      "id": "D$77xaz",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186459",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186459",
      "a": [
       26.652,
       13.168
@@ -6259,7 +6272,8 @@
     },
     {
      "id": "D$77u5A",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188460",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188460",
      "a": [
       30.149,
       23.709
@@ -6296,7 +6310,8 @@
     },
     {
      "id": "D$77xGt",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185681",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185681",
      "a": [
       16.067,
       4.395
@@ -6333,7 +6348,8 @@
     },
     {
      "id": "D$77xCp",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184917",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184917",
      "a": [
       19.172,
       20.523
@@ -6370,7 +6386,8 @@
     },
     {
      "id": "D$77u0o",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188756",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188756",
      "a": [
       32.305,
       23.709
@@ -6407,7 +6424,8 @@
     },
     {
      "id": "D$77xVs",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186000",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186000",
      "a": [
       28.328,
       6.043
@@ -6444,7 +6462,8 @@
     },
     {
      "id": "D$77uCB",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189037",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189037",
      "a": [
       38.587,
       30.106
@@ -6481,7 +6500,8 @@
     },
     {
      "id": "D$77xb8",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186414",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186414",
      "a": [
       46.29,
       4.412
@@ -6518,7 +6538,8 @@
     },
     {
      "id": "D$77u8l",
-     "name": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:189257",
+     "name": "Double door",
+     "ifcName": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:189257",
      "a": [
       39.915,
       30.106
@@ -6555,7 +6576,8 @@
     },
     {
      "id": "D$77xbr",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186387",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186387",
      "a": [
       44.163,
       3.995
@@ -6592,7 +6614,8 @@
     },
     {
      "id": "D$77xjY",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186884",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186884",
      "a": [
       3.192,
       17.279
@@ -6629,7 +6652,8 @@
     },
     {
      "id": "D$77xXr",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186643",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186643",
      "a": [
       31.001,
       12.856
@@ -6666,7 +6690,8 @@
     },
     {
      "id": "D$77xnt",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187665",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187665",
      "a": [
       17.572,
       23.709
@@ -6703,7 +6728,8 @@
     },
     {
      "id": "D$77xF_",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184984",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184984",
      "a": [
       15.832,
       20.523
@@ -6740,7 +6766,8 @@
     },
     {
      "id": "D$77xUv",
-     "name": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:186079",
+     "name": "Double door",
+     "ifcName": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:186079",
      "a": [
       27.311,
       4.395
@@ -6777,7 +6804,8 @@
     },
     {
      "id": "D$77xwP",
-     "name": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:188415",
+     "name": "Double door",
+     "ifcName": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:188415",
      "a": [
       3.587,
       23.709
@@ -6814,7 +6842,8 @@
     },
     {
      "id": "D$77xYv",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186847",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186847",
      "a": [
       43.436,
       5.744
@@ -6851,7 +6880,8 @@
     },
     {
      "id": "D$77xAg",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185292",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185292",
      "a": [
       24.519,
       12.938
@@ -6888,7 +6918,8 @@
     },
     {
      "id": "D$77xJp",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185749",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185749",
      "a": [
       23.373,
       4.395
@@ -6925,7 +6956,8 @@
     },
     {
      "id": "D$77xKn",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185431",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185431",
      "a": [
       21.21,
       6.043
@@ -6962,7 +6994,8 @@
     },
     {
      "id": "D$77xH0",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185638",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185638",
      "a": [
       12.578,
       4.395
@@ -6999,7 +7032,8 @@
     },
     {
      "id": "D$77uF4",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189090",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189090",
      "a": [
       34.736,
       33.416
@@ -7036,7 +7070,8 @@
     },
     {
      "id": "D$77xWY",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186692",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186692",
      "a": [
       42.059,
       5.744
@@ -7073,7 +7108,8 @@
     },
     {
      "id": "D$77u2e",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188878",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188878",
      "a": [
       37.161,
       23.709
@@ -7110,7 +7146,8 @@
     },
     {
      "id": "D$77xGO",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185726",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185726",
      "a": [
       19.015,
       4.395
@@ -7147,7 +7184,8 @@
     },
     {
      "id": "D$77xcM",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186608",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186608",
      "a": [
       29.605,
       12.856
@@ -7184,7 +7222,8 @@
     },
     {
      "id": "D$77xtv",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187551",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187551",
      "a": [
       12.366,
       11.736
@@ -7221,7 +7260,8 @@
     },
     {
      "id": "D$77u67",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188641",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188641",
      "a": [
       30.151,
       27.591
@@ -7258,7 +7298,8 @@
     },
     {
      "id": "D$77u3r",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188819",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188819",
      "a": [
       33.658,
       26.983
@@ -7295,7 +7336,8 @@
     },
     {
      "id": "D$77xEd",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185025",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185025",
      "a": [
       24.077,
       19.5
@@ -7332,7 +7374,8 @@
     },
     {
      "id": "D$77u2P",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188927",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188927",
      "a": [
       38.238,
       25.907
@@ -7369,7 +7412,8 @@
     },
     {
      "id": "D$77xQu",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186334",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:186334",
      "a": [
       42.825,
       3.995
@@ -7406,7 +7450,8 @@
     },
     {
      "id": "D$77xv3",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188197",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188197",
      "a": [
       6.362,
       32.624
@@ -7443,7 +7488,8 @@
     },
     {
      "id": "D$77x$U",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188088",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:188088",
      "a": [
       8.418,
       33.924
@@ -7480,7 +7526,8 @@
     },
     {
      "id": "D$77xpX",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187783",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187783",
      "a": [
       18.797,
       30.998
@@ -7517,7 +7564,8 @@
     },
     {
      "id": "D$77xNK",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185522",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:185522",
      "a": [
       19.873,
       6.043
@@ -7554,7 +7602,8 @@
     },
     {
      "id": "D$77xq_",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187480",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187480",
      "a": [
       12.366,
       8.946
@@ -7591,7 +7640,8 @@
     },
     {
      "id": "D$77uCq",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189010",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189010",
      "a": [
       38.238,
       29.08
@@ -7628,7 +7678,8 @@
     },
     {
      "id": "D$77xzD",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187947",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187947",
      "a": [
       5.025,
       32.624
@@ -7665,7 +7716,8 @@
     },
     {
      "id": "D$77xeH",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187255",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187255",
      "a": [
       12.366,
       6.155
@@ -7702,7 +7754,8 @@
     },
     {
      "id": "D$77xo6",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187872",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187872",
      "a": [
       17.572,
       32.624
@@ -7739,7 +7792,8 @@
     },
     {
      "id": "D$77xsW",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187590",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187590",
      "a": [
       3.03,
       22.633
@@ -7776,7 +7830,8 @@
     },
     {
      "id": "D$77xm_",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187736",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:187736",
      "a": [
       18.797,
       28.126
@@ -7813,7 +7868,8 @@
     },
     {
      "id": "DMO2yd9",
-     "name": "M_Double-Flush:1830 x 2134mm:1830 x 2134mm:183872",
+     "name": "Double door",
+     "ifcName": "M_Double-Flush:1830 x 2134mm:1830 x 2134mm:183872",
      "a": [
       50.08,
       8.363
@@ -7850,7 +7906,8 @@
     },
     {
      "id": "D$77x5b",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184323",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184323",
      "a": [
       -0.151,
       11.216
@@ -7887,7 +7944,8 @@
     },
     {
      "id": "DrRS91$",
-     "name": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:200566",
+     "name": "Double door",
+     "ifcName": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:200566",
      "a": [
       24.681,
       -0.151
@@ -7924,7 +7982,8 @@
     },
     {
      "id": "DMO2yaj",
-     "name": "M_Double-Flush:1830 x 2134mm:1830 x 2134mm:183972",
+     "name": "Double door",
+     "ifcName": "M_Double-Flush:1830 x 2134mm:1830 x 2134mm:183972",
      "a": [
       50.08,
       15.37
@@ -7961,7 +8020,8 @@
     },
     {
      "id": "D$77wwb",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184259",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184259",
      "a": [
       -0.151,
       22.492
@@ -7998,7 +8058,8 @@
     },
     {
      "id": "DMO2yZ0",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184137",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184137",
      "a": [
       50.08,
       22.492
@@ -8035,7 +8096,8 @@
     },
     {
      "id": "DIlsnHU",
-     "name": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:228197",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:228197",
      "a": [
       19.155,
       19.151
@@ -8072,7 +8134,8 @@
     },
     {
      "id": "DIlsnKU",
-     "name": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:227877",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:227877",
      "a": [
       15.51,
       15.779
@@ -8109,7 +8172,8 @@
     },
     {
      "id": "DIlsnMr",
-     "name": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:227982",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:227982",
      "a": [
       19.155,
       16.683
@@ -8146,7 +8210,8 @@
     },
     {
      "id": "DIlsnGH",
-     "name": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:228138",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:228138",
      "a": [
       19.155,
       18.218
@@ -8183,7 +8248,8 @@
     },
     {
      "id": "DIlsnGp",
-     "name": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:228104",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:228104",
      "a": [
       15.509,
       18.053
@@ -8302,20 +8368,8 @@
        23.647
       ],
       [
-       0.313,
-       23.647
-      ],
-      [
-       0.0,
-       23.647
-      ],
-      [
-       0.0,
-       22.176
-      ],
-      [
        0.428,
-       22.176
+       23.647
       ],
       [
        0.428,
@@ -8324,10 +8378,6 @@
       [
        2.968,
        17.341
-      ],
-      [
-       2.968,
-       21.6
       ]
      ]
     },
@@ -8337,36 +8387,20 @@
      "room": "RS102",
      "polygon": [
       [
+       49.501,
+       23.647
+      ],
+      [
+       46.961,
+       23.647
+      ],
+      [
        46.961,
        17.338
       ],
       [
        49.501,
        17.338
-      ],
-      [
-       49.501,
-       22.136
-      ],
-      [
-       49.929,
-       22.136
-      ],
-      [
-       49.929,
-       23.647
-      ],
-      [
-       49.639,
-       23.647
-      ],
-      [
-       46.961,
-       23.647
-      ],
-      [
-       46.961,
-       21.6
       ]
      ]
     }
@@ -8374,7 +8408,7 @@
    "exits": [
     {
      "id": "DMO2yd9",
-     "name": "M_Double-Flush:1830 x 2134mm:1830 x 2134mm:183872",
+     "name": "Elec Rm (east)",
      "door": "DMO2yd9",
      "polygon": [
       [
@@ -8397,7 +8431,7 @@
     },
     {
      "id": "D$77x5b",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184323",
+     "name": "Open Office (west)",
      "door": "D$77x5b",
      "polygon": [
       [
@@ -8420,7 +8454,7 @@
     },
     {
      "id": "DrRS91$",
-     "name": "M_Double-Flush:1830 x 2083mm:1830 x 2083mm:200566",
+     "name": "Entry (south)",
      "door": "DrRS91$",
      "polygon": [
       [
@@ -8443,7 +8477,7 @@
     },
     {
      "id": "DMO2yaj",
-     "name": "M_Double-Flush:1830 x 2134mm:1830 x 2134mm:183972",
+     "name": "Mech Rm (east)",
      "door": "DMO2yaj",
      "polygon": [
       [
@@ -8466,7 +8500,7 @@
     },
     {
      "id": "D$77wwb",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184259",
+     "name": "Stair S1 (west)",
      "door": "D$77wwb",
      "polygon": [
       [
@@ -8489,7 +8523,7 @@
     },
     {
      "id": "DMO2yZ0",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:184137",
+     "name": "Stair S2 (east)",
      "door": "DMO2yZ0",
      "polygon": [
       [
@@ -11087,7 +11121,7 @@
     {
      "id": "R207",
      "name": "WOMENS RR",
-     "type": "other",
+     "type": "restroom",
      "polygon": [
       [
        14.376,
@@ -11197,7 +11231,7 @@
     {
      "id": "R209",
      "name": "MENS RR",
-     "type": "other",
+     "type": "restroom",
      "polygon": [
       [
        17.545,
@@ -11490,7 +11524,7 @@
     {
      "id": "R215",
      "name": "ELEC RM",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        33.261,
@@ -11548,7 +11582,7 @@
     {
      "id": "R217",
      "name": "TELE/COMM RM",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        37.963,
@@ -12338,7 +12372,7 @@
     {
      "id": "R232",
      "name": "JAN",
-     "type": "other",
+     "type": "storage",
      "polygon": [
       [
        24.32,
@@ -12680,7 +12714,8 @@
    "doors": [
     {
      "id": "DQnt_zR",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190705",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190705",
      "a": [
       26.335,
       15.848
@@ -12717,7 +12752,8 @@
     },
     {
      "id": "DQnt_rV",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191221",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191221",
      "a": [
       13.263,
       18.73
@@ -12754,7 +12790,8 @@
     },
     {
      "id": "DQnt_8l",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189829",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189829",
      "a": [
       43.81,
       21.578
@@ -12791,7 +12828,8 @@
     },
     {
      "id": "DQnt_6x",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189969",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189969",
      "a": [
       41.707,
       21.578
@@ -12828,7 +12866,8 @@
     },
     {
      "id": "DQnt_$4",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190574",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190574",
      "a": [
       26.335,
       7.789
@@ -12865,7 +12904,8 @@
     },
     {
      "id": "DQnt_zc",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190668",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190668",
      "a": [
       24.382,
       9.19
@@ -12902,7 +12942,8 @@
     },
     {
      "id": "DQnt_1e",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190402",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190402",
      "a": [
       33.323,
       9.352
@@ -12939,7 +12980,8 @@
     },
     {
      "id": "DQnt_vQ",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190960",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190960",
      "a": [
       20.285,
       18.73
@@ -12976,7 +13018,8 @@
     },
     {
      "id": "DQnt_sR",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191025",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191025",
      "a": [
       19.855,
       3.843
@@ -13013,7 +13056,8 @@
     },
     {
      "id": "DQnt_yp",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190617",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190617",
      "a": [
       24.382,
       7.951
@@ -13050,7 +13094,8 @@
     },
     {
      "id": "DQnt_0z",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190359",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190359",
      "a": [
       33.323,
       10.591
@@ -13087,7 +13132,8 @@
     },
     {
      "id": "DssDq$e",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:214056",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:214056",
      "a": [
       31.297,
       18.73
@@ -13124,7 +13170,8 @@
     },
     {
      "id": "DQnt_66",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189996",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189996",
      "a": [
       45.761,
       21.578
@@ -13161,7 +13208,8 @@
     },
     {
      "id": "DQnt_4u",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190098",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190098",
      "a": [
       34.971,
       13.587
@@ -13198,7 +13246,8 @@
     },
     {
      "id": "DQnt_3s",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190300",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190300",
      "a": [
       34.971,
       9.599
@@ -13235,7 +13284,8 @@
     },
     {
      "id": "DQnt_B8",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189794",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189794",
      "a": [
       32.239,
       24.442
@@ -13272,7 +13322,8 @@
     },
     {
      "id": "DQnt_Gm",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189338",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189338",
      "a": [
       3.03,
       22.68
@@ -13309,7 +13360,8 @@
     },
     {
      "id": "DQnt_pi",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191302",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191302",
      "a": [
       12.025,
       13.62
@@ -13346,7 +13398,8 @@
     },
     {
      "id": "DQnt_1D",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190439",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190439",
      "a": [
       26.335,
       4.005
@@ -13383,7 +13436,8 @@
     },
     {
      "id": "DQnt_qY",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191112",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191112",
      "a": [
       13.263,
       3.843
@@ -13420,7 +13474,8 @@
     },
     {
      "id": "DQnt_ws",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190748",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190748",
      "a": [
       26.335,
       17.652
@@ -13457,7 +13512,8 @@
     },
     {
      "id": "DQnt_Di",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189638",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189638",
      "a": [
       17.61,
       24.442
@@ -13494,7 +13550,8 @@
     },
     {
      "id": "DQnt_kO",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191538",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191538",
      "a": [
       24.382,
       12.889
@@ -13531,7 +13588,8 @@
     },
     {
      "id": "DQnt_7r",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190047",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:190047",
      "a": [
       46.899,
       22.346
@@ -13568,7 +13626,8 @@
     },
     {
      "id": "DQnt_DD",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189671",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189671",
      "a": [
       23.686,
       24.442
@@ -13605,7 +13664,8 @@
     },
     {
      "id": "DQnt_qr",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191135",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191135",
      "a": [
       13.101,
       9.675
@@ -13642,7 +13702,8 @@
     },
     {
      "id": "DQnt_ro",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191192",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:191192",
      "a": [
       13.101,
       10.914
@@ -13679,7 +13740,8 @@
     },
     {
      "id": "DQnt_AF",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189733",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189733",
      "a": [
       31.001,
       24.442
@@ -13716,7 +13778,8 @@
     },
     {
      "id": "DQnt_Ft",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189533",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189533",
      "a": [
       9.919,
       24.442
@@ -13753,7 +13816,8 @@
     },
     {
      "id": "DQnt_Ac",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189708",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189708",
      "a": [
       24.925,
       24.442
@@ -13790,7 +13854,8 @@
     },
     {
      "id": "DQnt_Ct",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189597",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189597",
      "a": [
       16.372,
       24.442
@@ -13827,7 +13892,8 @@
     },
     {
      "id": "DQnt_FG",
-     "name": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189562",
+     "name": "Single door",
+     "ifcName": "M_Single-Flush:0915 x 2134mm:0915 x 2134mm:189562",
      "a": [
       11.159,
       24.442
@@ -13864,7 +13930,8 @@
     },
     {
      "id": "DrGZzuM",
-     "name": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:229928",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:229928",
      "a": [
       19.689,
       14.444
@@ -13901,7 +13968,8 @@
     },
     {
      "id": "DrGZzpH",
-     "name": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:229615",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:229615",
      "a": [
       15.514,
       16.749
@@ -13938,7 +14006,8 @@
     },
     {
      "id": "DrGZzpG",
-     "name": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:229614",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0915 x 1525mm:0915 x 1525mm:229614",
      "a": [
       15.513,
       14.326
@@ -13975,7 +14044,8 @@
     },
     {
      "id": "DrGZzuN",
-     "name": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:229929",
+     "name": "Toilet stall door",
+     "ifcName": "M_Toilet Partition:0813 x 1525mm:0813 x 1525mm:229929",
      "a": [
       19.689,
       15.944

@@ -1,4 +1,4 @@
-"""Smoke test for the normalizer: python -m buildings.smoke_test
+﻿"""Smoke test for the normalizer: python -m buildings.smoke_test
 
 Normalizes contracts/plan.example.json, writes debug/building.example.json,
 and checks the review-focus geometry (rooms separated by walls, exits, stairs).
@@ -158,11 +158,33 @@ def check_clinic():
         else:
             raise AssertionError(fid)
     office = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
-    stair = next(s for f in office["floors"] for s in f["stairs"] if s["id"] == "RS101")
+    stair = next(s for f in office["floors"] for s in f["rooms"] if s["id"] == "RS101")
     poly = Polygon(stair["polygon"])
     rect = largest_inner_rect(poly)
     assert len(rect.exterior.coords) == 5 and poly.buffer(0.005).covers(rect)
     assert 0.95 <= rect.area / poly.area <= 0.97
+
+
+
+def check_office():
+    from buildings.ifc import _door_name
+    office = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    scenario = json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8"))
+    exits = {e["id"]: e["name"] for f in office["floors"] for e in f["exits"]}
+    assert exits == {"DMO2yd9": "Elec Rm (east)", "D$77x5b": "Open Office (west)",
+                     "DrRS91$": "Entry (south)", "DMO2yaj": "Mech Rm (east)",
+                     "D$77wwb": "Stair S1 (west)", "DMO2yZ0": "Stair S2 (east)"}
+    assert all(":" not in item.get("name", "") and "M_" not in item.get("name", "")
+               for f in office["floors"] for key in ("doors", "exits") for item in f[key])
+    f1 = office["floors"][0]
+    assert {"R101", "R106", "R110", "R125", "R143", "RS101"} <= {r["id"] for r in f1["rooms"]}
+    doors = {d["id"]: d for d in f1["doors"]}
+    assert {"D$77wwb", "D$77xsW", "D$77xVs", "DrRS91$", "DMO2yZ0"} <= doors.keys()
+    assert doors["DrRS91$"]["name"] == "Double door" and doors["DrRS91$"]["ifcName"].startswith("M_Double-Flush")
+    assert _door_name("M_Single-Flush:0915 x 2134mm Rated") == "Single door, rated"
+    assert scenario["id"] == "office-fire" and scenario["occupants"]["total"] == 250
+    assert scenario["fire"]["type"] == "kitchen" and scenario["fire"]["room"] == "R143"
+    assert scenario["seed"] == 1 and scenario["maxTime"] == 400
 
 
 def check_traced():
@@ -269,6 +291,7 @@ def main() -> int:
     check_building()
     check_building("clinic")
     check_clinic()
+    check_office()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
@@ -353,4 +376,5 @@ def check_tidy():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
