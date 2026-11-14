@@ -99,3 +99,9 @@ vertex count, extents and per-floor counts. It contains no top-level building
 ID or floors. Rerun `python -m buildings.summary` after changing any building in
 `data/buildings/`; use `python -m buildings.summary --check` to detect a stale
 index without writing it. A folder and `--out PATH` may also be supplied.
+
+## Vertex budget (B12)
+
+Pass `--max-vertices N` to the normalizer to try reducing walkable vertices per floor. The budget is off by default; committed buildings are not budgeted. The normalizer preserves door openings and checks topology, exit and stair zones, and area; it warns when the target cannot be met.
+
+On the office with a 600-vertex per-floor target, the baseline had 1,173 vertices and ran in 12.3 and 12.7 seconds. The budgeted build had 1,077 vertices (F1: 715 to 619; F2: 458 unchanged) and ran in 10.5 and 10.7 seconds. Both evacuated 119 of 120, with t90 117.57 seconds; F1 could not reach the requested budget. Times are illustrative and machine-dependent.

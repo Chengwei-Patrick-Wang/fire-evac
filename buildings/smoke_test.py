@@ -259,6 +259,7 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_budget()
     check_summary()
     check_tidy()
     check_traced()
@@ -284,6 +285,24 @@ def main() -> int:
 
 
 
+
+
+def check_budget():
+    from buildings.normalize import door_openings
+    from buildings.summary import vertex_count
+    from buildings.validate import validate
+    base = plan_to_building(hard_plan())
+    budget = plan_to_building(hard_plan(), max_vertices=1)
+    assert validate(base) == validate(budget)
+    for a, b in zip(base["floors"], budget["floors"]):
+        before, after = door_openings(a), door_openings(b)
+        assert all(abs(value - after[key]) <= 0.02 for key, value in before.items())
+    plan = {"id": "notch", "source": "ifc", "floors": [{"id": "F1", "rooms": [
+        {"id": "R", "polygon": [[0,0],[6,0],[6,4],[3.3,4],[3.3,3.7],[3,3.7],[3,4],[0,4]]}],
+        "doors": [{"id": "D", "a": [1,0], "b": [2,0], "width": 1}]}]}
+    original = plan_to_building(plan)["floors"][0]
+    reduced = plan_to_building(plan, max_vertices=1)["floors"][0]
+    assert vertex_count(original) - vertex_count(reduced) == 4
 
 
 def check_summary():

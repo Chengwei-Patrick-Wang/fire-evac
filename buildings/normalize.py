@@ -132,7 +132,24 @@ def _side_rooms(rooms, mid, normal, sign):
                                       for rid, poly in rooms if poly.intersects(ray))]
 
 
-def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_remove: set) -> dict:
+def door_openings(floor: dict) -> dict:
+    """Measure walkable length along each door's centre line."""
+    walk = unary_union([Polygon(p["outer"], p.get("holes", [])) for p in floor["walkable"]])
+    result = {}
+    for door in floor["doors"]:
+        _, _, u, _, _, _ = _door_frame(door)
+        rect = Polygon(door["rect"])
+        center = rect.centroid
+        projections = [x*u[0] + y*u[1] for x, y in rect.exterior.coords]
+        half = (max(projections) - min(projections))/2 + 0.5
+        line = LineString([(center.x - half*u[0], center.y - half*u[1]),
+                           (center.x + half*u[0], center.y + half*u[1])])
+        result[door["id"]] = walk.intersection(line).length
+    return result
+
+
+def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_remove: set,
+                     max_vertices: int | None = None) -> dict:
     fid = floor["id"]
     rooms_out, stairs_out, doors_out, exits_out = [], [], [], []
     room_polys: list[tuple[str, Polygon]] = []
@@ -297,7 +314,7 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
             names[base] = names.get(base, 0) + 1
             exit["name"] = base + (f" {names[base]}" if names[base] > 1 else "")
 
-    return {
+    result = {
         "id": fid,
         "level": floor.get("level", 0),
         "elevation": floor.get("elevation", 0.0),
@@ -308,9 +325,62 @@ def _normalize_floor(floor: dict, wall: float, source: str, exit_add: set, exit_
         "stairs": stairs_out,
         "exits": exits_out,
     }
+    if max_vertices is not None:
+        from buildings.summary import vertex_count
+        initial = vertex_count(result)
+        if initial > max_vertices:
+            base_walk = unary_union(walk_polys)
+            base_openings = door_openings(result)
+            base_shape = (len(walk_polys), sum(len(p.interiors) for p in walk_polys))
+            guards = [Polygon(d["rect"]) if d.get("rect") else
+                      LineString([d["a"], d["b"]]).buffer(0.5) for d in floor.get("doors", [])]
+            door_guard = unary_union(guards).buffer(0.2) if guards else Polygon()
+            originals = list(shrunk.values())
+            other_pieces = pieces[len(originals):]
+            best_count = initial
+            accepted_closing = 0.0
+            accepted_simplify = 0.02
+            closed_pieces = originals
+            for closing, tolerance in ((0.1, 0.02), (0.25, 0.02), (0.25, 0.03), (0.25, 0.05)):
+                if tolerance == 0.02:
+                    closed_pieces = []
+                    for i, room in enumerate(originals):
+                        closed = room.buffer(closing, join_style="mitre").buffer(-closing, join_style="mitre")
+                        added = closed.difference(room)
+                        others = originals[:i] + originals[i+1:]
+                        if (added.area <= 0.03 * room.area and
+                            (added.is_empty or (not added.intersects(door_guard) and
+                             all(added.distance(other) >= 0.05 for other in others)))):
+                            closed_pieces.append(closed)
+                        else:
+                            closed_pieces.append(room)
+                geom = unary_union(closed_pieces + other_pieces).buffer(0.02).buffer(-0.02).simplify(tolerance, preserve_topology=True)
+                candidates = [Polygon(p.exterior, [h for h in p.interiors if Polygon(h).area >= 0.3])
+                              for p in polygons_of(geom) if p.area >= 1.0]
+                candidate = dict(result, walkable=[rings_of(p) for p in candidates])
+                walk = unary_union([Polygon(p["outer"], p["holes"]) for p in candidate["walkable"]])
+                shape = (len(candidates), sum(len(p.interiors) for p in candidates))
+                openings = door_openings(candidate)
+                safe = (shape == base_shape and base_walk.area > 0 and
+                        abs(walk.area - base_walk.area) / base_walk.area < 0.01 and
+                        all(abs(openings[k] - v) <= 0.02 for k, v in base_openings.items()) and
+                        all(Polygon(z["polygon"]).difference(walk.buffer(0.01)).area < 1e-8
+                            for z in result["exits"] + result["stairs"]))
+                count = vertex_count(candidate)
+                if safe and count < best_count:
+                    result = candidate
+                    best_count = count
+                    accepted_closing, accepted_simplify = closing, tolerance
+                if best_count <= max_vertices:
+                    break
+            print(f"vertices {fid}: {initial} -> {best_count} (budget {max_vertices}, closing {accepted_closing:.2f} m, simplify {accepted_simplify:.2f} m)", file=sys.stderr)
+            if best_count > max_vertices:
+                _warn(f"{fid}: budget not met (door jambs and room corners)")
+    return result
 
 
-def plan_to_building(plan: dict, wall: float | None = None, overrides: dict | None = None) -> dict:
+def plan_to_building(plan: dict, wall: float | None = None, overrides: dict | None = None,
+                     max_vertices: int | None = None) -> dict:
     """plan/v0 dict -> building/v0 dict."""
     from buildings.fixups import apply_overrides
     overrides = overrides or {}
@@ -331,7 +401,7 @@ def plan_to_building(plan: dict, wall: float | None = None, overrides: dict | No
         "name": plan.get("name", plan["id"]),
         "source": plan.get("source", "synthetic"),
         "credits": plan.get("credits", ""),
-        "floors": [_normalize_floor(f, wall, plan.get("source", "synthetic"), exit_add, exit_remove) for f in plan["floors"]],
+        "floors": [_normalize_floor(f, wall, plan.get("source", "synthetic"), exit_add, exit_remove, max_vertices) for f in plan["floors"]],
     }
 
 
@@ -341,13 +411,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("output")
     parser.add_argument("--wall", type=float)
     parser.add_argument("--overrides")
+    parser.add_argument("--max-vertices", type=int)
     args = parser.parse_args(argv)
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     from buildings.fixups import load_overrides
     from buildings.validate import validate, print_report
     override_path = Path(args.overrides) if args.overrides else Path("buildings/overrides") / (plan["id"] + ".json")
     overrides = load_overrides(override_path) if args.overrides or override_path.exists() else None
-    building = plan_to_building(plan, wall=args.wall, overrides=overrides)
+    building = plan_to_building(plan, wall=args.wall, overrides=overrides, max_vertices=args.max_vertices)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(building, indent=1), encoding="utf-8")
