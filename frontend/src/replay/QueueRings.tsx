@@ -4,7 +4,8 @@ import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
 import { useClock } from '../store/clock'
-import { floorY, toWorld } from '../scene/geometry'
+import { floorAlpha, floorPlace, toPlaced } from '../scene/geometry'
+import type { Place } from '../scene/geometry'
 import { nearestIndex } from './runIndex'
 import { queueCounts, queueTargets } from './queues'
 import type { QueueTarget } from './queues'
@@ -29,7 +30,7 @@ function Rings({ targets, counts, building }: { targets: QueueTarget[]; counts: 
   const mesh = useRef<THREE.InstancedMesh>(null)
   const groups = useRef<(THREE.Group | null)[]>([])
   const divs = useRef<(HTMLDivElement | null)[]>([])
-  const last = useRef({ rev: -1, explode: NaN, visible: undefined as string[] | null | undefined })
+  const last = useRef({ rev: -1, explode: NaN, visible: undefined as string[] | null | undefined, mode: '', focus: undefined as string | null | undefined })
   const tmp = useMemo(
     () => ({ m: new THREE.Matrix4(), q: new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)), p: new THREE.Vector3(), s: new THREE.Vector3(), c: new THREE.Color() }),
     [],
@@ -43,23 +44,33 @@ function Rings({ targets, counts, building }: { targets: QueueTarget[]; counts: 
   useFrame(() => {
     const m = mesh.current
     if (!m) return
-    const { explode, visibleFloors } = useApp.getState()
+    const { explode, visibleFloors, viewMode, focusFloor } = useApp.getState()
     const l = last.current
-    if (l.rev === counts.rev && l.explode === explode && l.visible === visibleFloors) return
+    if (l.rev === counts.rev && l.explode === explode && l.visible === visibleFloors && l.mode === viewMode && l.focus === focusFloor) return
     l.rev = counts.rev
     l.explode = explode
     l.visible = visibleFloors
+    l.mode = viewMode
+    l.focus = focusFloor
     const { m: mat, q, p, s, c } = tmp
     const big: { i: number; n: number }[] = []
+    const places = new Map<string, Place>()
+    const placeOf = (f: Building['floors'][number]) => {
+      let pl = places.get(f.id)
+      if (!pl) places.set(f.id, (pl = floorPlace(building, f, viewMode, explode)))
+      return pl
+    }
+    // Rings and counts are left off the faint floors of the ghost view.
+    const hidden = (f: Building['floors'][number] | undefined) => !f || (!!visibleFloors && !visibleFloors.includes(f.id)) || floorAlpha(viewMode, focusFloor, f.id) < 1
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i]
       const f = floorOf.get(t.floorId)
       const n = counts.v[i] ?? 0
-      if (!f || (visibleFloors && !visibleFloors.includes(f.id)) || n < 2) {
+      if (!f || hidden(f) || n < 2) {
         p.set(0, 0, 0)
         s.set(0, 0, 0)
       } else {
-        const w = toWorld(t.cx, t.cy, floorY(f, explode) + 0.1)
+        const w = toPlaced(placeOf(f), t.cx, t.cy, 0.1)
         p.set(w[0], w[1], w[2])
         const r = Math.min(3, 0.5 + 0.12 * n)
         s.set(r, r, 1)
@@ -85,7 +96,7 @@ function Rings({ targets, counts, building }: { targets: QueueTarget[]; counts: 
       }
       const t = targets[b.i]
       const f = floorOf.get(t.floorId)!
-      const w = toWorld(t.cx, t.cy, floorY(f, explode) + 0.1)
+      const w = toPlaced(placeOf(f), t.cx, t.cy, 0.1)
       g.position.set(w[0], w[1], w[2])
       g.visible = true
       d.style.display = ''

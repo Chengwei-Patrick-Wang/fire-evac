@@ -4,7 +4,8 @@ import { useApp } from '../store/app'
 import type * as THREE from 'three'
 import { useA11y } from '../ui/a11y'
 import { cameraPose } from '../model/link'
-import { buildingBounds, fitDistance, floorY, toWorld } from './geometry'
+import { buildingBounds, fitDistance, floorPlace, toPlaced, toWorld } from './geometry'
+import type { ViewMode } from './geometry'
 
 interface Orbit {
   target: { set: (x: number, y: number, z: number) => void }
@@ -20,9 +21,9 @@ export default function CameraRig() {
   const get = useThree((s) => s.get)
   const goal = useRef<{ p: [number, number, number]; t: [number, number, number] } | null>(null)
 
-  /** Overview pose and the distance that fits the box; also widens the far plane for big buildings. */
-  const fit = (floorIds: string[] | null, explode: number) => {
-    const b = buildingBounds(building!, floorIds, explode)
+  /** Overview pose and the distance that fits the box (the floors where the current view mode puts them); also widens the far plane for big buildings. */
+  const fit = (floorIds: string[] | null, explode: number, mode: ViewMode) => {
+    const b = buildingBounds(building!, floorIds, explode, mode)
     const cam = camera as unknown as THREE.PerspectiveCamera
     const { width, height } = get().size
     const d = fitDistance(b, cam.fov, width / Math.max(1, height))
@@ -48,8 +49,9 @@ export default function CameraRig() {
 
   useEffect(() => {
     if (!building) return
-    const f = fit(null, 0)
-    const pc = useApp.getState().pendingCam
+    const s0 = useApp.getState()
+    const f = fit(null, s0.explode, s0.viewMode)
+    const pc = s0.pendingCam
     if (pc) {
       applyCam(pc)
       if (controls) useApp.setState({ pendingCam: null })
@@ -76,7 +78,8 @@ export default function CameraRig() {
 
   useEffect(() => {
     if (!building || !topNonce) return
-    const f = fit(null, 0)
+    const s0 = useApp.getState()
+    const f = fit(null, s0.explode, s0.viewMode)
     const cx = f.cx, cz = f.cz
     camera.position.set(cx, f.cy + f.d, cz + 0.001)
     if (controls) {
@@ -92,7 +95,7 @@ export default function CameraRig() {
   useEffect(() => {
     if (!building || !fitView) return
     const s = useApp.getState()
-    const f = fit(s.visibleFloors?.length === 1 ? s.visibleFloors : null, s.explode)
+    const f = fit(s.visibleFloors?.length === 1 ? s.visibleFloors : null, s.explode, s.viewMode)
     goal.current = { p: eye(f), t: [f.cx, f.cy, f.cz] }
     until.current = performance.now() + 2000
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -103,8 +106,8 @@ export default function CameraRig() {
   useEffect(() => {
     if (!building || !focus) return
     const fl = building.floors.find((f) => f.id === focus.floorId)
-    const y = fl ? floorY(fl, useApp.getState().explode) : 0
-    const [x, , z] = toWorld(focus.pos[0], focus.pos[1])
+    const st = useApp.getState()
+    const [x, y, z] = toPlaced(fl ? floorPlace(building, fl, st.viewMode, st.explode) : { dx: 0, y: 0 }, focus.pos[0], focus.pos[1])
     goal.current = { p: [x, y + 9, z + 9], t: [x, y, z] }
     until.current = 0
   }, [focus, building])

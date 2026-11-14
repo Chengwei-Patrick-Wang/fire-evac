@@ -101,7 +101,7 @@ export default function WeakSpots() {
             </>
           )}
           <MeasuredFixes fixes={readFixes(batch)} skipped={readSkipped(batch)} top={batch.top} />
-          {visible && <button onClick={() => set({ visibleFloors: null, focus: null })}>Show all floors</button>}
+          {visible && <button onClick={() => useApp.getState().setViewMode('stacked')}>Show all floors</button>}
         </>
       )}
     </div>

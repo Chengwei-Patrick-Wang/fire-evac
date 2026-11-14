@@ -294,6 +294,101 @@ try {
     await shot('replay-60s')
     await blankCheck('replay-60s')
   })
+  await step('views', async () => {
+    // The four floor views at 60 s, paused. Hiding or fading a floor is a picture change: the numbers the page reads from the run must not move.
+    const bad = (m) => problems.push(`views: ${m}`)
+    const read = () =>
+      page.evaluate(() => {
+        const a = window.__app.getState()
+        return {
+          visible: a.visibleFloors,
+          focus: a.focusFloor,
+          pressed: [...document.querySelectorAll('nav.floorstrip button')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent.trim()),
+          kpis: document.querySelector('dl.kpis')?.textContent ?? '',
+          summary: document.getElementById('replay-summary')?.textContent ?? '',
+        }
+      })
+    let ref = null
+    for (const [mode, floor] of [['stacked'], ['single', 'F2'], ['side'], ['ghost', 'F2']]) {
+      await page.evaluate(([m, f]) => window.__app.getState().setViewMode(m, f), [mode, floor])
+      await page.waitForTimeout(1500)
+      const r = await read()
+      const want = mode === 'single' ? '["F2"]' : 'null'
+      if (JSON.stringify(r.visible) !== want) bad(`${mode}: visibleFloors is ${JSON.stringify(r.visible)}, want ${want}`)
+      if (mode === 'ghost' && r.focus !== 'F2') bad(`ghost: focusFloor is ${r.focus}, want F2`)
+      const pressed = mode === 'single' || mode === 'ghost' ? 'Floor 2' : 'Whole building'
+      if (r.pressed.join('|') !== pressed) bad(`${mode}: the pressed floor-strip item is "${r.pressed.join('|')}", want "${pressed}"`)
+      if (!r.kpis || !/^At \d+:\d\d, /.test(r.summary)) bad(`${mode}: dl.kpis or #replay-summary is empty ("${r.summary.slice(0, 40)}")`)
+      if (!ref) ref = r
+      else {
+        if (r.kpis !== ref.kpis) bad(`${mode}: dl.kpis changed with the view ("${r.kpis}" vs "${ref.kpis}")`)
+        if (r.summary !== ref.summary) bad(`${mode}: #replay-summary changed with the view ("${r.summary}" vs "${ref.summary}")`)
+      }
+      await shot(`view-${mode}`)
+      await blankCheck(`view-${mode}`)
+    }
+    // Through the UI: View > Side by side.
+    await page.evaluate(() => window.__app.getState().setViewMode('stacked'))
+    await nav(page, true)
+    await pickMenu(page, 'View', 'Side by side')
+    await page.waitForTimeout(300)
+    if ((await page.evaluate(() => window.__app.getState().viewMode)) !== 'side') bad('View > Side by side did not set viewMode to side')
+    await page.locator('#topnav .menus').getByRole('button', { name: 'View', exact: true }).click()
+    const radio = page.locator('[role=menu][aria-label=View] [role=menuitemradio]', { hasText: 'Side by side' })
+    if ((await radio.getAttribute('aria-checked')) !== 'true') bad('the View menu does not show Side by side as aria-checked=true')
+    await page.keyboard.press('Escape')
+    await nav(page, false)
+    await page.evaluate(() => window.__app.getState().setViewMode('stacked'))
+    await page.waitForTimeout(500)
+  })
+  await step('colors', async () => {
+    const bad = (m) => problems.push(`colors: ${m}`)
+    const sw = page.locator('section.legendcard button[role=switch]')
+    const people = () => page.locator('section.legendcard .lc-body ul').first().locator('li').allInnerTexts().then((t) => t.map((x) => x.trim()))
+    await sw.click()
+    if ((await page.evaluate(() => window.__app.getState().colorBy)) !== 'type') bad('the legend switch did not set colorBy to type')
+    if ((await sw.getAttribute('aria-checked')) !== 'true') bad('the switch is not aria-checked=true in type mode')
+    const want = 'typical|older|visitor|cane|walker|wheelchair|Trapped (red ring)'
+    const got = (await people()).join('|')
+    if (got !== want) bad(`the type legend reads "${got}", want "${want}"`)
+    await page.waitForTimeout(1000)
+    await shot('colors-type')
+    await blankCheck('colors-type')
+    await sw.click()
+    if ((await page.evaluate(() => window.__app.getState().colorBy)) !== 'status') bad('the legend switch did not return to status')
+    if (!(await people()).includes('Delayed or waiting')) bad('the status legend lacks "Delayed or waiting"')
+  })
+  await step('visibility', async () => {
+    const bad = (m) => problems.push(`visibility: ${m}`)
+    const read = () => page.evaluate(() => ({ g: window.__app.getState().fireGlow, o: window.__app.getState().smokeOpacity }))
+    await page.locator('.rail').getByRole('button', { name: 'Fire and smoke visibility', exact: true }).click()
+    await page.locator('#card-visibility').waitFor({ timeout: 5000 })
+    const card = page.locator('#card-visibility')
+    const high = card.getByRole('button', { name: 'High visibility', exact: true })
+    await high.click()
+    const v = await read()
+    if (v.g !== 2 || v.o !== 1.5) bad(`High visibility left fireGlow ${v.g} and smokeOpacity ${v.o}, want 2 and 1.5`)
+    if ((await high.getAttribute('aria-pressed')) !== 'true') bad('High visibility is not aria-pressed=true while its values hold')
+    // Close to the fire at 120 s, where a bigger glow and denser smoke show (the fly-to also isolates the fire's floor).
+    await page.evaluate(() => {
+      window.__clock.getState().seek(120)
+      const a = window.__app.getState()
+      const f = a.runs[a.activeRunKey].run.fire
+      a.flyTo(f.floor, [f.x, f.y])
+    })
+    await page.waitForTimeout(3500)
+    await shot('visibility-high')
+    await card.getByRole('button', { name: 'Reset', exact: true }).click()
+    const r = await read()
+    if (r.g !== 1 || r.o !== 1) bad(`Reset left fireGlow ${r.g} and smokeOpacity ${r.o}, want 1 and 1`)
+    if ((await high.getAttribute('aria-pressed')) !== 'false') bad('High visibility is still pressed after Reset')
+    await page.evaluate(() => {
+      window.__app.setState({ card: null })
+      window.__app.getState().setViewMode('stacked')
+      window.__clock.getState().seek(60)
+    })
+    await page.waitForTimeout(500)
+  })
   await tabShots('')
   await step('cred', async () => {
     await page.locator('.results [role=tab]').nth(3).click()
@@ -429,6 +524,31 @@ try {
     } finally {
       await p2.close()
     }
+    // The floor view travels in the link: v=side, v=ghost with the focus floor f, and f alone for one floor.
+    const bid = await page.evaluate(() => window.__app.getState().building.id)
+    const base = page.url().split('#')[0].split('?')[0] + '?qa#b=' + bid
+    for (const [tail, mode, focus] of [['&v=side', 'side', null], ['&v=ghost&f=F2', 'ghost', 'F2'], ['&f=F2', 'single', 'F2']]) {
+      const pv = await ctx.newPage()
+      pv.on('console', (m) => {
+        if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[deeplink-view] ${m.text()}`)
+      })
+      pv.on('pageerror', (e) => errors.push(`[deeplink-view] ${String(e)}`))
+      try {
+        await pv.goto(base + tail)
+        await pv.waitForFunction((m) => window.__app?.getState().viewMode === m, mode, { timeout: 45000, polling: 250 })
+        const got = await pv.evaluate(() => ({ mode: window.__app.getState().viewMode, focus: window.__app.getState().focusFloor }))
+        if (got.focus !== focus) problems.push(`deeplink: ${tail} restored focusFloor ${got.focus}, want ${focus}`)
+        await pv.waitForTimeout(1500)
+        if (mode !== 'single') {
+          await pv.screenshot({ path: join(out, `deeplink-${mode}.png`) })
+          shots.push(`deeplink-${mode}`)
+        }
+      } catch (e) {
+        problems.push(`deeplink: opening ${tail} did not restore the ${mode} view: ${String(e).split('\n')[0]}`)
+      } finally {
+        await pv.close()
+      }
+    }
     lines.push('deeplink ok')
   })
   await step('share', async () => {
@@ -492,11 +612,15 @@ try {
       await page.keyboard.press('Escape')
     }
     await nav(page, false)
-    for (const card of ['scenario', 'layers']) {
+    for (const card of ['scenario', 'layers', 'visibility']) {
       await page.evaluate((c) => window.__app.setState({ card: c }), card)
       await page.waitForTimeout(400)
       await runAxe(`card ${card}`, '.app')
     }
+    await page.evaluate(() => window.__app.setState({ card: null, colorBy: 'type' }))
+    await page.waitForTimeout(400)
+    await runAxe('colors by type', '.app')
+    await page.evaluate(() => window.__app.setState({ colorBy: 'status' }))
     await page.evaluate(() => window.__app.setState({ card: null, navOpen: false, sidebarOpen: false }))
     await page.waitForTimeout(300)
     await runAxe('focus mode', '.app')

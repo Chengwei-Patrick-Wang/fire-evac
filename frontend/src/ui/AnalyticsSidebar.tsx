@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef } from 'react'
 import { ChevronsLeft, ChevronsRight, Flame } from 'lucide-react'
 import { useApp } from '../store/app'
 import ErrorBoundary from './ErrorBoundary'
+import { BRAND } from './theme'
 
 const ResultsPanel = lazy(() => import('./ResultsPanel'))
 
@@ -37,7 +38,7 @@ export default function AnalyticsSidebar() {
               <div className="sb-title">
                 <h1 className="brand">
                   <Flame size={22} strokeWidth={1.75} aria-hidden="true" className="brand-flame" />
-                  Ember
+                  {BRAND}
                 </h1>
                 <p className="brand-sub" title={name}>{name}</p>
               </div>

@@ -145,7 +145,7 @@ a { color: var(--primary-text); }
 .rightcol { position: absolute; top: 16px; right: 16px; bottom: 12px; z-index: 3; display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2); pointer-events: none; }
 .rightcol > *, .rail > * { pointer-events: auto; }
 .nav-open .rightcol { top: calc(var(--nav-h) + 12px); }
-.rail { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; pointer-events: none; }
+.rail { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--s2); pointer-events: none; }
 .railbtn {
   width: 40px; height: 40px; padding: 0; display: flex; align-items: center; justify-content: center;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-ctl); box-shadow: var(--shadow);
@@ -162,7 +162,12 @@ a { color: var(--primary-text); }
 .lc-body li { display: flex; align-items: center; gap: var(--s2); }
 .sw { display: inline-block; width: 10px; height: 10px; flex: none; }
 .sw.dot { border-radius: 50%; }
-.sw.ring { width: 12px; height: 12px; border: 2px solid #FB923C; border-radius: 50%; background: transparent; }
+.sw.dot.small { width: 7px; height: 7px; margin: 0 1.5px; }
+/* Trapped people wear a red ring in the viewer: a bullseye here, and a hollow ring where the legend only names the ring. */
+.sw.dot.ringed { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #DC2626; box-shadow: inset 0 0 0 1.5px var(--surface); }
+.sw.ring { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #FB923C; border-radius: 50%; background: transparent; }
+.sw.ring.red { border-color: #DC2626; }
+.lc-note { margin: 6px 0 0; font-size: var(--fs-xs); color: var(--text-2); }
 .lc-switch { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 0; font-size: var(--fs-sm); }
 .lc-track { position: relative; width: 28px; height: 16px; flex: none; border-radius: 8px; background: var(--border-strong); }
 .lc-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s; }
@@ -177,13 +182,22 @@ a { color: var(--primary-text); }
 .card-body { padding: 0 14px 12px; overflow: auto; min-height: 0; }
 .scenariocard { top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); }
 .nav-open .scenariocard { top: calc(var(--nav-h) + 12px); max-height: calc(100% - var(--nav-h) - 24px); }
-.layerscard { top: 0; right: 48px; width: 280px; max-height: 100%; }
+.layerscard, .visibilitycard { top: 0; right: 48px; width: 280px; max-height: 100%; }
 .layers { display: flex; flex-direction: column; gap: 6px; }
 .layers label { display: flex; align-items: center; gap: var(--s2); }
 .layers label.slider { justify-content: space-between; }
 .layers label.slider input { flex: 1; max-width: 150px; }
 .layers label.off { opacity: 0.45; }
 .lensrow { display: flex; flex-wrap: wrap; gap: 4px; }
+.visibility { display: flex; flex-direction: column; gap: 8px; }
+.visibility label.check { display: flex; align-items: center; gap: var(--s2); }
+.visibility label.off { opacity: 0.45; }
+.vis-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; }
+.vis-row label { grid-column: 1; grid-row: 1; }
+.vis-row output { grid-column: 2; grid-row: 1; font-variant-numeric: tabular-nums; }
+.vis-row input[type=range] { grid-column: 1 / -1; grid-row: 2; width: 100%; margin: 0; }
+.vis-btns { display: flex; gap: var(--s2); }
+.visibility .note { margin: 0; font-size: var(--fs-xs); }
 .pane-caption, .agentreadout, .newbuilding, .tourcap {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow);
 }
@@ -209,10 +223,18 @@ a { color: var(--primary-text); }
 
 /* In-scene labels (drei <Html>) */
 .l3d { font-size: 11px; color: var(--text); white-space: nowrap; text-shadow: 0 0 3px var(--canvas); }
+.l3d.room { text-align: center; line-height: 1.2; }
+.l3d small { display: block; font-size: 10px; color: var(--text-2); }
 .l3d.stair { color: var(--fire-text); }
 .l3d.exit { color: var(--safe-text); }
 .l3d.timer { color: var(--caution-text); font: 11px ui-monospace, monospace; }
 .l3d.count { color: #fff; background: #111827; border-radius: 8px; padding: 0 5px; text-shadow: none; }
+/* "Floor N" beside each floor's front-left corner; the focus floor of the single and ghost views is blue. */
+.floortag {
+  transform: translate(calc(-100% - 10px), -50%); padding: 2px 10px; border-radius: 999px; white-space: nowrap; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); font-size: var(--fs-sm); font-weight: 600; box-shadow: var(--shadow);
+}
+.floortag.on { background: var(--primary); border-color: var(--primary); color: #fff; }
 .tip3d { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 8px; font: 12px/1.4 var(--font); }
 .tip3d .why { color: #A21CAF; }
 
@@ -386,7 +408,10 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
   .legendcard { position: absolute; top: 8px; right: 8px; z-index: 3; width: min(232px, calc(100% - 16px)); }
   .nav-open .legendcard { top: calc(var(--nav-h) + 8px); }
   .railbtn { position: absolute; right: 8px; bottom: 8px; z-index: 3; }
-  .card, .scenariocard, .layerscard, .app:not(.sb-closed) .scenariocard {
+  .railbtn + .railbtn { bottom: 56px; }
+  /* The building fills the screen's width, so a floor's pill sits just inside its corner rather than outside it, where the screen edge would cut it. */
+  .floortag { transform: translate(-4px, 6px); padding: 1px 8px; font-size: var(--fs-xs); }
+  .card, .scenariocard, .layerscard, .visibilitycard, .app:not(.sb-closed) .scenariocard {
     top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 60dvh; z-index: 30;
   }
   .nav-open .scenariocard { top: auto; max-height: min(60dvh, calc(100% - var(--nav-h) - 16px)); }
@@ -415,6 +440,10 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
   background: #000; border: 2px solid #fff; color: #fff;
 }
 :root[data-contrast="high"] .floorstrip button, :root[data-contrast="high"] .alert { background: #000; border: 2px solid #fff; color: #fff; }
+:root[data-contrast="high"] .sw.dot { box-shadow: 0 0 0 1px #fff; }
+:root[data-contrast="high"] .sw.dot.ringed { box-shadow: inset 0 0 0 1.5px #000; }
+:root[data-contrast="high"] .floortag { background: #000; border: 2px solid #fff; color: #fff; box-shadow: none; }
+:root[data-contrast="high"] .floortag.on { background: #0040c0; border-color: #ffd400; }
 :root[data-contrast="high"] .fs-item.on { border-color: #ffd400; color: #ffd400; }
 :root[data-contrast="high"] .about-card, :root[data-contrast="high"] .sharecard { background: #000; border: 2px solid #fff; }
 :root[data-contrast="high"] .menuitem:hover:not(:disabled), :root[data-contrast="high"] .menuitem:focus-visible { background: #000; outline: 3px solid #ffd400; outline-offset: -3px; }

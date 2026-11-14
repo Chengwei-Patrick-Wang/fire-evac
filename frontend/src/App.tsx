@@ -1,8 +1,8 @@
 import { creditParts, loadBuildingIndex } from './model/buildingIndex'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { Layers3 } from 'lucide-react'
+import { Eye, Layers3 } from 'lucide-react'
 import './App.css'
-import { useApp } from './store/app'
+import { DEFAULT_EXPLODE, useApp } from './store/app'
 import { useClock } from './store/clock'
 import type { LoadedRun } from './store/app'
 import TopNav from './ui/TopNav'
@@ -13,6 +13,7 @@ import Timeline from './ui/Timeline'
 import LegendCard from './ui/LegendCard'
 import FloatingCard from './ui/FloatingCard'
 import LayersCard from './ui/LayersCard'
+import VisibilityCard from './ui/VisibilityCard'
 import Scene from './scene/Scene'
 import SplitView from './scene/SplitView'
 import AgentReadout from './ui/AgentReadout'
@@ -131,10 +132,19 @@ export async function restoreLink(link: LinkState) {
       for (const k of Object.keys(l) as (keyof typeof l)[]) l[k] = link.l.includes(k)
       patch.layers = l
     }
-    if (link.x !== undefined) patch.explode = link.x
-    if (link.f && cur.building?.floors.some((f) => f.id === link.f)) patch.visibleFloors = [link.f]
+    // A link writes the floor gap only when it isn't the default, so a link without one means the default.
+    patch.explode = link.x ?? DEFAULT_EXPLODE
     if (link.split !== undefined) patch.split = link.split
     useApp.setState(patch)
+    // The floor view: v=side is side by side, v=ghost is ghost on f, f alone is one floor, and none is stacked. A link that carries a camera
+    // pose keeps it (the view change doesn't re-frame the camera); one without lets the camera frame the view.
+    const floor = link.f && cur.building?.floors.some((f) => f.id === link.f) ? link.f : undefined
+    const fit = !link.cam
+    const setView = useApp.getState().setViewMode
+    if (link.v === 'side') setView('side', undefined, fit)
+    else if (link.v === 'ghost') setView('ghost', floor, fit)
+    else if (floor) setView('single', floor, fit)
+    else setView('stacked', undefined, fit)
     if (link.t !== undefined) {
       useClock.getState().seek(link.t)
       useClock.setState({ playing: false })
@@ -425,6 +435,21 @@ export default function App() {
             {card === 'layers' && (
               <FloatingCard id="layers" title="Layers" className="layerscard">
                 <LayersCard />
+              </FloatingCard>
+            )}
+            <button
+              type="button"
+              className="railbtn"
+              aria-label="Fire and smoke visibility"
+              title="Fire and smoke visibility"
+              aria-expanded={card === 'visibility'}
+              onClick={() => useApp.getState().setCard(card === 'visibility' ? null : 'visibility')}
+            >
+              <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            {card === 'visibility' && (
+              <FloatingCard id="visibility" title="Fire and smoke visibility" className="visibilitycard">
+                <VisibilityCard />
               </FloatingCard>
             )}
           </div>

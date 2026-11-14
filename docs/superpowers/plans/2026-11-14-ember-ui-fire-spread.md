@@ -665,7 +665,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
       - `DEFAULT_EXPLODE = 0.6`.
     - `geometry.ts`: `ViewMode`, `GHOST = 0.15`, `floorPlace`, `toPlaced`, `fromPlaced`, `classifyWalls`. Also `usePlace()`.
     - `TYPE_COLORS`, the new `STATUS_COLORS`, `VisibilityCard`, and the link parameter `v`.
-- [ ] **Step 1: View modes in the store.**
+- [x] **Step 1: View modes in the store.**
   - `setViewMode(mode, floor?)` always clears `focus`, bumps `fitView` and writes `visibleFloors`:
 
     | Mode | `focusFloor` | `visibleFloors` |
@@ -679,7 +679,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - `explode` starts at `DEFAULT_EXPLODE` (0.6), because opaque slabs at 0 hide the lower floors. `resetStage` uses it, and scene 2 lifts to 1.0.
   - `layers.rooms` defaults to false, in the store and in `DEFAULT_LAYERS` (`scenes.ts`).
   - Rename `agentColor` to `colorBy`, and its value 'profile' to 'type', in Agents, LegendCard and TopNav. No link or tour reads it.
-- [ ] **Step 2: Placement.**
+- [x] **Step 2: Placement.**
   - **`geometry.ts`:**
     - `floorPlace(b, f, mode, explode)` returns `{dx, y}`:
       - stacked, single and ghost: `{dx: 0, y: floorY(f, explode)}`;
@@ -699,7 +699,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - Labels, waiting timers, queue rings, trails and risk fills on ghost floors are hidden.
     - FirePicker listens on the focus floor only.
   - **Side:** all floors lie flat at y 0 in a row along +x, ordered by level. `setViewMode('side')` bumps `fitView`, so the camera frames the row.
-- [ ] **Step 3: Building look (reference render).**
+- [x] **Step 3: Building look (reference render).**
   - **`classifyWalls(floor)`** returns `{interior, exterior}`, memoized per floor:
     - Take the segments of every walkable ring (`ringSegments`).
     - Probe 0.6 m to each side of a segment's midpoint, along its normal.
@@ -715,14 +715,14 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - **Floor tags:** one `<Html>` pill "Floor N" (`.floortag`, pointer-events none) at each drawn floor's front-left corner. The focus floor's pill (single or ghost) is `--primary` with white text.
   - The wall rise (`reveal`) scales the interior walls, glass and rails; the slab doesn't rise.
   - **Lights (`Scene`):** a `hemisphereLight` (#FFFFFF, #CBD5E1, 1.0) replaces the ambient light. The directional light stays at [20, 40, 20], intensity 0.9.
-- [ ] **Step 4: View controls.**
+- [x] **Step 4: View controls.**
   - View menu: the radio group "Floor view" with Stacked, Single floor, Side by side and Ghost (`setViewMode`). Side by side and Ghost are disabled for one-floor buildings.
   - FloorStrip:
     - "Whole building" switches to stacked. In side mode it is already active.
     - "Floor N" isolates the floor (single). In ghost mode it moves the ghost focus instead.
     - The active item is `focusFloor`'s in single and ghost, and Whole building otherwise.
   - Layers card: "Floor gap" is disabled in single and side.
-- [ ] **Step 5: Visibility card.** `card: 'visibility'`, titled "Fire and smoke visibility".
+- [x] **Step 5: Visibility card.** `card: 'visibility'`, titled "Fire and smoke visibility".
   - **Entry points:** the right rail (`Eye`, `aria-label="Fire and smoke visibility"`), the toolbar ("Visibility", `Eye`), and View > Fire and smoke visibility….
   - **Checkboxes:** Fire (`layers.fire`); Smoke (`layers.smoke`, disabled with "This run has no smoke frames", as in the Layers card).
   - **Ranges:** "Fire glow and size" (`fireGlow`, 0–2, step 0.1, readout "1.0×"); "Smoke opacity" (`smokeOpacity`, 0–1.5, step 0.1, readout "100%").
@@ -732,7 +732,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - **Note:** "Changes the picture only, never the simulation."
   - **Fire.tsx** (reads in `useFrame`): radius × (0.6 + 0.4 × fireGlow), light intensity × fireGlow, `emissiveIntensity` 0.5 + fireGlow.
   - **Smoke.tsx:** the alpha byte is `min(235, round(d × 1.8 × smokeOpacity))`. A change re-uploads the current frame.
-- [ ] **Step 6: Agent colors.**
+- [x] **Step 6: Agent colors.**
   - **`STATUS_COLORS`** (the default scheme):
     - moving and in a stairwell: #16A34A (stairwell agents stay at 0.6 scale);
     - not moving yet and waiting for help: #F59E0B;
@@ -752,14 +752,14 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - Type rows: the six profile names in their colours, plus "Trapped (red ring)".
     - Footnote: "People who are out leave the view."
     - `button[role=switch]` "Color by type", with `aria-checked` when `colorBy === 'type'`. Settings > Color people by type mirrors it.
-- [ ] **Step 7: Deep links and tour.**
+- [x] **Step 7: Deep links and tour.**
   - `link.ts`:
     - New parameter `v`: 'side' or 'ghost'.
     - `readLinkState` writes `v` for those two modes, and `f` = `focusFloor` in single and ghost.
     - `x` is written whenever explode differs from `DEFAULT_EXPLODE`.
   - `restoreLink`: `v=side` restores side, `v=ghost` restores ghost on `f`, and `f` alone restores single.
   - `resetStage`: `setViewMode('stacked')`, `explode: DEFAULT_EXPLODE`, `colorBy: 'status'`, `fireGlow: 1`, `smokeOpacity: 1`.
-- [ ] **Step 8: qa.**
+- [x] **Step 8: qa.**
   - **New step `views`,** after `replay-60s`, paused at 60 s:
     - For stacked, single F2, side and ghost F2 (through `setViewMode`): wait 1.5 s, take shot `view-<mode>.png`, and blank-check it.
     - Report a problem unless all of these hold:
@@ -778,7 +778,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - **`deeplink`:** pages opened at `#b=<id>&v=side` and at `#b=<id>&v=ghost&f=F2` restore the mode and the focus floor.
   - **`a11y`:** also run axe with the visibility card open, and with `colorBy: 'type'`.
   - `fixes` is unchanged: `flyTo` still leaves one floor in `visibleFloors`.
-- [ ] **Step 9: Verify.**
+- [x] **Step 9: Verify.**
   - `npm run build` passes with no type errors.
   - `npm run qa` (shim) exits 0 with 0 axe violations. Then check the screenshots:
     - `qa/view-stacked.png` looks like the reference: light slabs, white cutaway walls, glass outside, orange stair cores, floors apart.
@@ -788,7 +788,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - `qa/visibility-high.png` shows a bigger fire and denser smoke.
   - `python tools/check_all.py frontend privacy` ends with `ALL OK`.
   - Manual, with `npm run dev`: the clinic, the biggest building, stays smooth in stacked and side.
-- [ ] **Step 10: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "feat(frontend): walls-and-glass building, four floor views, fire and smoke visibility, agent colors by status or type"` (no attribution lines).
+- [x] **Step 10: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "feat(frontend): walls-and-glass building, four floor views, fire and smoke visibility, agent colors by status or type"` (no attribution lines).
 
 ### Task E38 (P0 · Sat 11 PM): Spreading fire on screen and the material setting
 - **Files:** Create `frontend/src/model/fireSpread.ts`, `frontend/src/replay/{BurningRooms,BlockedDoors}.tsx`; modify `frontend/src/scene/Scene.tsx`, `frontend/src/store/app.ts`, `frontend/src/model/whatif.ts`, `frontend/src/ui/{ScenarioPanel,WhatIfCard,LegendCard}.tsx`, `frontend/src/dashboard/Overview.tsx`, `frontend/src/App.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.

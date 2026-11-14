@@ -1,12 +1,13 @@
 import { useRef } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Camera, ChevronDown, ChevronUp, Columns2, Flame, GitCompare, ImageDown, Layers3, Maximize2, PersonStanding, Play, Share2, Upload } from 'lucide-react'
+import { Camera, ChevronDown, ChevronUp, Columns2, Eye, Flame, GitCompare, ImageDown, Layers3, Maximize2, PersonStanding, Play, Share2, Upload } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useApp } from '../store/app'
 import type { ResultsTab } from '../store/app'
 import { SPEEDS, useClock } from '../store/clock'
 import { useTour } from '../tour/tour'
 import { captureView } from '../scene/capture'
+import type { ViewMode } from '../scene/geometry'
 import { useA11y } from './a11y'
 import MenuBar from './Menu'
 import type { MenuDef } from './Menu'
@@ -134,12 +135,14 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
   const playing = useClock((c) => c.playing)
   const speed = useClock((c) => c.speed)
   const { contrast, reduceMotion, setContrast, setReduceMotion } = useA11y()
-  const { building, buildings, summaries, mode, split, runOrder, activeRunKey, pickAgent, layers, placing, draft, running, card, share, agentColor, resultsTab } = s
+  const { building, buildings, summaries, mode, split, runOrder, activeRunKey, pickAgent, layers, placing, draft, running, card, share, colorBy, viewMode, resultsTab } = s
   const hasRun = activeRunKey !== null
   const nRuns = runOrder.length
   const priv = !!building?.private
   const pngTitle = split ? 'Turn off Split to save the 3D view' : priv ? 'Private building: do not screenshot or publish' : 'Room labels and queue counts are page overlays and are not in the image'
   const set = useApp.setState
+  // Side by side and Ghost need a second floor to lay out or to fade.
+  const oneFloor = (building?.floors.length ?? 0) < 2
 
   const menus: MenuDef[] = [
     {
@@ -165,7 +168,20 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
       id: 'view',
       label: 'View',
       items: [
-        { kind: 'item', label: 'Layers…', onSelect: () => s.setCard('layers') },
+        {
+          kind: 'radios',
+          label: 'Floor view',
+          value: viewMode,
+          options: [
+            { label: 'Stacked', value: 'stacked' },
+            { label: 'Single floor', value: 'single' },
+            { label: 'Side by side', value: 'side', disabled: oneFloor, title: oneFloor ? 'This building has one floor' : undefined },
+            { label: 'Ghost', value: 'ghost', disabled: oneFloor, title: oneFloor ? 'This building has one floor' : undefined },
+          ],
+          onSelect: (v) => s.setViewMode(v as ViewMode),
+        },
+        { kind: 'item', label: 'Layers…', onSelect: () => s.setCard('layers'), sepAbove: true },
+        { kind: 'item', label: 'Fire and smoke visibility…', onSelect: () => s.setCard('visibility') },
         { kind: 'check', label: 'Room labels', checked: layers.labels, onSelect: () => set((st) => ({ layers: { ...st.layers, labels: !st.layers.labels } })) },
         { kind: 'check', label: 'Split screen', checked: split, disabled: nRuns < 2, onSelect: () => set((st) => ({ split: !st.split })) },
         { kind: 'item', label: "Agent's-eye view", onSelect: toggleAgentView, disabled: split || !hasRun },
@@ -218,7 +234,7 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
       items: [
         { kind: 'check', label: 'High contrast', checked: contrast, onSelect: () => setContrast(!contrast) },
         { kind: 'check', label: 'Reduce motion', checked: reduceMotion, onSelect: () => setReduceMotion(!reduceMotion) },
-        { kind: 'check', label: 'Color people by type', checked: agentColor === 'profile', onSelect: () => set({ agentColor: agentColor === 'profile' ? 'status' : 'profile' }) },
+        { kind: 'check', label: 'Color people by type', checked: colorBy === 'type', onSelect: () => set({ colorBy: colorBy === 'type' ? 'status' : 'type' }) },
       ],
     },
   ]
@@ -228,6 +244,7 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
     { id: 'fire', label: 'Set fire', icon: Flame, onClick: () => openScenario(true) },
     { id: 'run', label: 'Run simulation', icon: Play, onClick: runSimulation, disabled: !draft || !!running, primary: true },
     { id: 'layers', label: 'Layers', icon: Layers3, onClick: () => s.setCard(card === 'layers' ? null : 'layers'), expanded: card === 'layers' },
+    { id: 'visibility', label: 'Visibility', icon: Eye, onClick: () => s.setCard(card === 'visibility' ? null : 'visibility'), expanded: card === 'visibility', title: 'Fire and smoke visibility' },
     { id: 'top', label: 'Top view', icon: Camera, onClick: () => set((st) => ({ topView: st.topView + 1 })) },
     { id: 'reset', label: 'Reset camera', icon: Maximize2, onClick: () => set((st) => ({ fitView: st.fitView + 1 })) },
     { id: 'split', label: 'Split', icon: Columns2, onClick: () => set((st) => ({ split: !st.split })), disabled: nRuns < 2, pressed: split, title: nRuns < 2 ? 'Split needs two runs' : 'Compare two runs side by side' },

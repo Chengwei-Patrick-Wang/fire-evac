@@ -1,5 +1,8 @@
 import { useA11y } from './a11y'
 
+/** The project's name as the UI shows it (the header, the About card, the tracer bar). One place, in case the team renames it again. */
+export const BRAND = 'Fireproof'
+
 /** The light canvas (design.md §11); the 3D scene paints the same colour behind the building. */
 export const CANVAS = '#F8FAFC'
 

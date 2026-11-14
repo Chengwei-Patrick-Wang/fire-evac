@@ -1,4 +1,4 @@
-import { labelsFor, useApp } from '../store/app'
+import { DEFAULT_EXPLODE, labelsFor, useApp } from '../store/app'
 import { useClock } from '../store/clock'
 import { listDemoRuns, loadDemoRun } from '../data/loader'
 import { compareRuns, findPrecomputedVariant } from '../model/whatif'
@@ -18,19 +18,22 @@ export interface TourScene {
   enter: (ctx: TourCtx) => Promise<void>
 }
 
-const DEFAULT_LAYERS = { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false }
+const DEFAULT_LAYERS = { rooms: false, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false }
 
 /** Same starting picture for every scene, so a key pressed twice shows the same thing. */
 export function resetStage() {
   const b = useApp.getState().building
+  // Stacked view, no camera focus, nothing hidden (this also re-frames the camera on the whole building).
+  useApp.getState().setViewMode('stacked')
   useApp.setState({
     view: 'replay',
     split: false,
-    visibleFloors: null,
-    focus: null,
     selectedRoom: null,
     activeSpot: null,
-    explode: 0,
+    explode: DEFAULT_EXPLODE,
+    colorBy: 'status',
+    fireGlow: 1,
+    smokeOpacity: 1,
     autoRotate: false,
     trails: false,
     follow: null,
@@ -147,7 +150,7 @@ export const TOUR: TourScene[] = [
       useClock.getState().seek(0)
       useApp.setState((s) => ({ reveal: s.reveal + 1 }))
       fit()
-      after(2000, () => useApp.setState({ explode: 0.5, autoRotate: true }))
+      after(2000, () => useApp.setState({ explode: 1, autoRotate: true }))
     },
   },
   {

@@ -41,8 +41,8 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
       style={{ position: 'relative', overflow: 'hidden', width: '100%', height: '100%', isolation: 'isolate' }}>
       <Canvas dpr={[1, 1.5]} camera={{ fov: 50, near: 0.1, far: 1000 }}>
         <color attach="background" args={[sceneBg(contrast)]} />
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[20, 40, 20]} intensity={0.8} />
+        <hemisphereLight args={['#FFFFFF', '#CBD5E1', 1.8]} />
+        <directionalLight position={[20, 40, 20]} intensity={1.6} />
         <OrbitControls makeDefault enabled={!following} autoRotate={autoRotate && !reduceMotion} autoRotateSpeed={0.5} />
         <CameraRig />
         {!runKey && <AgentCam />}
