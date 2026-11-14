@@ -98,7 +98,7 @@ class StairNet:
             if not self._reachable.get(floor_id, False):
                 raise ValueError(f"floor {floor_id} has no stair route to an exit")
 
-    def enter(self, idx, t, floor_id, group, rng, speed=STAIR_SPEED):
+    def enter(self, idx, t, floor_id, group, rng, speed=STAIR_SPEED, hold_until=None):
         if speed <= 0:
             raise ValueError("stair speed must be positive")
         link = next(link for link in self.links(floor_id) if link["group"] == group)
@@ -106,10 +106,17 @@ class StairNet:
         if pos is None:
             raise ValueError(f"floor {floor_id} stair {group}: cannot sample arrival polygon")
         admissions = self._admissions.setdefault((floor_id, group), [])
-        enter = max(t, admissions[-1] + 1 / (STAIR_FLOW * link["width"])) if admissions else t
+        ready = t if hold_until is None else max(t, hold_until)
+        enter = max(ready, admissions[-1] + 1 / (STAIR_FLOW * link["width"])) if admissions else ready
         admissions.append(enter)
-        return {"enter": enter, "arrive": enter + link["length"] / speed,
-                "to": link["to"], "pos": pos}
+        entry = {"enter": enter, "arrive": enter + link["length"] / speed,
+                 "to": link["to"], "pos": pos}
+        if hold_until is not None:
+            wait_pos = find_spot(link["polygon"], [], rng)
+            if wait_pos is None:
+                raise ValueError(f"floor {floor_id} stair {group}: cannot sample wait polygon")
+            entry.update(hold_until=hold_until, wait_pos=wait_pos, floor=floor_id)
+        return entry
 
     def backlog(self, floor_id, group, t):
         admissions = self._admissions.get((floor_id, group), [])

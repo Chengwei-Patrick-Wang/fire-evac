@@ -31,7 +31,7 @@ import shapely
 from shapely.geometry import Polygon
 
 from fire.stub import NoFire
-from sim.brain import RuleBrain, route_length, ROUTING_MODE
+from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options
 from sim.profiles import PROFILES
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
@@ -85,13 +85,13 @@ def _largest_remainder(total: int, weights: list[float]) -> list[int]:
     return counts.tolist()
 
 
-def _sample_points(region, n: int, rng: np.random.Generator, taken: list, label: str) -> list[tuple]:
+def _sample_points(region, n: int, rng: np.random.Generator, taken: list, label: str, spacing=MIN_SPACING) -> list[tuple]:
     """Rejection-sample n points (rounded to 0.01) inside region, >= MIN_SPACING from taken and each other."""
     out: list[tuple] = []
     if n <= 0:
         return out
     minx, miny, maxx, maxy = region.bounds
-    min_d, tries, max_tries = MIN_SPACING, 0, 2000 + 400 * n
+    min_d, tries, max_tries = spacing, 0, 2000 + 400 * n
     while len(out) < n:
         cand = np.round(rng.uniform((minx, miny), (maxx, maxy), size=(64, 2)), 2)
         inside = shapely.contains_xy(region, cand[:, 0], cand[:, 1])
@@ -106,7 +106,7 @@ def _sample_points(region, n: int, rng: np.random.Generator, taken: list, label:
                 break
         tries += 64
         if len(out) < n and tries > max_tries:
-            if min_d > 0.42:
+            if spacing == MIN_SPACING and min_d > 0.42:
                 _warn(f"room {label}: crowded, spacing spawn points at 0.42 m instead of {MIN_SPACING} m")
                 min_d, tries = 0.42, 0
             else:
@@ -155,10 +155,11 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, wa
     if unknown:
         _warn(f"unknown profiles {sorted(unknown)}: using 'typical' parameters")
 
+    spacing = max(MIN_SPACING, 2 * max((a["radius"] for a in agents), default=0.2) + 0.01)
     taken = {f["id"]: [] for f in building["floors"]}
     i = 0
     for (fid, room, region), n in zip(rooms, counts):
-        for x, y in _sample_points(region, n, rng, taken[fid], f"{fid}/{room['id']}"):
+        for x, y in _sample_points(region, n, rng, taken[fid], f"{fid}/{room['id']}", spacing):
             agents[i]["x"], agents[i]["y"] = x, y
             i += 1
     return agents
@@ -241,8 +242,10 @@ def _frame(sims: list[_FloorSim], trapped: set, status: list[int], transit: dict
             rows.append([i, round(x, 2) + 0.0, round(y, 2) + 0.0, fs.index, status[i]])
     indices = {fs.id: fs.index for fs in sims}
     for i, entry in transit.items():
-        x, y = entry["pos"]
-        rows.append([i, round(x, 2), round(y, 2), indices[entry["to"]], 3])
+        waiting = status[i] == 2
+        x, y = entry["wait_pos"] if waiting else entry["pos"]
+        floor = entry["floor"] if waiting else entry["to"]
+        rows.append([i, round(x, 2), round(y, 2), indices[floor], 2 if waiting else 3])
     rows.sort(key=lambda r: r[0])
     return rows
 
@@ -266,6 +269,9 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         except ImportError:
             FireModel = NoFire
         fire = (FireModel if scenario.get("fire") else NoFire)(building, scenario)
+    assist_delay = float(scenario.get("assistDelay", 180))
+    if not math.isfinite(assist_delay) or assist_delay < 0:
+        raise ValueError("assistDelay must be finite and nonnegative")
     seed = int(scenario.get("seed", 0))
     rng = np.random.default_rng(seed)
     frame_every = _interval_steps(scenario, "frameInterval", FRAME_INTERVAL)
@@ -314,6 +320,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     trapped: set[int] = set()
     transit = {}
     arrivals = {}
+    assisted = set()
 
     def zone_queues(t):
         queues = {}
@@ -344,6 +351,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     def choose(i, t, fs, pos, trigger, speed=None):
         current = None if trigger in ("start", "arrive") else (target[i]["id"] if target[i] else None)
         stages = [st for st in fs.stages if not blocking_doors(fs, st)]
+        profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
+        stages = mobility_options(stages, profile["stairs"])
         if not stages:
             return None
         if trigger == "stuck":
@@ -357,7 +366,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             options.append({"id": st["id"], "kind": st["kind"], "name": st["name"],
                             "dist": distances[key], "queue": queues.get((fs.id, st["id"]), 0),
                             "flow": (1.3 if st["kind"] == "exit" else 1.1) * st["width"],
-                            "tail": st["tail"]})
+                            "tail": st["tail"], **({"assist": True} if st.get("assist") else {})})
         obs = {"idx": i, "t": t, "floor": fs.id, "x": pos[0], "y": pos[1],
                "profile": agents[i]["profile"], "visibility": fire.visibility(fs.id, *pos),
                "speed": agents[i]["v0"] if speed is None else speed,
@@ -365,7 +374,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         decision = brain.decide(obs)
         if decision is None:
             return target[i]
-        st = next(st for st in stages if st["id"] == decision["target"])
+        st = next(st for st in fs.stages if st["id"] == decision["target"])
         if current is not None and st["id"] != current:
             reason = decision["reason"]
             if trigger == "blocked":
@@ -375,14 +384,23 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         return st
 
     def enter_stair(i, t, fs, st):
-        entry = net.enter(i, t, fs.id, st["group"], rng)
+        profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
+        until = None
+        if not profile["stairs"] and i not in assisted:
+            until = t + assist_delay
+            assisted.add(i)
+        entry = net.enter(i, t, fs.id, st["group"], rng,
+                          speed=profile["stairSpeed"], hold_until=until)
+        if until is not None:
+            events.append({"t": t, "type": "wait", "idx": i, "floor": fs.id,
+                           "x": entry["wait_pos"][0], "y": entry["wait_pos"][1], "until": until})
         link = next(link for link in net.links(fs.id) if link["group"] == st["group"])
         entry["arrival"] = link["arrival"]
         entry["group"] = st["group"]
         transit[i] = entry
         arrivals.setdefault((entry["to"], st["group"]), deque()).append(i)
         watch.anchors.pop(i, None)
-        status[i] = 3
+        status[i] = 2 if until is not None and t < until else 3
         where[i] = None
         events.append({"t": t, "type": "stair", "idx": i, "floor": fs.id,
                        "group": st["group"], **{key: entry[key] for key in ("to", "enter", "arrive")}})
@@ -412,6 +430,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                         agents[i]["v0"], fire.visibility(fs.id, *fs.sim.agent(jid).position))
                 status[i] = 1
 
+        for i, entry in transit.items():
+            if status[i] == 2 and t >= entry["hold_until"] - 1e-9:
+                status[i] = 3
+
         # One queue per destination stair; a blocked head holds all later arrivals.
         for (fid, group), queue in list(arrivals.items()):
             fs = by_id[fid]
@@ -434,7 +456,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 if region.is_empty:
                     region = entry["arrival"].buffer(-0.1)
                 positions = [ag.position for ag in fs.sim.agents()]
-                pos = find_spot(region, positions, rng)
+                gap = max(MIN_SPACING, agents[i]["radius"] +
+                          max((agents[fs.jid2idx[ag.id]]["radius"] for ag in fs.sim.agents()
+                               if ag.id in fs.jid2idx), default=0.2) + 0.01)
+                pos = find_spot(region, positions, rng, gap=gap)
                 if pos is None:
                     break
                 jid = fs.sim.add_agent(jps.CollisionFreeSpeedModelAgentParameters(

@@ -31,6 +31,14 @@ def route_length(floor_poly, p, q):
     return math.dist(p, q)
 
 
+def mobility_options(options, stairs=True):
+    """Prefer same-floor exits for people who require stair assistance."""
+    if stairs:
+        return options
+    exits = [o for o in options if o["kind"] == "exit"]
+    return exits or [dict(o, assist=True) for o in options]
+
+
 def should_switch(c_current, c_new):
     return c_new < 0.8 * c_current
 

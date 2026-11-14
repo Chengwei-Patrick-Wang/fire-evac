@@ -7,6 +7,8 @@ and a run that hits maxTime.
 from __future__ import annotations
 
 import json
+import io
+from contextlib import redirect_stderr
 from copy import deepcopy
 import sys
 import time
@@ -18,7 +20,7 @@ from shapely.geometry import Point, Polygon
 from sim.run import run, StuckWatch, floor_walkable, smoke_speed
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
-from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE
+from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE, mobility_options
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -258,6 +260,39 @@ def check_fire(building, scenario, clear):
           f"{len(victims)} trapped")
 
 
+def check_mobility(building, scenario):
+    scenario = dict(scenario, maxTime=900, occupants={"total": 160, "mix": {
+        "typical": 0.8, "older": 0.05, "cane": 0.03, "walker": 0.02, "wheelchair": 0.1}})
+    options = [{"id": "E", "kind": "exit"}, {"id": "S", "kind": "stair"}]
+    assert mobility_options(options, False) == options[:1]
+    assert mobility_options(options[1:], False)[0]["assist"]
+    for delay in (180, 60):
+        configured = scenario if delay == 180 else dict(scenario, assistDelay=delay)
+        warnings = io.StringIO()
+        with redirect_stderr(warnings):
+            result = run(building, configured, NoFire(building, configured))
+        assert "unknown profiles" not in warnings.getvalue()
+        assert result["metrics"]["evacuated"] == 160
+        assert result["metrics"]["remaining"] == result["metrics"]["inStairs"] == 0
+        wheelchairs = {a["idx"]: a for a in result["agents"] if a["profile"] == "wheelchair"}
+        assert {a["floor"] for a in wheelchairs.values()} == {"F1", "F2"}
+        waits = [e for e in result["events"] if e["type"] == "wait"]
+        assert {e["idx"] for e in waits} == {i for i, a in wheelchairs.items() if a["floor"] == "F2"}
+        assert len(waits) == len({e["idx"] for e in waits})
+        for wait in waits:
+            assert abs(wait["until"] - wait["t"] - delay) < 1e-9
+            stair = next(e for e in result["events"] if e["type"] == "stair" and e["idx"] == wait["idx"])
+            assert stair["enter"] >= wait["until"]
+            assert abs(stair["arrive"] - stair["enter"] - 35) < 0.1
+            zone = next(z for z in building["floors"][1]["stairs"] if z["group"] == stair["group"])
+            assert Polygon(zone["polygon"]).contains(Point(wait["x"], wait["y"]))
+            for frame in result["frames"]:
+                if wait["t"] <= frame["t"] < wait["until"] - 1e-9:
+                    rows = [r for r in frame["a"] if r[0] == wait["idx"]]
+                    assert rows == [[wait["idx"], wait["x"], wait["y"], result["floors"].index("F2"), 2]]
+        print(f"mobility OK: {len(waits)} waiters, longest wait {max(e['until'] - e['t'] for e in waits):.0f} s")
+
+
 def main() -> int:
     check_brain()
     check_floors()
@@ -402,7 +437,16 @@ def main() -> int:
         assert transfers[0]["arrive"] <= transfers[1]["t"] < transfers[0]["arrive"] + 0.011
         assert not any(row[0] == idx and row[3] == 1 and row[4] == 1
                        for frame in chained["frames"] for row in frame["a"])
-    print("in-transit cutoff and three-floor chain OK")
+    chained_scenario["occupants"]["mix"] = {"wheelchair": 1}
+    assisted_chain = run(three, chained_scenario, NoFire(three, chained_scenario))
+    assert assisted_chain["metrics"]["evacuated"] == 2
+    for idx in range(2):
+        waits = [e for e in assisted_chain["events"] if e.get("idx") == idx and e["type"] == "wait"]
+        transfers = [e for e in assisted_chain["events"] if e.get("idx") == idx and e["type"] == "stair"]
+        assert len(waits) == 1 and waits[0]["floor"] == "F3"
+        assert [e["floor"] for e in transfers] == ["F3", "F2"]
+        assert all(abs(e["arrive"] - e["enter"] - 35) < 0.1 for e in transfers)
+    print("in-transit cutoff and three-floor chain (including one assistance wait) OK")
 
     print(f"agents {m['agents']}: evacuated {m['evacuated']}, inStairs {m['inStairs']}, trapped {m['trapped']}, "
           f"remaining {m['remaining']}; exits {m['exitCounts']}; min spawn gap {min_gap:.2f} m")
@@ -411,6 +455,7 @@ def main() -> int:
     print(f"runtime {runtime:.1f} s for {times[-1]:.1f} s simulated ({len(times)} frames)")
     check_fire(building, scenario, r)
     check_300(building, scenario)
+    check_mobility(building, scenario)
     from tools.toy_fire import ToyFire
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
     recorded = run(building, sampled, ToyFire(building, sampled))
