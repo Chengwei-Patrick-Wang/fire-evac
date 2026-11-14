@@ -15,7 +15,8 @@ Behavior:
 """
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
+import argparse
 import json
 import math
 import sys
@@ -29,7 +30,7 @@ from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
 from sim.profiles import PROFILES
-from sim.floors import StairNet, find_spot
+from sim.floors import StairNet, find_spot, reachable_zone
 
 DT = 0.01
 FRAME_EVERY = 50     # steps (0.5 s)
@@ -50,11 +51,19 @@ def _warn(msg: str) -> None:
 
 def floor_walkable(floor: dict) -> Polygon:
     """The floor's walkable polygon (the largest piece if the normalizer left several)."""
-    polys = sorted((Polygon(w["outer"], w["holes"]) for w in floor["walkable"]), key=lambda p: p.area, reverse=True)
+    polys = []
+    for w in floor["walkable"]:
+        poly = Polygon(w["outer"], w["holes"])
+        if not poly.is_valid:
+            _warn(f"{floor['id']}: repairing invalid walkable polygon with buffer(0)")
+            poly = poly.buffer(0)
+        polys.extend([poly] if poly.geom_type == "Polygon" else poly.geoms)
+    polys = sorted((p for p in polys if not p.is_empty and p.area > 0), key=lambda p: p.area, reverse=True)
     if not polys:
         raise ValueError(f"floor {floor['id']} has no walkable area")
     if len(polys) > 1:
-        _warn(f"{floor['id']}: {len(polys)} walkable pieces; simulating the largest only")
+        dropped = 1 - polys[0].area / sum(p.area for p in polys)
+        _warn(f"{floor['id']}: {len(polys)} walkable pieces; dropped area {dropped:.1%}; simulating the largest only")
     return polys[0]
 
 
@@ -167,6 +176,8 @@ class _FloorSim:
                    "poly": link["polygon"], "to": link["to"], "width": link["width"]}
                   for link in net.links(self.id)]
         for zone in zones:
+            if not reachable_zone(zone["poly"], self.walk, f"{self.id} {zone['kind']} {zone['id']}"):
+                continue
             stage = self.sim.add_exit_stage(zone["poly"])
             journey = self.sim.add_journey(jps.JourneyDescription([stage]))
             self.stages.append(dict(zone, stage=stage, journey=journey))
@@ -182,6 +193,31 @@ def pick_target(fs, pt, exclude=()):
     options = [st for st in fs.stages if st["id"] not in exclude] or fs.stages
     exits = [st for st in options if st["kind"] == "exit"]
     return min(exits or options, key=lambda st: st["poly"].distance(pt))
+
+
+class StuckWatch:
+    """Track lack of displacement while an agent is moving on one floor."""
+
+    def __init__(self, window=60.0, min_move=0.5):
+        self.window, self.min_move = window, min_move
+        self.anchors = {}
+
+    def update(self, idx, t, x, y):
+        anchor = self.anchors.get(idx)
+        if anchor is None or math.hypot(x - anchor[1], y - anchor[2]) >= self.min_move:
+            self.anchors[idx] = (t, x, y)
+            return False
+        if t - anchor[0] >= self.window:
+            self.anchors[idx] = (t, x, y)
+            return True
+        return False
+
+
+def _interval_steps(scenario, key, default):
+    interval = float(scenario.get(key, default))
+    if not math.isfinite(interval) or interval < DT or not math.isclose(interval / DT, round(interval / DT)):
+        raise ValueError(f"{key} must be a positive multiple of {DT} s")
+    return round(interval / DT)
 
 
 def _frame(sims: list[_FloorSim], trapped: set, status: list[int], transit: dict) -> list[list]:
@@ -214,7 +250,11 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         fire = NoFire(building, scenario)
     seed = int(scenario.get("seed", 0))
     rng = np.random.default_rng(seed)
-    net = StairNet(building)
+    frame_every = _interval_steps(scenario, "frameInterval", FRAME_INTERVAL)
+    smoke_every = _interval_steps(scenario, "smokeInterval", SMOKE_INTERVAL)
+    frame_interval, smoke_interval = frame_every * DT, smoke_every * DT
+    watch = StuckWatch()
+    net = StairNet(building, walkable={f["id"]: floor_walkable(f) for f in building["floors"]})
     agents = place_occupants(building, scenario, rng)
     net.check({a["floor"] for a in agents})
     n = len(agents)
@@ -260,6 +300,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         entry["group"] = st["group"]
         transit[i] = entry
         arrivals.setdefault((entry["to"], st["group"]), deque()).append(i)
+        watch.anchors.pop(i, None)
         status[i] = 3
         where[i] = None
         events.append({"t": t, "type": "stair", "idx": i, "floor": fs.id,
@@ -321,14 +362,20 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                         events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
                                        "x": round(x, 2), "y": round(y, 2)})
                     elif status[i] == 1:
+                        if watch.update(i, t, x, y):
+                            events.append({"t": t, "type": "stuck", "idx": i, "floor": fs.id,
+                                           "x": round(x, 2), "y": round(y, 2)})
+                            st = pick_target(fs, Point(x, y), exclude={target[i]["id"]})
+                            fs.sim.switch_agent_journey(ag.id, st["journey"], st["stage"])
+                            target[i] = st
                         v0 = agents[i]["v0"]
                         vis = fire.visibility(fs.id, x, y)
                         ag.model.desired_speed = min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - vis)))
 
-        if k % FRAME_EVERY == 0:
+        if k % frame_every == 0:
             frames.append({"t": t, "a": _frame(sims, trapped, status, transit)})
 
-        if k % SMOKE_EVERY == 0:
+        if k % smoke_every == 0:
             for fs in sims:
                 snap = fire.snapshot(fs.id)
                 if snap is None:
@@ -337,7 +384,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 if entry is None:
                     entry = smoke[fs.id] = {"floor": fs.id, "origin": list(snap["origin"]), "cell": snap["cell"],
                                             "cols": snap["cols"], "rows": snap["rows"],
-                                            "interval": SMOKE_INTERVAL, "frames": []}
+                                            "interval": smoke_interval, "frames": []}
                 entry["frames"].append({"t": t, "d": snap["d"]})
             hrr.append([t, round(float(fire.hrr(t)), 1)])
 
@@ -363,8 +410,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     enter_stair(i, t_now, fs, st)
 
     if active <= 0 and frames and frames[-1]["t"] < t:
-        # Close the replay with an empty frame on the 0.5 s grid.
-        frames.append({"t": math.ceil(t / FRAME_INTERVAL - 1e-9) * FRAME_INTERVAL, "a": []})
+        # Close the replay with an empty frame on the configured recording grid.
+        frames.append({"t": round(math.ceil(t / frame_interval - 1e-9) * frame_interval, 2), "a": []})
 
     exit_events = [e for e in events if e["type"] == "exit"]
     exit_times = sorted(e["t"] for e in exit_events)
@@ -390,7 +437,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         "buildingId": building.get("id"),
         "scenarioId": scenario.get("id"),
         "seed": seed,
-        "frameInterval": FRAME_INTERVAL,
+        "frameInterval": frame_interval,
         "floors": [f["id"] for f in floors],
         "agents": [{key: a[key] for key in ("idx", "profile", "floor", "room", "v0", "startDelay")} for a in agents],
         "frames": frames,
@@ -402,18 +449,27 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print("usage: python -m sim.run BUILDING SCENARIO OUT", file=sys.stderr)
-        return 2
-    building = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
-    scenario = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("building")
+    parser.add_argument("scenario")
+    parser.add_argument("out")
+    parser.add_argument("--agents", type=int)
+    args = parser.parse_args(argv)
+    if args.agents is not None and args.agents < 0:
+        parser.error("--agents must be nonnegative")
+    building = json.loads(Path(args.building).read_text(encoding="utf-8"))
+    scenario = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
+    if args.agents is not None:
+        scenario.setdefault("occupants", {}).pop("perRoom", None)
+        scenario["occupants"]["total"] = args.agents
     t0 = time.perf_counter()
     result = run(building, scenario)
     elapsed = time.perf_counter() - t0
-    out = Path(argv[2])
+    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(",", ":")), encoding="utf-8")
     print(json.dumps(result["metrics"]))
+    print("event counts:", dict(Counter(e["type"] for e in result["events"])))
     print(f"wrote {out} ({out.stat().st_size / 1e6:.2f} MB, {len(result['frames'])} frames) in {elapsed:.1f} s")
     return 0
 

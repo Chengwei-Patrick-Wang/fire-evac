@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 import math
+import sys
 
 import numpy as np
 from shapely.geometry import Point, Polygon
@@ -10,6 +11,14 @@ from shapely.geometry import Point, Polygon
 STAIR_SPEED = 0.55
 STAIR_FLOW = 1.1
 WALK_SPEED = 1.2
+
+
+def reachable_zone(poly, walk, label):
+    """Reject zones detached from the retained floor geometry."""
+    if poly.is_empty or poly.distance(walk) > 0.1:
+        print(f"WARNING (sim): dropping {label}: outside walkable area (> 0.1 m)", file=sys.stderr)
+        return False
+    return True
 
 
 def find_spot(region, others, rng, gap=0.5, tries=64):
@@ -26,8 +35,11 @@ def find_spot(region, others, rng, gap=0.5, tries=64):
 
 
 class StairNet:
-    def __init__(self, building):
+    def __init__(self, building, walkable=None):
         floors = sorted(building["floors"], key=lambda f: f["level"])
+        exits = {f["id"]: [e for e in f["exits"] if walkable is None or
+                 reachable_zone(Polygon(e["polygon"]), walkable[f["id"]],
+                                f"{f['id']} exit {e['id']}")] for f in floors}
         self._links = {f["id"]: [] for f in floors}
         self._reachable = {}
         self._admissions = {}
@@ -40,15 +52,21 @@ class StairNet:
                     if stair["group"] not in arrivals:
                         continue
                     arrival = Polygon(arrivals[stair["group"]]["polygon"])
+                    polygon = Polygon(stair["polygon"])
+                    if walkable is not None and not (
+                        reachable_zone(polygon, walkable[floor["id"]], f"{floor['id']} stair {stair['id']}")
+                        and reachable_zone(arrival, walkable[below["id"]], f"{below['id']} arrival {stair['group']}")
+                    ):
+                        continue
                     widths = [d["width"] for d in floor["doors"]
                               if stair["room"] in d["connects"] and "outside" not in d["connects"]]
                     width = sum(widths) if widths else 1.0
                     if width <= 0:
                         raise ValueError(f"floor {floor['id']} stair {stair['id']} has nonpositive width")
                     length = 2 * floor["height"]
-                    if below["exits"]:
+                    if exits[below["id"]]:
                         onward = min(arrival.distance(Polygon(e["polygon"])) / WALK_SPEED
-                                     for e in below["exits"])
+                                     for e in exits[below["id"]])
                     else:
                         onward = min((arrival.distance(link["polygon"]) / WALK_SPEED + link["tail"]
                                       for link in self.links(below["id"])), default=math.inf)
@@ -57,7 +75,7 @@ class StairNet:
                         "width": width, "length": length, "tail": length / STAIR_SPEED + onward,
                         "polygon": Polygon(stair["polygon"]), "arrival": arrival,
                     })
-            self._reachable[floor["id"]] = bool(floor["exits"]) or any(
+            self._reachable[floor["id"]] = bool(exits[floor["id"]]) or any(
                 self._reachable[link["to"]] for link in self.links(floor["id"]))
 
     def links(self, floor_id):

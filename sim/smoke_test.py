@@ -15,7 +15,8 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from sim.run import run
+from sim.run import run, StuckWatch, floor_walkable
+from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,8 +76,70 @@ def check_floors() -> None:
     print("floors OK")
 
 
+def check_watch_and_geometry():
+    watch = StuckWatch()
+    assert [t for t in range(101) if watch.update(0, t, 0, 0)] == [60]
+    assert [t for t in range(101) if watch.update(1, t, 0 if t < 30 else 0.6, 0)] == [90]
+    building = load_building()
+    walk = {f["id"]: floor_walkable(f) for f in building["floors"]}
+    broken = deepcopy(building)
+    far = [[1000, 1000], [1001, 1000], [1001, 1001], [1000, 1001]]
+    for stair in broken["floors"][0]["stairs"]:
+        stair["polygon"] = far
+    net = StairNet(broken, walkable=walk)
+    assert not net.links("F2"), "detached arrivals must drop links"
+    for ex in broken["floors"][0]["exits"]:
+        ex["polygon"] = far
+    try:
+        StairNet(broken, walkable=walk).check({"F1"})
+    except ValueError as exc:
+        assert "F1" in str(exc)
+    else:
+        raise AssertionError("detached exits must not make a floor reachable")
+    invalid = {"id": "invalid", "walkable": [{"outer": [[0, 0], [2, 2], [0, 2], [2, 0]], "holes": []}]}
+    assert floor_walkable(invalid).is_valid
+    pieces = {"id": "pieces", "walkable": [
+        {"outer": [[0, 0], [2, 0], [2, 2], [0, 2]], "holes": []},
+        {"outer": far, "holes": []}]}
+    assert floor_walkable(pieces).area == 4
+    print("watchdog and geometry guards OK")
+
+
+def check_300(building, scenario):
+    scenario = deepcopy(scenario)
+    scenario["occupants"].pop("perRoom", None)
+    scenario["occupants"]["total"] = 300
+    start = time.perf_counter()
+    result = run(building, scenario, NoFire(building, scenario))
+    elapsed = time.perf_counter() - start
+    size = len(json.dumps(result))
+    metrics = result["metrics"]
+    assert metrics["evacuated"] == 300 and metrics["inStairs"] == metrics["remaining"] == 0
+    assert not any(e["type"] == "stuck" for e in result["events"])
+    assert elapsed < 120 and size < 8e6, (elapsed, size)
+    transfers = {e["idx"]: e for e in result["events"] if e["type"] == "stair"}
+    transit_counts, first_moving = {}, {}
+    for frame in result["frames"]:
+        for idx, x, y, fi, state in frame["a"]:
+            if state == 3:
+                transit_counts[idx] = transit_counts.get(idx, 0) + 1
+            elif state == 1 and idx in transfers and fi == result["floors"].index(transfers[idx]["to"]):
+                first_moving.setdefault(idx, frame["t"])
+        for fi in range(len(result["floors"])):
+            pts = np.array([[r[1], r[2]] for r in frame["a"] if r[3] == fi and r[4] in (0, 1)])
+            if len(pts) > 1:
+                distances = np.linalg.norm(pts[:, None] - pts[None, :], axis=2)
+                np.fill_diagonal(distances, np.inf)
+                assert distances.min() >= 0.3 - 1e-9
+    for idx, event in transfers.items():
+        assert transit_counts.get(idx, 0) * result["frameInterval"] <= event["arrive"] - event["t"] + 5
+        assert first_moving[idx] - event["arrive"] <= 5
+    print(f"300 agents: {elapsed:.2f} s, {size / 1e6:.2f} MB; {len(transfers)} transfers, zero stuck")
+
+
 def main() -> int:
     check_floors()
+    check_watch_and_geometry()
     building = load_building()
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
 
@@ -223,6 +286,17 @@ def main() -> int:
     print(f"t50 {m['t50']}  t90 {m['t90']}  t100 {m['t100']}  (t-values count exits only; "
           f"stairs transfer to lower floors)")
     print(f"runtime {runtime:.1f} s for {times[-1]:.1f} s simulated ({len(times)} frames)")
+    check_300(building, scenario)
+    from tools.toy_fire import ToyFire
+    sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
+    recorded = run(building, sampled, ToyFire(building, sampled))
+    assert recorded["frameInterval"] == 1.0
+    assert [f["t"] for f in recorded["frames"]] == list(range(11))
+    assert recorded["smoke"]
+    for smoke in recorded["smoke"]:
+        assert smoke["interval"] == 5
+        assert [f["t"] for f in smoke["frames"]] == [0, 5, 10]
+    print("recording intervals OK")
     print("OK")
     return 0
 
