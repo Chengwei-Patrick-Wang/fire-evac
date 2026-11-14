@@ -135,10 +135,10 @@
 ### Task E10: Report card and wall-rise reveal (P1 · Sat 10 PM)
 - **Files:** `src/dashboard/ReportCard.tsx`; edits `loader.ts` (`fetchReport`), `Building.tsx`, `store/app.ts` (`reveal`), `ResultsPanel.tsx`, `package.json` (`react-markdown`)
 - **Interfaces:** Produces `fetchReport(ref: {runId} | {batchId}) → Promise<string>`, `<ReportCard />`, `useApp.reveal` (a nonce).
-- [ ] **Step 1: Report.** Live: `POST /api/report` with `{runId}` or `{batchId}` `→ {markdown}` (A caches it; a "Regenerate" button adds `?refresh=1`). Static: the index `batches[].report` file for this batch, fetched as `.md` (runs have none); no file shows "No report for this result". A "Generate" button with a spinner and 20 s timeout; failure shows "Report unavailable (needs the backend and Gemini)". Render with `react-markdown` under "AI-written summary of the numbers shown; check it against them".
-- [ ] **Step 2: Wall rise.** `reveal` increments whenever a different building is loaded (including one opened from the tracer); `Building.tsx` tweens each floor's walls group `scale.y` from 0 to 1 in 1.4 s (ease-out cubic), floors 0.25 s apart, in `useFrame`; skipped under `prefers-reduced-motion`.
-- [ ] **Step 3: Verify.** `npm run build` passes. `npm run dev`: selecting a building makes the walls rise; the Report tab shows markdown from the API (backend on) or from the index's `batches[].report` file; a dead API shows the fallback text; console clean.
-- [ ] **Step 4: Commit and push** `feat(frontend): report card and wall-rise reveal`.
+- [x] **Step 1: Report.** Live: `POST /api/report` with `{runId}` or `{batchId}` `→ {markdown}` (A caches it; a "Regenerate" button adds `?refresh=1`). Static: the index `batches[].report` file for this batch, fetched as `.md` (runs have none); no file shows "No report for this result". A "Generate" button with a spinner and 20 s timeout; failure shows "Report unavailable (needs the backend and Gemini)". Render with `react-markdown` under "AI-written summary of the numbers shown; check it against them".
+- [x] **Step 2: Wall rise.** `reveal` increments whenever a different building is loaded (including one opened from the tracer); `Building.tsx` tweens each floor's walls group `scale.y` from 0 to 1 in 1.4 s (ease-out cubic), floors 0.25 s apart, in `useFrame`; skipped under `prefers-reduced-motion`.
+- [x] **Step 3: Verify.** `npm run build` passes. `npm run dev`: selecting a building makes the walls rise; the Report tab shows markdown from the API (backend on) or from the index's `batches[].report` file; a dead API shows the fallback text; console clean.
+- [x] **Step 4: Commit and push** `feat(frontend): report card and wall-rise reveal`.
 
 ### Task E11: Synced split screen (P1 · Sun 2 AM)
 - **Files:** `src/scene/{SplitView.tsx,cameraSync.ts}`; edits `Scene.tsx`, `Toolbar3D.tsx`, `App.tsx`

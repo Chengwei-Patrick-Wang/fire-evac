@@ -49,6 +49,7 @@ interface AppState {
   notice: string | null
   batch: Batch | null
   explode: number
+  reveal: number
   visibleFloors: string[] | null
   layers: Layers
   topView: number
@@ -95,6 +96,7 @@ export const useApp = create<AppState>((set) => ({
   notice: null,
   batch: null,
   explode: 0,
+  reveal: 0,
   visibleFloors: null,
   layers: { rooms: true, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
   topView: 0,
@@ -228,7 +230,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set({ building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, selectedRoom: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] }),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, draft: null, runNote: null, runError: null, visibleFloors: null, focus: null, selectedRoom: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

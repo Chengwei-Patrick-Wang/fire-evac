@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
@@ -71,14 +72,33 @@ function centroid(poly: Vec2[]): Vec2 {
 
 const labelStyle = { pointerEvents: 'none' as const }
 
-function Floor({ floor, doors }: { floor: BuildingFloor; doors: Record<string, DoorState> }) {
+const RISE_S = 1.4
+const STAGGER_S = 0.25
+const reduced = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<string, DoorState>; order: number }) {
+  const reveal = useApp((s) => s.reveal)
+  const walls = useRef<THREE.Group>(null)
+  const t0 = useRef<{ reveal: number; t: number } | null>(null)
+  useFrame(({ clock }) => {
+    const g = walls.current
+    if (!g) return
+    if (reduced()) {
+      if (g.scale.y !== 1) g.scale.y = 1
+      return
+    }
+    if (!t0.current || t0.current.reveal !== reveal) t0.current = { reveal, t: clock.elapsedTime }
+    const k = Math.min(1, Math.max(0, (clock.elapsedTime - t0.current.t - order * STAGGER_S) / RISE_S))
+    const y = Math.max(0.001, 1 - Math.pow(1 - k, 3))
+    if (g.scale.y !== y) g.scale.y = y
+  })
   const explode = useApp((s) => s.explode)
   const labels = useApp((s) => s.layers.labels)
   const roomsOn = useApp((s) => s.layers.rooms)
   const rooms = floor.rooms.filter((r) => r.type !== 'stair')
   return (
     <group position-y={floorY(floor, explode)}>
-      <group name="walls">
+      <group name="walls" ref={walls} scale-y={0.001}>
         <Walls floor={floor} />
       </group>
       {roomsOn &&
@@ -140,7 +160,7 @@ export default function Building({ runKey }: { runKey?: string }) {
       {building.floors
         .filter((f) => !visible || visible.includes(f.id))
         .map((f) => (
-          <Floor key={building.id + f.id} floor={f} doors={doors} />
+          <Floor key={building.id + f.id} floor={f} doors={doors} order={building.floors.indexOf(f)} />
         ))}
     </>
   )

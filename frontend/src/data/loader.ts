@@ -151,8 +151,23 @@ export async function startBatch(base: Scenario, onTick?: (elapsedS: number) => 
     await new Promise((res) => setTimeout(res, 2000))
   }
 }
-export async function fetchReport(_ref: { runId: string } | { batchId: string }): Promise<string> {
-  throw new ApiError('not implemented')
+export async function fetchReport(ref: { runId: string } | { batchId: string }, refresh = false): Promise<string> {
+  if (mode === 'live') {
+    const r = await fetchJson<{ markdown: string }>(
+      `${API}/report${refresh ? '?refresh=1' : ''}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
+      20000,
+    )
+    if (typeof r?.markdown !== 'string') throw new ApiError('Report unavailable')
+    return r.markdown
+  }
+  if (!('batchId' in ref)) return ''
+  const idx = await loadIndex()
+  const entry = idx.batches.find((b) => b.id === ref.batchId)
+  if (!entry?.report) return ''
+  const res = await fetch(DEMO + entry.report).catch(() => null)
+  if (!res || !res.ok) return ''
+  return res.text()
 }
 export async function loadCalibration(): Promise<null> {
   throw new ApiError('not implemented')
