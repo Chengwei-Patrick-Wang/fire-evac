@@ -5,6 +5,8 @@ import math
 import jupedsim as jps
 import numpy as np
 
+SMOKE_BETA = 4.0
+UNFAMILIAR_GAMMA = 30.0
 TAU = 5.0
 MIN_DWELL = 15
 COMMIT_DIST = 3.0
@@ -19,16 +21,60 @@ def _router(floor_poly):
     return jps.RoutingEngine(floor_poly)
 
 
-def route_length(floor_poly, p, q):
-    """Walkable path length, with a straight-line fallback on routing failure."""
+def route_points(floor_poly, p, q):
+    """Walkable waypoints, with a straight-line fallback on routing failure."""
     if ROUTING_MODE == "RoutingEngine":
         try:
             points = _router(floor_poly).compute_waypoints(p, q)
             if len(points) >= 2:
-                return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+                return points
         except Exception:
             pass
-    return math.dist(p, q)
+    return [p, q]
+
+
+def route_length(floor_poly, p, q):
+    points = route_points(floor_poly, p, q)
+    return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+
+
+def visible_smoke(points, sight, vis):
+    """Score only the first visible, nonzero route leg in meter samples."""
+    from sim.profiles import CUE_VIS_M
+    for a, b in zip(points, points[1:]):
+        length = math.dist(a, b)
+        if length == 0:
+            continue
+        samples = np.arange(0.5, min(length, sight), 1.0)
+        if not len(samples):
+            return 0.0
+        xy = np.asarray(a) + samples[:, None] * (np.asarray(b) - a) / length
+        return float(np.clip((CUE_VIS_M - vis(xy[:, 0], xy[:, 1])) /
+                             (CUE_VIS_M - 1), 0, 1).sum())
+    return 0.0
+
+
+def option_cost(o, speed, beta=SMOKE_BETA, gamma=UNFAMILIAR_GAMMA):
+    return (o.get("dist", 0) / max(speed, 0.2) +
+            o.get("queue", 0) / o.get("flow", 1) + o.get("tail", 0) +
+            beta * o.get("smoke", 0) + gamma * o.get("unfamiliar", False))
+
+
+def main_entrance(building, scenario):
+    exits = [e for f in building["floors"] for e in f["exits"]]
+    if "entrance" in scenario:
+        if scenario["entrance"] not in {e["id"] for e in exits}:
+            raise ValueError("entrance must be an exit id")
+        return scenario["entrance"]
+    if not building["floors"]:
+        return None
+    floor = min(building["floors"], key=lambda f: (f["level"], f["id"]))
+    doors = {d["id"]: d for d in floor["doors"]}
+    lobbies = {r["id"] for r in floor["rooms"] if r["type"] == "lobby"}
+    preferred = [e for e in floor["exits"]
+                 if lobbies.intersection(doors[e["door"]]["connects"])]
+    choices = preferred or floor["exits"]
+    return min(choices, key=lambda e: (-doors[e["door"]]["width"], e["id"]))["id"] if choices else None
 
 
 def mobility_options(options, stairs=True):
@@ -44,7 +90,8 @@ def should_switch(c_current, c_new):
 
 
 class RuleBrain:
-    def __init__(self, seed):
+    def __init__(self, seed, beta=SMOKE_BETA, gamma=UNFAMILIAR_GAMMA):
+        self.beta, self.gamma = beta, gamma
         self.rng = np.random.default_rng([seed, 1])
         self.last_choice = {}
         self.left = {}
@@ -54,8 +101,7 @@ class RuleBrain:
         options = obs["options"]
         if not options:
             return None
-        costs = np.array([o["dist"] / max(obs["speed"], 0.2) +
-                          o["queue"] / o["flow"] + o["tail"] for o in options])
+        costs = np.array([option_cost(o, obs["speed"], self.beta, self.gamma) for o in options])
         finite = np.isfinite(costs)
         if not finite.any():
             return None
@@ -67,7 +113,8 @@ class RuleBrain:
         # Arrival is a fresh choice on another floor, not a voluntary reroute.
         if old is not None:
             if (chosen["id"] == current or not should_switch(costs[old], costs[candidate])
-                or t - self.last_choice.get(idx, -math.inf) < MIN_DWELL
+                or (obs["trigger"] != "smoke" and
+                    t - self.last_choice.get(idx, -math.inf) < MIN_DWELL)
                 or options[old]["dist"] <= COMMIT_DIST
                 or t - self.left.get((idx, obs["floor"], chosen["id"]), -math.inf) < TABU
                 or self.switches.get(idx, 0) >= MAX_SWITCHES):
@@ -76,8 +123,11 @@ class RuleBrain:
         if current is not None:
             self.left[idx, obs["floor"], current] = t
             self.switches[idx] = self.switches.get(idx, 0) + 1
+        description = "estimated travel and queue time"
+        if self.beta * chosen.get("smoke", 0) or self.gamma * chosen.get("unfamiliar", False):
+            description = "estimated travel, queue, smoke and familiarity cost"
         return {"target": chosen["id"], "action": "go" if current is None else "reroute",
-                "reason": f"{obs['trigger']}: estimated travel and queue time {costs[candidate]:.1f} s"}
+                "reason": f"{obs['trigger']}: {description} {costs[candidate]:.1f} s"}
 
 
 class LLMBrain:
