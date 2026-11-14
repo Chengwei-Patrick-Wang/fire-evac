@@ -161,8 +161,8 @@ def get_run(run_id: str):
     return state
 
 
-# Batch, report and the tracer's first pass: one router each (placeholders until A4, A7 and A8
-# fill them in). This is the only place that registers them.
+# Batch (A4), report (A7) and the tracer's first pass (A8): one router each. This is the only
+# place that registers them.
 router.include_router(batch.router)
 router.include_router(report.router)
 router.include_router(trace.router)

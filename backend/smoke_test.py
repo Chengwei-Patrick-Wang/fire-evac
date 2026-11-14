@@ -715,8 +715,171 @@ def check_llm(client):
           f"decide_batch, client retries and fallback, {time.time() - t0:.1f} s")
 
 
+def _png(width: int, height: int) -> bytes:
+    """A blank white RGB PNG (no Pillow needed)."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    rows = b"".join(b"\x00" + b"\xff" * (3 * width) for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
 def check_trace(client):
-    assert client.post("/api/trace/propose").status_code == 501
+    """A8, offline: sanitize_floor on a canned junk answer (a bow-tie, a 2-point polygon, type
+    kitchenette, coordinates 1500, a closet under 1 m2, a point that is not a number) keeps only
+    valid rooms with enum types, in floor meters (y up) snapped to 0.25 m, and at most 60; POST
+    /api/trace/propose returns 503 "AI first pass unavailable" with LLM_PROVIDER=off, 413 above
+    8 MB, 415 for a non-image, 422 for bad hints, and the sanitized floor from a stubbed model."""
+    from shapely.geometry import Polygon
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    # 800 x 400 px at 0.05 m/px: a 40 x 20 m floor. On the model's 0-1000 grid x = 25 m per 1000
+    # (1000 = 40 m) and y runs down from the top edge (y = 0 is 20 m north of the origin).
+    hints = {"metersPerPixel": 0.05, "width": 800, "height": 400, "name": "Smoke floor", "level": 1}
+    junk = {"rooms": [
+        {"name": "Office 1", "type": "office", "polygon": [[101, 102], [299, 99], [302, 498], [99, 501]]},
+        {"name": "Bow tie", "type": "office", "polygon": [[400, 100], [600, 500], [600, 100], [400, 500]]},
+        {"name": "Two points", "type": "lab", "polygon": [[100, 600], [300, 900]]},
+        {"name": "Kitchenette", "type": "kitchenette", "polygon": [[600, 600], [900, 600], [900, 900], [600, 900]]},
+        {"name": "Off the edge", "type": "office", "polygon": [[700, 100], [1500, 100], [1500, 400], [700, 400]]},
+        {"name": "Closet", "type": "storage", "polygon": [[950, 950], [960, 950], [960, 960], [950, 960]]},
+        {"name": 7, "type": None, "polygon": [[10, 10], ["x", 20], [30, 30]]},
+        "not a room",
+        {"type": " Corridors ", "polygon": [[0, 500], [500, 500], [1000, 500], [1000, 600], [0, 600], [0, 500]]},
+    ]}
+    expected = [
+        {"id": "AI1", "name": "Office 1", "type": "office", "polygon": [[4, 18], [12, 18], [12, 10], [4, 10]]},
+        {"id": "AI2", "name": "Kitchenette", "type": "other", "polygon": [[24, 8], [36, 8], [36, 2], [24, 2]]},
+        {"id": "AI3", "name": "Corridor", "type": "corridor", "polygon": [[0, 10], [40, 10], [40, 8], [0, 8]]},
+    ]
+    floor = features.sanitize_floor(json.loads(json.dumps(junk)), hints)
+    assert floor["rooms"] == expected, json.dumps(floor["rooms"])
+    assert {k: floor[k] for k in ("id", "level", "elevation", "height", "doors")} == \
+        {"id": "F2", "level": 1, "elevation": 3.5, "height": 3.5, "doors": []}, floor
+    for room in floor["rooms"]:  # what the tracer and the normalizer rely on
+        poly = Polygon(room["polygon"])
+        assert poly.is_valid and poly.area >= 1 and room["type"] in features.ROOM_TYPES, room
+        assert all(v % 0.25 == 0 and 0 <= x <= 40 and 0 <= y <= 20 for x, y in room["polygon"] for v in (x, y)), room
+
+    # at most 60 rooms; 2 x 2 m each, the first 60 kept in the model's order
+    many = {"rooms": [{"name": f"R{i}", "type": "office",
+                       "polygon": [[50 * (i % 20), 100 * (i // 20)], [50 * (i % 20) + 50, 100 * (i // 20)],
+                                   [50 * (i % 20) + 50, 100 * (i // 20) + 100], [50 * (i % 20), 100 * (i // 20) + 100]]}
+                      for i in range(80)]}
+    rooms = features.sanitize_floor(many, hints)["rooms"]
+    assert len(rooms) == 60 and rooms[-1]["id"] == "AI60" and rooms[-1]["name"] == "R59", (len(rooms), rooms[-1])
+    for raw in (None, [], {"rooms": "x"}, {"rooms": [None, 3]}):
+        assert features.sanitize_floor(raw, hints)["rooms"] == [], raw
+    for bad in ({}, {"metersPerPixel": 0, "width": 800, "height": 400}, dict(hints, width=12.5), "x"):
+        try:
+            features.sanitize_floor(junk, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"bad hints accepted: {bad}")
+
+    # the endpoint
+    png = _png(800, 400)
+    form = {"hints": json.dumps(hints)}
+
+    def post(data=png, fields=None, name="plan.png"):
+        return client.post("/api/trace/propose", files={"image": (name, data, "image/png")},
+                           data=form if fields is None else fields)
+
+    log = io.StringIO()
+    with env(LLM_PROVIDER="off"), redirect_stderr(log):
+        r = post()
+        assert r.status_code == 503 and r.json() == {"detail": "AI first pass unavailable"}, (r.status_code, r.text)
+        assert features.propose_plan(png, hints) is None
+        assert post(png[:16] + b"\0" * (8 * 2**20)).status_code == 413
+        assert post(b"GIF89a not a plan", name="plan.gif").status_code == 415
+        for fields in ({"hints": "not json"}, {"hints": "{}"}, {"hints": json.dumps(dict(hints, width=1600, height=800))}, {}):
+            r = post(fields=fields)
+            assert r.status_code == 422, (fields, r.status_code, r.text[:200])
+        assert client.post("/api/trace/propose", data=form).status_code == 422  # no image
+    assert "LLM_PROVIDER=off" in log.getvalue(), log.getvalue()
+
+    calls: list = []
+    answer: dict = {}
+
+    def fake_complete(prompt, **kwargs):
+        calls.append((prompt, kwargs))
+        return answer.get("value")
+
+    # B's tidy_floor (buildings/tidy.py, task B10) runs after sanitize_floor once main has it; here it
+    # is absent first (sys.modules None: the import fails), then a stand-in, then one that raises
+    import types
+
+    tidy_calls: list = []
+
+    def fake_tidy(fl, grid=0.25, min_area=1.0, min_width=0.6):
+        tidy_calls.append(json.loads(json.dumps(fl)))
+        if fl.get("rooms") and fl["rooms"][0]["name"] == "boom":
+            raise RuntimeError("smoke: tidy_floor failed on purpose")
+        return dict(fl, rooms=fl["rooms"][:1]), ["AI2: dropped (smoke)"]
+
+    stand_in = types.ModuleType("buildings.tidy")
+    stand_in.tidy_floor = fake_tidy
+    real_tidy = sys.modules.get("buildings.tidy")
+    real = llm.complete
+    llm.complete = fake_complete
+    sys.modules["buildings.tidy"] = None
+    try:
+        with env(LLM_PROVIDER="gemini", GEMINI_MODEL="primary-model", GEMINI_FALLBACK_MODEL=None), redirect_stderr(io.StringIO()):
+            answer["value"] = json.loads(json.dumps(junk))
+            r = post()
+            assert r.status_code == 200 and r.json()["floor"]["rooms"] == expected, r.text[:500]
+            assert r.json()["floor"]["doors"] == [] and r.json()["floor"]["id"] == "F2", r.text[:300]
+            assert r.json()["model"] is None or isinstance(r.json()["model"], str), r.text[:300]
+            assert r.json()["notes"] == [] and isinstance(r.json()["seconds"], (int, float)), r.text[:300]
+            prompt, kwargs = calls[-1]
+            assert kwargs["image"] == png and kwargs["image_mime"] == "image/png", {k: kwargs[k] for k in ("image_mime",)}
+            assert kwargs["schema"] == features.PROPOSE_SCHEMA and kwargs["timeout"] >= 60, kwargs["timeout"]
+            # Gemini 2.x last: far worse at room geometry (IoU 0.39 against 1.00 for gemini-3.6-flash)
+            assert kwargs["models"] == ["primary-model", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite",
+                                        "gemini-2.5-flash"], kwargs["models"]
+            assert "0-1000" in prompt and "800 x 400" in prompt and "stair" in prompt and "doors" in prompt, prompt
+            for value in (None, "text", ["a list"]):
+                answer["value"] = value
+                r = post()
+                assert r.status_code == 503 and r.json()["detail"] == "AI first pass unavailable", (value, r.text)
+            answer["value"] = {"rooms": [junk["rooms"][1]]}  # only junk: a floor with no rooms, not an error
+            r = post()
+            assert r.status_code == 200 and r.json()["floor"]["rooms"] == [], r.text[:300]
+
+            sys.modules["buildings.tidy"] = stand_in
+            answer["value"] = json.loads(json.dumps(junk))
+            r = post()
+            assert r.status_code == 200 and r.json()["floor"]["rooms"] == expected[:1], r.text[:300]
+            assert r.json()["notes"] == ["AI2: dropped (smoke)"] and tidy_calls[-1]["rooms"] == expected, r.text[:300]
+            answer["value"] = {"rooms": [dict(junk["rooms"][0], name="boom")]}
+            r = post()
+            assert r.status_code == 200 and [x["name"] for x in r.json()["floor"]["rooms"]] == ["boom"], r.text[:300]
+            assert r.json()["notes"] == [], r.text[:300]
+    finally:
+        llm.complete = real
+        if real_tidy is None:
+            sys.modules.pop("buildings.tidy", None)
+        else:
+            sys.modules["buildings.tidy"] = real_tidy
+
+    # once B's real tidy_floor is here: it keeps the sanitized rooms valid and on the grid
+    try:
+        from buildings.tidy import tidy_floor
+    except ImportError:
+        tidy_floor = None
+    if tidy_floor is not None:
+        tidied, _ = tidy_floor(features.sanitize_floor(json.loads(json.dumps(junk)), hints))
+        assert {x["id"] for x in tidied["rooms"]} <= {x["id"] for x in expected} and tidied["doors"] == [], tidied
+        for room in tidied["rooms"]:
+            assert Polygon(room["polygon"]).is_valid and all(v % 0.25 == 0 for p in room["polygon"] for v in p), room
+    print(f"OK  trace: sanitize ({len(expected)} of {len(junk['rooms'])} junk rooms kept, 60-room cap), "
+          f"propose 503 offline, 413, 415, 422, stubbed model, tidy_floor {'checked' if tidy_floor else 'not on this branch yet'}")
 
 
 def check_run(client) -> str:
