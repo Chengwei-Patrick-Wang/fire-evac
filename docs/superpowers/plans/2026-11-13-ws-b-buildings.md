@@ -158,6 +158,8 @@ BLOCKED: The required data/calibration.json artifact is outside workstream B's p
 
 ### Task B8: Student Union trace support and second building (P1, target Sat 10 PM)
 
+BLOCKED: B4's hardened normalizer and B5's validator are unavailable because the required qualifying IFC input is missing; A's tracer export is also not present.
+
 **Files:** Modify `buildings/normalize.py`, `buildings/validate.py`, `buildings/smoke_test.py`. Private, gitignored, never committed: `data/private/plans/umass-student-union.plan.json` (the plan/v0 behind A's tracer export; ask A for it), `data/private/overrides/umass-student-union.json`, `data/private/umass-student-union.json` (the building: A's API lists every `.json` at the top level of `data/private/` as a private building, so plans and overrides stay in the subfolders). Never put UMass-derived files in `buildings/overrides/` (that folder is public).
 
 **Interfaces:** Consumes tracer plan/v0 (`source: "trace"`, wall 0.2, so rooms shrink 0.1). Produces `python -m buildings.normalize data/private/plans/umass-student-union.plan.json data/private/umass-student-union.json --overrides data/private/overrides/umass-student-union.json` ending in an `ok: True` report (upper-level exits are informational), and a normalizer that survives sloppy hand-traced input.
