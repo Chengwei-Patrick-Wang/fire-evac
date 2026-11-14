@@ -34,6 +34,7 @@ WARNING_PREFIX = "WARNING (normalize):"  # what buildings.normalize prints to st
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
+    batch.shutdown()
     jobs.shutdown()
 
 
