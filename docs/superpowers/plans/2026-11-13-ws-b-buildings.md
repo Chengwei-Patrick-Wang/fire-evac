@@ -265,7 +265,7 @@ Handoff for A and E: python -m buildings.validate FILE (or problems(building)) n
 
 ### Task B15 (P1 · Sat 10 AM): Plan images and a ready trace for the "plan to 3D" demo moment
 
-BLOCKED: contracts/building.example.json credits do not mention a license; preserving those credits in the trace and normalized building conflicts with B14's problems() license check. The example contract is outside WS-B and frozen.
+> Lead ruling (Sat 09:55): the example's credits now read "Synthetic example building made by the team; license: free to use, no attribution needed.", so B14's license check passes. Keep every building's credits unchanged in the trace and the normalized building.
 
 **Files:** Create `buildings/plan_images.py` and, in `data/buildings/plans/`, `example-F1.png`, `example-F2.png`, `office-F1.png`, `office-F2.png`, `example.trace.json`, `example.plan.json` and `index.json`; modify `buildings/smoke_test.py`, `buildings/README.md`.
 

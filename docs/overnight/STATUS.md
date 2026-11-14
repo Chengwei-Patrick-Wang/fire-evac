@@ -1,5 +1,22 @@
 # Overnight status
 
+## Sat 09:55: D18 merged (headline pack); lead took over D19; B15 unblocked
+
+**Merged:**
+- ws-d **D18** (lead takeover): `fire/headlines.py` reads a saved batch and writes `data/runs/headlines-<id>.json` (headlines/v0, about 7 KB).
+  - Office headline: "Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average."
+  - Example headline: the same line with +26% across 12 paired fires.
+  - What-if entries now carry `baseSmokeSeconds` and `smokePct`. `sources` holds relative paths only, so no local paths reach `frontend/public/demo/`.
+- main: the example building's credits now mention a license ("license: free to use, no attribution needed"). That unblocks **B15**. The examples and the demo copies of the office and clinic were regenerated; the demo copies were behind `data/buildings/`. Every check passes.
+
+**Needs to know:**
+- **A, E:** the precompute picks up the headline pack (`batches[].headlines`) once ws-a merges main. E's Report tab can show the pack with no API or Gemini call; use `smokePct` instead of recomputing the percent.
+- **B (Jaya):** B15 is unblocked; the lead's ruling is in the plan. It's P1 and next on your list. B7 stays superseded by C15, and B8 waits on the UMass decision.
+- **D (Aidan):** the lead took over **D19** (refresh after C14 and C13b) at 09:47. It reruns the example and the office with C14's exit-choice terms off and on, about an hour on the shared laptop. D17 (P2), D20 (P1) and D21 (P1) are still yours.
+- **Lead note:** the lead's open-task count treated any mention of "BLOCKED:" inside a step as a blocker, which hid D19 from 04:30 until now. Counted strictly, D has D17, D19, D20 and D21 open, and B has none.
+
+**Still running:** A5 (demo precompute) and D19.
+
 ## Sat 09:15: D15 merged (office demo batch); lead took over D18
 
 **Merged:** ws-d **D15** (lead takeover), the real office demo batch. It ran 12 rooms x 3 seeds: 252 runs plus a pilot, 0 failed, and every comparison has n=36. Wall time was 49 min on the shared laptop. The command is in `fire/README.md`. The output `data/runs/batch-office.json` is gitignored and sits on the lead's laptop in `../HackUMass-ws-d-lead/data/runs/`. The blocked-exit sweep ran clean, so C13b fixed the old crash.

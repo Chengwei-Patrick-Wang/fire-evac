@@ -484,6 +484,7 @@ for the sprinkler variant.
 | `slower`, `faster` | Pair counts with evacuation-time difference strictly above +1 s or below -1 s |
 | `dTrapped` | Mean variant-minus-baseline trapped count over matched pairs |
 | `dDosed`, `dSmokeSeconds` | Mean variant-minus-baseline illustrative dose count and person-seconds in smoke; each included only if both sides of every matched pair carry that measure |
+| `baseSmokeSeconds`, `smokePct` | With `dSmokeSeconds` (D18): the mean person-seconds in smoke of the baseline runs that a successful variant run matches, and `100 * dSmokeSeconds / baseSmokeSeconds` (null when that mean is 0). The `why` line then reads `+427 person-seconds in smoke (+22%)` |
 | `why` | ASCII explanation of paired time, exposure and trapped differences |
 | Batch `runs[].exitCounts` | Per-exit evacuated counts retained from simulator metrics |
 
@@ -630,9 +631,11 @@ With `--whatif`, closing already-closed stair doors is instead compared against
 the saved propped-door variant, and keeping an exit clear against its saved
 blocked-exit variant. These derived results negate the original deltas and
 reverse their ranges and faster/slower counts without rerunning. Their
-`derivedFrom` names the comparison, their labels say "vs propped open" or
-"vs blocked", and `smokePct` is null: the original variant's exposure mean was
-not saved. Any reduction in smoke exposure qualifies a derived fix as helping.
+`derivedFrom` names the comparison and their labels say "vs propped open" or
+"vs blocked". Their `smokePct` is `100 * dSmokeSeconds / (b - dSmokeSeconds)`,
+where b is the named what-if's `baseSmokeSeconds` (D18; the fix's own baseline is
+the propped or blocked state), and null for a batch saved without it. Any
+reduction in smoke exposure qualifies a derived fix as helping.
 Derived results retain the original what-if's matched fires, even if a different
 `--fix-rooms` subset is requested. Inapplicable or unsafe suggestions are recorded
 in `fixesSkipped` with a reason.
@@ -872,3 +875,116 @@ This is not the blocked-stair simulator failure recorded under D15.
 Handoff for B/A: inspect the narrow IFC room fragment before using this
 batch as a complete office survey. No geometry or grid-resolution changes
 are included in the ranges task.
+
+## Headline numbers (D18)
+
+`python -m fire.headlines BUILDING BATCH [--sensitivity PATH] [--out PATH]` reads a
+saved batch and writes `data/runs/headlines-<buildingId>.json` (gitignored): the few
+numbers that demo scenes 4-6, A's report card and E's Report tab all quote, so none
+of them has to dig them out of the full batch. Nothing reruns. Without
+`--sensitivity` it adds D17's `data/runs/sensitivity-<buildingId>.json` when that file
+exists. Run it from the repository root with repo-relative paths: `sources` holds the
+paths as given, and the pack ships with the demo, so an absolute path is shortened to
+a relative one (or to its file name).
+
+Contract (every field but `version`, `buildingId` and `generated` may be absent; a
+missing section or field is left out, never null; readers ignore unknown fields;
+times are ISO 8601 UTC ending in `Z`; all text is ASCII):
+
+```text
+headlines/v0 = {version, buildingId, buildingName, generated, note, sources: {batch: {file, id, modified}, sensitivity: {file, modified}}, scenario: {id, occupants, mix, fireType, growth, sprinklers, alarmTime, maxTime, doors, exitChoice, seeds, rooms, runs, failed}, headline, weakSpots: [{rank, kind, id, floor, label, score, why, scoreRange, riskT90Range, seedsInTop3}], whatIf: [{id, label, n, dT90, slower, faster, dTrapped, dSmokeSeconds, baseSmokeSeconds, smokePct, dDosed, why}], fixes: [{id, kind, label, helps, n, dT90, dTrapped, dSmokeSeconds, smokePct, derivedFrom, why}], stability: {why, heldIn, n}, sensitivity: {note, why, variants: [{id, why}]}, timing}
+```
+
+- `scenario` is the batch's `base` (`id`, `occupants.total` as `occupants`, `mix`,
+  `fire.type` as `fireType`, `fire.growth` as `growth`, `sprinklers`, `alarmTime`,
+  `maxTime`, `doors`, and C14's `exitChoice` when set) plus `seeds`, the number of
+  ignition `rooms`, and the `runs` and `failed` counts.
+- `weakSpots` is `top` in order, `rank` from 1. `label` comes from `door_label` (a
+  room is `<room name> (<id>)`), `seedsInTop3` from D16, `scoreRange` from the
+  matching `doors[]` entry and `riskT90Range` from the matching `rooms[]` entry.
+- `whatIf` and `fixes` keep the fields above, in batch order. The pack never holds
+  `runs`, `doors` or heatmaps, so it stays small (well under 20 KB).
+- `headline` comes from the `proppedStairs` what-if when its `n > 0`, else from the
+  first what-if with `n > 0`:
+  `Stair doors propped open: +22% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.`
+  It says `sooner` for a negative `dT90`, `+427 person-seconds in smoke per fire`
+  when there is no `smokePct`, and only the time when there is no `dSmokeSeconds`.
+  With no usable what-if it is the first weak spot's `why`; with neither there is
+  no `headline` key.
+- `note` is always `Illustrative fire model and rule-based simulated occupants; ideas
+  for a fire protection engineer to check, not a compliance result.`
+
+Percent at the source: `add_whatif` now writes `baseSmokeSeconds` (the mean
+person-seconds in smoke of the baseline runs that a successful variant run matches)
+and `smokePct` (`100 * dSmokeSeconds / baseSmokeSeconds`, null when that mean is 0)
+on every what-if that has `dSmokeSeconds`, and its `why` reads `+427 person-seconds
+in smoke (+22%)`. A derived fix gets `smokePct = 100 * dSmokeSeconds / (b -
+dSmokeSeconds)`, with b the `baseSmokeSeconds` of the what-if named in its
+`derivedFrom`. `compare` is unchanged. With `--whatif-rooms` (D13 and D15 set it) the
+what-ifs cover fewer fires than the baseline has runs, which is why E's
+`batchHeadline` fell back to raw person-seconds: a batch saved without
+`baseSmokeSeconds` gets `smokePct` in the pack from the mean `runs[].smokeSeconds`
+only when `n` equals the number of runs (E's rule), and otherwise the headline says
+`person-seconds in smoke per fire`.
+
+The CLI exits 1 with `no batch at <path>: run D15's command (fire/README.md) first`
+when the batch file is missing (or when `--sensitivity` names a missing file), and 2,
+naming both ids, when the batch's `buildingId` is not the building's `id`. It writes
+`json.dumps(pack, indent=1)`, then prints the headline, every `why` (weak spots,
+stability, what-ifs, fixes, sensitivity) and `wrote <path> (<n> bytes)`.
+`fire.headlines.build_headlines(building, batch, sensitivity=None, sources=None,
+generated=None)` builds the same dict for callers that already hold the files.
+
+Measured (Windows 11, lead's laptop shared with A's demo precompute, 4 workers, Sat
+09:26-09:45). Verification first: `python -m fire.smoke_test` and `python -m fire.checks
+--slow` both printed `fire checks OK` (the slow suite took 6 minutes). Then:
+
+```text
+$ python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2 --whatif --fixes --workers 4 --out data/runs/batch-example-office.json
+runtime 1002.2 s
+wrote data\runs\batch-example-office.json (12 runs, 0 failed)
+
+$ python -m fire.headlines contracts/building.example.json data/runs/batch-example-office.json
+Stair doors propped open: +26% person-seconds in smoke across 12 paired fires; 90% out 0 s later on average.
+  ... the 5 weak-spot lines and the stability line, then:
+Stair doors propped open: 90% out 0 s later on average (slower in 2 of 12 fires); +401 person-seconds in smoke (+26%), +0.1 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+Exit Main entrance blocked: 90% out 48 s later on average (slower in 11 of 12 fires); +1,443 person-seconds in smoke (+94%), +1.5 people at an illustrative smoke dose of 1, -2.4 trapped per fire.
+Sprinklers on: 90% out 6 s sooner on average (slower in 0 of 12 fires); -55 person-seconds in smoke (-4%), -3.6 people at an illustrative smoke dose of 1, -2.4 trapped per fire.
+Keep Exit Main entrance clear (vs blocked): 90% out 48 s sooner on average and 49% less time in smoke across 12 fires (faster in 11); +2.4 trapped per fire.
+  ... three more fix lines
+wrote data/runs/headlines-example-office.json (7043 bytes)
+
+$ python -m fire.headlines data/buildings/office.json data/runs/batch-office.json
+Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
+  ... the same weak-spot, what-if and fix lines as D15 printed
+wrote data/runs/headlines-office.json (6811 bytes)
+```
+
+- The example batch has the percent at the source: `baseSmokeSeconds` 1532.5 on
+  all three what-ifs (12 matched fires each), so the derived fixes get a percent too:
+  -48.5% for keeping the main entrance clear, -20.7% for self-closers (the sprinklers
+  fix, rerun, shows the same -3.6% as the sprinklers what-if).
+- The office batch is D15's, saved before this task and not rerun (it takes 50
+  minutes): its what-ifs carry no `baseSmokeSeconds`, so the pack's `smokePct` comes
+  from the fallback, valid because every what-if has `n` 36 for 36 runs: +54% for
+  propped stairs (+152 on a 281 baseline mean), +55% for the blocked exit and +47% for
+  sprinklers (the trapped-agents caveat above). Its derived fixes have no `smokePct`
+  until the batch is regenerated.
+
+Handoff for A: the precompute runs `python -m fire.headlines` on each batch it
+saves, copies `data/runs/headlines-<id>.json` into `frontend/public/demo/` and lists
+it as `batches[].headlines`. The report card may use `headline` as its template
+headline and quotes the `why` lines verbatim; `whatIf[].baseSmokeSeconds` (written by
+`add_whatif` from now on) already feeds `_base_smoke`. Do not headline the sprinklers
+entry by smoke: trapped agents leave the replay frames, so sprinklers read as more
+time in smoke (D15); quote them by `dTrapped`. That is why the headline rule starts
+with propped stairs.
+
+Handoff for E: the Report tab can show the whole pack with no API or Gemini call.
+Use `smokePct` instead of recomputing the percent, `label` for names (it is already
+readable), `scoreRange` and `riskT90Range` beside the score and time, and
+`stability.why` below the weak spots; handle every missing field. `generated` and
+`sources` say which batch the numbers came from.
+
+All numbers use the illustrative model and are ideas for a fire protection engineer
+to check; they are not design or compliance results.

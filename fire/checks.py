@@ -890,7 +890,7 @@ def check_exits_slow():
 def check_whatif():
     from copy import deepcopy
     from unittest.mock import patch
-    from fire.whatif import stair_doors, default_variants, compare, add_whatif
+    from fire.whatif import stair_doors, default_variants, compare, add_whatif, smoke_base
 
     root = Path(__file__).resolve().parents[1]
     building = json.loads((root / "contracts/building.example.json").read_text())
@@ -953,6 +953,14 @@ def check_whatif():
     assert len(result["whatIf"]) == 3 and all(r["n"] == 2 for r in result["whatIf"])
     assert all(r["n"] == 1 for r in subset["whatIf"])
     assert all(r["why"].isascii() and any(c.isdigit() for c in r["why"]) for r in result["whatIf"])
+    # The percent is written at the source: base mean 100 over the two matched fires, +40 person-seconds.
+    assert all(r["baseSmokeSeconds"] == 100 and r["smokePct"] == 40.0 and "(+40%)" in r["why"]
+               for r in result["whatIf"])
+    assert all(r["baseSmokeSeconds"] == 100 and r["smokePct"] == 20.0 for r in subset["whatIf"])
+    assert smoke_base(baseline, old, compare(base, baseline, old)) == {}
+    nothing = [record("R101", 1, 60, smoke=0), record("R105", 1, None, 2, smoke=0)]
+    assert smoke_base(nothing, modified, compare(base, nothing, modified)) == {
+        "baseSmokeSeconds": 0.0, "smokePct": None}
     assert batch == original and base == original_base
     result["runs"][0]["exitCounts"]["E1"] = -1
     assert batch == original
@@ -1086,8 +1094,17 @@ def check_fixes():
         assert fix["dT90"] == -3 and fix["dT90Min"] == -8 and fix["dT90Max"] == 2
         assert fix["slower"] == 0 and fix["faster"] == 1 and fix["dTrapped"] == -.5
         assert fix["dDosed"] == -1 and fix["dSmokeSeconds"] == -40 and fix["smokePct"] is None and fix["helps"]
+    # A what-if that saved its baseline mean (200) gives the derived fix a percent of the propped or
+    # blocked state: -40 / (200 + 40).
+    based = {**derived, "whatIf": [{**w, "baseSmokeSeconds": 200} for w in derived["whatIf"]]}
+    with patch("fire.fixes.run_many", side_effect=AssertionError("derived fix reran")):
+        percents = add_fixes(building, trash, based)
+    assert len(percents["fixes"]) == 2
+    for fix in percents["fixes"]:
+        assert abs(fix["smokePct"] - -16.7) < .1 and "17% less time in smoke" in fix["why"], fix
     json.dumps(result, allow_nan=False)
     json.dumps(inverses, allow_nan=False)
+    json.dumps(percents, allow_nan=False)
 
 
 def check_fixes_slow():
@@ -1108,6 +1125,199 @@ def check_fixes_slow():
     assert all(f["n"] == 2 and all(np.isfinite(f[k]) for k in ("dT90", "dTrapped", "dSmokeSeconds"))
                for f in result["fixes"])
     print("fixes: widened door and sprinklers with two matched fires each", flush=True)
+
+
+def check_headlines():
+    from contextlib import redirect_stderr, redirect_stdout
+    from copy import deepcopy
+    from io import StringIO
+    from fire.headlines import _shown, all_whys, build_headlines, main
+
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield key
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text(encoding="utf-8"))
+    base = json.loads((root / "contracts/scenario.example.json").read_text(encoding="utf-8"))
+    runs = [{"scenarioId": f"hand-{room}-s{seed}", "seed": seed, "ignition": {"floor": "F1", "room": room},
+             "t90": 100.0, "t100": 140.0, "trapped": 0, "dosed": 1, "smokeSeconds": smoke,
+             "exitCounts": {"E1": 80, "E2": 80}}
+            for room, seed, smoke in (("R101", 1, 1000.0), ("R101", 2, 1100.0), ("R105", 1, 1200.0))]
+    batch = {
+        "version": "batch/v0", "id": "batch-example-office-hand", "buildingId": building["id"], "base": base,
+        "note": "Simulated rule-based batch; fire and smoke model is illustrative.",
+        "timing": {"runs": 3, "failed": 0, "workers": 1, "wallS": 3.0, "meanRunS": 1.0},
+        "runs": runs, "failed": [],
+        "rooms": [{"id": "R101", "floor": "F1", "riskT90": 100.0, "riskTrapped": 0.0, "n": 2,
+                   "riskT90Range": {"min": 95.0, "median": 100.0, "max": 105.0}},
+                  {"id": "R105", "floor": "F1", "riskT90": None, "riskTrapped": 0.0, "n": 1,
+                   "riskT90Range": None}],
+        "doors": [{"id": "DSB1", "floor": "F1", "meanWait": 40.0, "peakQueue": 10, "score": 90.0,
+                   "scoreRange": {"min": 70.0, "median": 90.0, "max": 95.0}},
+                  {"id": "E1", "floor": "F1", "meanWait": 30.0, "peakQueue": 4, "score": 60.0}],
+        "heatmaps": [],
+        "top": [{"kind": "stair", "id": "DSB1", "floor": "F1", "score": 90.0, "seedsInTop3": 2, "seeds": 2,
+                 "why": "Stair SB door: 10 people queued at peak; 40 person-seconds of waiting on average across 3 fires."},
+                {"kind": "exit", "id": "E1", "floor": "F1", "score": 60.0, "seedsInTop3": 1, "seeds": 2,
+                 "why": "Exit Main entrance: 4 people queued at peak; 30 person-seconds of waiting on average across 3 fires."},
+                {"kind": "room", "id": "R101", "floor": "F1", "score": 50.0, "seedsInTop3": 2, "seeds": 2,
+                 "why": "Fire in Kitchen (R101): 0.0 people trapped on average; 90% out after 100 s (2 fires)."}],
+        "stability": {"seeds": [1, 2], "top3": ["DSB1", "E1"], "heldIn": 1, "n": 2, "stable": False,
+                      "why": "The top 3 weak spots hold in 1 of 2 seeds: Stair SB door, Exit Main entrance. "
+                             "Stair SB door ranks first in 2 of 2."},
+        "whatIf": [{"id": "proppedStairs", "label": "Stair doors propped open", "doors": {"DSA1": "propped"},
+                    "sprinklers": False, "n": 12, "dT90": 0.2, "dT90Min": -1.0, "dT90Max": 2.0, "slower": 3,
+                    "faster": 1, "dTrapped": 0.0, "dDosed": 0.5, "dSmokeSeconds": 242.0,
+                    "baseSmokeSeconds": 1100.0, "smokePct": 22.0,
+                    "why": "Stair doors propped open: 90% out 0 s later on average (slower in 3 of 12 fires); "
+                           "+242 person-seconds in smoke (+22%), +0.5 people at an illustrative smoke dose of 1, "
+                           "+0.0 trapped per fire."}],
+        "fixes": [{"id": "selfClosers", "kind": "selfClosers",
+                   "label": "Self-closers on stair doors (vs propped open)", "derivedFrom": "whatIf.proppedStairs",
+                   "n": 12, "dT90": -0.2, "dT90Min": -2.0, "dT90Max": 1.0, "slower": 1, "faster": 3,
+                   "dTrapped": -0.0, "dDosed": -0.5, "dSmokeSeconds": -242.0, "smokePct": -18.03, "helps": True,
+                   "why": "Self-closers on stair doors (vs propped open): 90% out 0 s sooner on average and "
+                          "18% less time in smoke across 12 fires (faster in 3); -0.0 trapped per fire."}]}
+    original = deepcopy(batch)
+    headline = ("Stair doors propped open: +22% person-seconds in smoke across 12 paired fires; "
+                "90% out 0 s later on average.")
+    pack = build_headlines(building, batch, generated="2026-11-14T09:00:00Z")
+    assert batch == original
+    assert list(pack)[:5] == ["version", "buildingId", "buildingName", "generated", "note"]
+    assert (pack["version"], pack["buildingId"], pack["buildingName"], pack["generated"]) == (
+        "headlines/v0", building["id"], building["name"], "2026-11-14T09:00:00Z")
+    assert pack["headline"] == headline and "not a compliance result" in pack["note"]
+    assert pack["scenario"] == {
+        "id": base["id"], "occupants": base["occupants"]["total"], "mix": base["occupants"]["mix"],
+        "fireType": base["fire"]["type"], "sprinklers": base["sprinklers"], "alarmTime": base["alarmTime"],
+        "maxTime": base["maxTime"], "doors": base["doors"], "seeds": [1, 2], "rooms": 2, "runs": 3, "failed": 0}
+    grown = deepcopy(batch)
+    grown["base"]["fire"]["growth"], grown["base"]["exitChoice"] = "fast", "hand-made"
+    assert build_headlines(building, grown)["scenario"]["growth"] == "fast"
+    assert build_headlines(building, grown)["scenario"]["exitChoice"] == "hand-made"
+    spots = pack["weakSpots"]
+    assert [(s["rank"], s["kind"], s["id"], s["label"]) for s in spots] == [
+        (1, "stair", "DSB1", "Stair SB door"), (2, "exit", "E1", "Exit Main entrance"),
+        (3, "room", "R101", "Kitchen (R101)")]
+    assert [s["seedsInTop3"] for s in spots] == [2, 1, 2] and [s["why"] for s in spots] == [
+        t["why"] for t in batch["top"]]
+    assert spots[0]["scoreRange"] == {"min": 70.0, "median": 90.0, "max": 95.0}
+    assert spots[2]["riskT90Range"]["median"] == 100.0
+    assert all("scoreRange" not in s for s in spots[1:]) and all("riskT90Range" not in s for s in spots[:2])
+    assert pack["whatIf"] == [{k: v for k, v in batch["whatIf"][0].items()
+                               if k not in ("doors", "sprinklers", "dT90Min", "dT90Max")}]
+    assert pack["fixes"][0]["derivedFrom"] == "whatIf.proppedStairs" and pack["fixes"][0]["helps"] is True
+    assert pack["fixes"][0]["smokePct"] == -18.03 and "dDosed" not in pack["fixes"][0]
+    assert pack["stability"] == {"why": batch["stability"]["why"], "heldIn": 1, "n": 2}
+    assert pack["timing"] == batch["timing"] and not {"runs", "doors", "rooms", "heatmaps"} & set(pack)
+    assert all_whys(pack) == [t["why"] for t in batch["top"]] + [
+        batch["stability"]["why"], batch["whatIf"][0]["why"], batch["fixes"][0]["why"]]
+    # Saved before the percent existed: the per-fire wording, unless every run is paired (E's rule).
+    old = deepcopy(batch)
+    for key in ("baseSmokeSeconds", "smokePct"):
+        del old["whatIf"][0][key]
+    assert build_headlines(building, old)["headline"] == (
+        "Stair doors propped open: +242 person-seconds in smoke per fire across 12 paired fires; "
+        "90% out 0 s later on average.")
+    assert "smokePct" not in build_headlines(building, old)["whatIf"][0]
+    old["whatIf"][0]["n"] = 3  # three runs, mean smokeSeconds 1100
+    assert build_headlines(building, old)["headline"] == (
+        "Stair doors propped open: +22% person-seconds in smoke across 3 paired fires; "
+        "90% out 0 s later on average.")
+    assert build_headlines(building, old)["whatIf"][0]["smokePct"] == 22.0
+    sooner = deepcopy(batch)
+    sooner["whatIf"][0].update(n=1, dT90=-6.4, dSmokeSeconds=-33.0, smokePct=-3.0)
+    assert build_headlines(building, sooner)["headline"] == (
+        "Stair doors propped open: -3% person-seconds in smoke across 1 paired fire; 90% out 6 s sooner on average.")
+    # Propped stairs come first while they have fires; else the first what-if that has some.
+    both = deepcopy(batch)
+    both["whatIf"].insert(0, {"id": "blockedExit", "label": "Exit Main entrance blocked", "n": 4, "dT90": 12.4,
+                              "dSmokeSeconds": 100.0, "baseSmokeSeconds": 500.0, "smokePct": 20.0, "why": "x"})
+    assert build_headlines(building, both)["headline"] == headline
+    both["whatIf"][1]["n"] = 0
+    assert build_headlines(building, both)["headline"] == (
+        "Exit Main entrance blocked: +20% person-seconds in smoke across 4 paired fires; "
+        "90% out 12 s later on average.")
+    both["whatIf"][0].pop("dSmokeSeconds"), both["whatIf"][0].pop("smokePct")
+    assert build_headlines(building, both)["headline"] == (
+        "Exit Main entrance blocked: 90% out 12 s later on average across 4 paired fires.")
+    bare = deepcopy(batch)
+    del bare["whatIf"]
+    assert build_headlines(building, bare)["headline"] == batch["top"][0]["why"]
+    assert "whatIf" not in build_headlines(building, bare)
+    minimal = build_headlines(building, {"buildingId": building["id"]}, generated="2026-11-14T09:00:00Z")
+    assert set(minimal) == {"version", "buildingId", "buildingName", "generated", "note", "scenario"}, minimal
+    # D17's file, when there is one: note, why and each variant's id and why only.
+    sensitivity = {"note": "Smoke model variants.", "why": "The ranking holds in both variants.",
+                   "variants": [{"id": "slow", "why": "Slower smoke: same top 3.", "dT90": 1.0},
+                                {"id": "fast", "why": "Faster smoke: same top 3."}]}
+    with_sensitivity = build_headlines(building, batch, sensitivity, {"batch": {"file": "x.json"}})
+    assert with_sensitivity["sensitivity"] == {
+        "note": "Smoke model variants.", "why": "The ranking holds in both variants.",
+        "variants": [{"id": "slow", "why": "Slower smoke: same top 3."}, {"id": "fast", "why": "Faster smoke: same top 3."}]}
+    assert with_sensitivity["sources"] == {"batch": {"file": "x.json"}} and "sources" not in pack
+    assert all_whys(with_sensitivity)[-3:] == [sensitivity["why"], "Slower smoke: same top 3.", "Faster smoke: same top 3."]
+    # Plain ASCII and JSON, and small.
+    accented = deepcopy(building)
+    accented["name"] = "Example – office"
+    next(r for r in accented["floors"][0]["rooms"] if r["id"] == "R101")["name"] = "Küche"
+    plain = build_headlines(accented, batch, sensitivity)
+    assert plain["weakSpots"][2]["label"] == "K?che (R101)" and plain["buildingName"] == "Example ? office"
+    for each in (pack, with_sensitivity, plain, minimal):
+        assert all(s.isascii() for s in strings(each))
+    assert len(json.dumps(with_sensitivity, indent=1, allow_nan=False)) < 20_000
+    # The CLI, in a scratch directory, because the default paths are relative to the working directory.
+    with tempfile.TemporaryDirectory() as tmp:
+        here = os.getcwd()
+        os.chdir(tmp)
+        try:
+            Path("data/runs").mkdir(parents=True)
+            Path("building.json").write_text(json.dumps(building), encoding="utf-8")
+            Path("other.json").write_text(json.dumps({**building, "id": "other-building"}), encoding="utf-8")
+            Path("batch.json").write_text(json.dumps(batch), encoding="utf-8")
+            Path("data/runs/sensitivity-example-office.json").write_text(json.dumps(sensitivity), encoding="utf-8")
+            assert _shown(Path("data/runs/x.json")) == "data/runs/x.json"
+            assert _shown(Path.cwd() / "data" / "x.json") == "data/x.json"
+            assert _shown(Path(here) / "x.json") == "x.json"
+            stdout, stderr = StringIO(), StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                assert main(["building.json", "batch.json"]) == 0
+            data = Path("data/runs/headlines-example-office.json").read_bytes()
+            written = json.loads(data)
+            assert data.decode("ascii") == json.dumps(written, indent=1) and b"\r" not in data
+            assert stderr.getvalue() == "" and written["headline"] == headline
+            assert written["sensitivity"] == with_sensitivity["sensitivity"]
+            assert written["sources"]["batch"]["file"] == "batch.json"
+            assert written["sources"]["batch"]["id"] == batch["id"]
+            assert written["sources"]["sensitivity"]["file"] == "data/runs/sensitivity-example-office.json"
+            assert all(s["modified"].endswith("Z") and s["modified"].isascii() for s in written["sources"].values())
+            assert stdout.getvalue().splitlines() == [
+                headline, *all_whys(written), f"wrote data/runs/headlines-example-office.json ({len(data)} bytes)"]
+            Path("data/runs/sensitivity-example-office.json").unlink()
+            with redirect_stdout(StringIO()), redirect_stderr(stderr):
+                assert main(["building.json", "batch.json", "--out", "second/pack.json"]) == 0
+            second = json.loads(Path("second/pack.json").read_text(encoding="utf-8"))
+            assert "sensitivity" not in second and list(second["sources"]) == ["batch"]
+            stdout, stderr = StringIO(), StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                assert main(["building.json", "nope.json"]) == 1
+                assert main(["other.json", "batch.json"]) == 2
+                assert main(["building.json", "batch.json", "--sensitivity", "nope.json"]) == 1
+            lines = stderr.getvalue().splitlines()
+            assert lines[0] == "no batch at nope.json: run D15's command (fire/README.md) first", lines
+            assert "'example-office'" in lines[1] and "'other-building'" in lines[1], lines
+            assert lines[2] == "no sensitivity file at nope.json" and stdout.getvalue() == ""
+        finally:
+            os.chdir(here)
+    print("headlines: pack, headline wording and fallbacks, labels, ASCII and the CLI checked", flush=True)
 
 
 def _long_side(polygon) -> float:
