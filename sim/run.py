@@ -11,6 +11,8 @@ Behavior:
   connected downward stairs. Arrivals wait for a clear spot before re-entry.
 - Each agent chooses a route using travel time and queues, and stands still
   (desired_speed 0) until alarmTime + startDelay.
+- People keep 2.5 m from the burning item where room geometry permits;
+  smaller keep-out areas preserve connected escape routes.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
 - Mid-run blocked interior doors act only through slowdown and trapping.
   Agents in a stairwell (status 2 or 3) are not exposed to fire.
@@ -28,7 +30,7 @@ from pathlib import Path
 import jupedsim as jps
 import numpy as np
 import shapely
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
 from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider
@@ -46,6 +48,7 @@ WALL_CLEARANCE = 0.3   # spawn inside (room ∩ walkable).buffer(-0.3)
 MIN_SPACING = 0.5      # spawn points at least this far apart
 STOPPED = 0.0          # desired_speed before the start delay is over (1.4.2 accepts 0)
 MIN_SMOKE_SPEED = 0.2
+FIRE_KEEPOUT_M = 2.5
 
 
 def _warn(msg: str) -> None:
@@ -71,6 +74,41 @@ def floor_walkable(floor: dict, blocked=frozenset()) -> Polygon:
         dropped = 1 - polys[0].area / sum(p.area for p in polys)
         _warn(f"{floor['id']}: {len(polys)} walkable pieces; dropped area {dropped:.1%}; simulating the largest only")
     return polys[0]
+
+
+def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
+    """Cut a room-clipped fire disc, retaining connected exits and stair zones."""
+    if not math.isfinite(radius) or radius < 0:
+        raise ValueError("fireKeepout must be finite and nonnegative")
+    if radius == 0:
+        return walk
+    point = Point(x, y)
+    origin = next((r for r in floor["rooms"] if r["id"] == room), None)
+    if origin is None:
+        origin = next((r for r in floor["rooms"] if Polygon(r["polygon"]).covers(point)), None)
+    if origin is None:
+        return walk
+    room_poly = Polygon(origin["polygon"])
+    room_area = walk.intersection(room_poly).area
+    zones = [Polygon(z["polygon"]) for z in floor["exits"] + floor["stairs"]]
+    attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
+    # Never enlarge an explicitly smaller user-supplied distance on fallback.
+    radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
+    for candidate in radii:
+        cut = walk.difference(point.buffer(candidate).intersection(room_poly))
+        pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
+        pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
+                        key=lambda p: p.area, reverse=True)
+        if not pieces or any(p.area > 0.5 for p in pieces[1:]):
+            continue
+        retained = pieces[0]
+        if retained.intersection(room_poly).area < room_area / 4:
+            continue
+        if any(z.distance(retained) > 0.1 for z in attached):
+            continue
+        return retained
+    _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
+    return walk
 
 
 def _largest_remainder(total: int, weights: list[float]) -> list[int]:
@@ -168,10 +206,10 @@ def place_occupants(building: dict, scenario: dict, rng: np.random.Generator, wa
 class _FloorSim:
     """One JuPedSim simulation for one floor, plus our jps-id -> idx map."""
 
-    def __init__(self, floor: dict, index: int, net: StairNet, blocked=frozenset()):
+    def __init__(self, floor: dict, index: int, net: StairNet, blocked, walk):
         self.id = floor["id"]
         self.index = index
-        self.walk = floor_walkable(floor, blocked)
+        self.walk = walk
         self.sim = jps.Simulation(model=jps.CollisionFreeSpeedModel(), geometry=self.walk, dt=DT)
         self.stages: list[dict] = []
         self.jid2idx: dict[int, int] = {}
@@ -283,6 +321,16 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     print(f"routing: {ROUTING_MODE}")
     blocked = {key for key, state in scenario.get("doors", {}).items() if state == "blocked"}
     walkable = {f["id"]: floor_walkable(f, blocked) for f in building["floors"]}
+    radius = float(scenario.get("fireKeepout", FIRE_KEEPOUT_M))
+    if not math.isfinite(radius) or radius < 0:
+        raise ValueError("fireKeepout must be finite and nonnegative")
+    ignition = scenario.get("fire") or {}
+    if radius and ignition and fire.hrr(float(scenario.get("maxTime", 600))) > 0:
+        for floor in building["floors"]:
+            if floor["id"] == ignition.get("floor"):
+                walkable[floor["id"]] = fire_keepout(
+                    walkable[floor["id"]], floor, ignition.get("room"),
+                    ignition["x"], ignition["y"], radius)
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
     net.check({a["floor"] for a in agents})
@@ -302,7 +350,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     seen_smoke = set()
 
     floors = building["floors"]
-    sims = [_FloorSim(f, i, net, blocked) for i, f in enumerate(floors)]
+    sims = [_FloorSim(f, i, net, blocked, walkable[f["id"]]) for i, f in enumerate(floors)]
     by_id = {fs.id: fs for fs in sims}
 
     status = [0] * n

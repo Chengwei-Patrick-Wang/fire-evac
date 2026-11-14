@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from sim.run import run, StuckWatch, floor_walkable, smoke_speed
+from sim.run import run, StuckWatch, floor_walkable, smoke_speed, fire_keepout, FIRE_KEEPOUT_M
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
 from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE, mobility_options
@@ -512,6 +512,51 @@ def check_core(building, scenario) -> dict:
     return r
 
 
+def check_keepout(building, scenario, slow=False):
+    from fire.model import FireModel
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    walk = floor_walkable(floor)
+    lobby = next(r for r in floor["rooms"] if r["id"] == "L1")
+    point = Polygon(lobby["polygon"]).representative_point()
+    cut = fire_keepout(walk, floor, "L1", point.x, point.y, FIRE_KEEPOUT_M)
+    assert cut.geom_type == "Polygon"
+    assert abs(walk.area - cut.area - 19.6) < 0.1
+    assert all(Polygon(z["polygon"]).distance(cut) <= 0.1
+               for z in floor["exits"] + floor["stairs"])
+    corridor = fire_keepout(walk, floor, "C1", 20, 8, FIRE_KEEPOUT_M)
+    assert abs(walk.area - corridor.area - np.pi) < 0.1
+    assert fire_keepout(walk, floor, None, point.x, point.y, 2.5).equals(cut)
+    assert fire_keepout(walk, floor, None, -100, -100, 2.5).equals(walk)
+    assert fire_keepout(walk, floor, "L1", point.x, point.y, 0).equals(walk)
+    # A tiny room cannot lose three quarters of its walkable area.
+    tiny = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    tiny_floor = {"id": "tiny", "rooms": [{"id": "r", "polygon": list(tiny.exterior.coords)}],
+                  "exits": [], "stairs": []}
+    warnings = io.StringIO()
+    with redirect_stderr(warnings):
+        assert fire_keepout(tiny, tiny_floor, "r", 0.5, 0.5, 2.5).equals(tiny)
+    assert "WARNING (sim)" in warnings.getvalue()
+
+    burning = deepcopy(scenario)
+    burning["fire"].update(floor="F1", room="L1", x=point.x, y=point.y)
+    protected = run(building, burning, FireModel(building, burning))
+    assert not any(e["type"] == "trapped" and e["floor"] == "F1"
+                   and np.hypot(e["x"] - point.x, e["y"] - point.y) < 2
+                   for e in protected["events"])
+    fid = protected["floors"].index("F1")
+    assert all(np.hypot(x - point.x, y - point.y) >= 2.5
+               for _, x, y, f, _ in protected["frames"][0]["a"] if f == fid)
+    if slow:
+        assert protected["metrics"]["trapped"] <= 15
+        print(f"lobby keep-out: {protected['metrics']['trapped']} trapped at full size")
+    else:
+        burning["fireKeepout"] = 0
+        unprotected = run(building, burning, FireModel(building, burning))
+        assert protected["metrics"]["trapped"] <= unprotected["metrics"]["trapped"] / 2
+        print(f"lobby keep-out: {unprotected['metrics']['trapped']} → "
+              f"{protected['metrics']['trapped']} trapped")
+
+
 def check_recording(building, scenario):
     from tools.toy_fire import ToyFire
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
@@ -546,6 +591,7 @@ def main(argv=None) -> int:
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
     core = timed("fast core", check_core, building, fast)
+    timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
     timed("fast LLM", check_llm, building, fast, core)
@@ -553,6 +599,7 @@ def main(argv=None) -> int:
 
     if args.slow:
         core = timed("full core", check_core, building, scenario)
+        timed("full keep-out", check_keepout, building, scenario, slow=True)
         timed("full fire", check_fire, building, scenario, core)
         timed("300 agents", check_300, building, scenario)
         timed("full mobility", check_mobility, building, scenario)
