@@ -337,14 +337,16 @@ def check_fire(building, scenario, clear):
     assert reroutes and all(e["t"] == 60 for e in reroutes)
     assert result["metrics"]["evacuated"] == clear["metrics"]["agents"]
 
-    # Loss of every option must park people safely, including agents still delayed.
+    # Loss of every option traps people, including agents still delayed.
     class BlockAll(BlockE1):
         def blocked_doors(self):
             return {"E1", "E2", "DSA2", "DSB2"}
 
     stranded_scenario = dict(scenario, maxTime=100, occupants={"total": 4})
     stranded = run(building, stranded_scenario, BlockAll(building, stranded_scenario))
-    assert stranded["metrics"]["remaining"] == 4
+    assert stranded["metrics"]["remaining"] == 0
+    assert stranded["metrics"]["trapped"] == 4
+    assert all(e["reason"] == "no route" for e in stranded["events"] if e["type"] == "trapped")
     assert stranded["metrics"]["evacuated"] == stranded["metrics"]["inStairs"] == 0
     assert len([e for e in stranded["events"] if e["type"] == "door_blocked"]) == 4
 
@@ -1078,6 +1080,62 @@ def check_seeds(building, scenario, slow=False):
         print(f"seed range: full example t90 {spread['t90']}; worker and base reuse parity OK")
 
 
+def check_sweep(building, fast, slow=False):
+    from unittest.mock import patch
+    from tempfile import TemporaryDirectory
+    from sim.sweep import sweep_cases, check_case, sweep, write_report, load_buildings
+    from fire.presets import PRESETS
+
+    buildings = load_buildings(["example", "office", "clinic"])
+    cases = sweep_cases(buildings, 8)
+    assert cases == sweep_cases(buildings, 8)
+    assert cases[3] == sweep_cases(buildings, 5)[3]
+    for case in cases:
+        b = buildings[case["building"]][0]
+        s = case["scenario"]
+        floor = next(f for f in b["floors"] if f["id"] == s["fire"]["floor"])
+        assert s["fire"]["room"] in {r["id"] for r in floor["rooms"]}
+        assert s["fire"]["type"] in PRESETS
+        assert set(s["doors"]) <= {d["id"] for f in b["floors"] for d in f["doors"]}
+    for error, expected in ((ValueError("cannot fit 9 agents in room F1/R1"), "rejected"),
+                            (RuntimeError("broken"), "failed")):
+        with patch("sim.sweep.run", side_effect=error):
+            assert check_case(building, fast)["outcome"] == expected
+    finished = dict(agents=[dict(idx=0)], events=[dict(type="trapped", idx=0, t=0, reason="no route")],
+                    frames=[], metrics=dict(agents=1, evacuated=0, trapped=1, remaining=0, inStairs=0, t100=None))
+    for field in ("remaining", "reason"):
+        bad = deepcopy(finished)
+        if field == "remaining":
+            bad["metrics"]["remaining"] = 1
+        else:
+            del bad["events"][0]["reason"]
+        with patch("sim.sweep.run", return_value=bad):
+            assert check_case(building, fast)["outcome"] == "failed"
+    small = deepcopy(fast)
+    small.update(occupants={"total": 12, "mix": {"typical": 1}}, doors={"DSA1": "propped", "E2": "blocked"})
+    small["fire"]["type"] = "kitchen"
+    row = check_case(building, small)
+    assert row["outcome"] == "ok", row
+    assert sweep(cases, buildings, budget_min=0) == []
+    # Exact seed-0 sweep repros: keep-out over a stage center, and blocked
+    # interior doors leaving a geometric hairline into an isolated room.
+    repros = sweep_cases(buildings, 48)
+    if list(buildings) == ["example", "office", "clinic"]:
+        for index in ((6, 12, 24, 42, 1, 18) if slow else (6, 12, 24)):
+            case = repros[index]
+            row = check_case(buildings[case["building"]][0], case["scenario"])
+            assert row["outcome"] == "ok", row
+    if slow:
+        selected = {k: v for k, v in buildings.items() if k in ("example", "office")}
+        cases = sweep_cases(selected, 4, agents=(10, 40, 120))
+        rows = sweep(cases, selected, workers=2)
+        assert len(rows) == 4
+        with TemporaryDirectory() as directory:
+            report = write_report(cases, rows, directory, 0, sum(r["wallS"] for r in rows))
+            assert json.loads((Path(directory) / "report.json").read_text()) == report
+    print("sweep generation, outcomes and real fire OK")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1099,6 +1157,7 @@ def main(argv=None) -> int:
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
+    timed("fast sweep", check_sweep, building, fast)
     timed("fast seeds", check_seeds, building, fast)
     core = timed("fast core", check_core, building, fast)
     timed("exit choice", check_exit_choice, building, fast)
@@ -1115,6 +1174,7 @@ def main(argv=None) -> int:
     timed("recording", check_recording, building, fast)
 
     if args.slow:
+        timed("full sweep", check_sweep, building, fast, slow=True)
         timed("full seeds", check_seeds, building, scenario, slow=True)
         timed("full calibration", check_calibration, slow=True)
         timed("office blocked arrival", check_blocked_arrival, slow=True)
