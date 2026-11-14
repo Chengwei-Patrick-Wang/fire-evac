@@ -70,6 +70,8 @@ interface AppState {
   running: string | null
   runError: string | null
   runNote: string | null
+  /** True when runNote explains a precomputed run shown because the live run failed (the panel then shows it as a warning). */
+  runFallback: boolean
   riskMetric: 'riskT90' | 'riskTrapped'
   crowding: boolean
   lens: boolean[]
@@ -143,6 +145,7 @@ export const useApp = create<AppState>((set) => ({
   whatIfBusy: null,
   whatIfError: null,
   runNote: null,
+  runFallback: false,
   fromTracer: null,
   riskMetric: 'riskT90',
   crowding: false,
@@ -205,20 +208,31 @@ export const useApp = create<AppState>((set) => ({
     const st = useApp.getState()
     const b = st.building
     if (!b || st.running) return
-    set({ running: 'Running…', runError: null, runNote: null })
+    set({ running: 'Running…', runError: null, runNote: null, runFallback: false })
     const sc: Scenario = { ...scenario, buildingId: b.id, occupants: { ...scenario.occupants, mix: normalizeMix(scenario.occupants.mix) } }
-    const loadNearest = async () => {
-      const entries = await listDemoRuns(b.id)
-      const hit = nearestPrecomputedRun(entries, sc.fire)
-      if (!hit) throw new ApiError('No precomputed run for this building')
+    // The precomputed run nearest this fire (static mode's rule), loaded, made active and explained in runNote. False when the building
+    // has none, or when it is no longer the loaded building (a late fallback must not add its run to another one).
+    const showNearest = async (afterLiveFailure: boolean): Promise<boolean> => {
+      const hit = nearestPrecomputedRun(await listDemoRuns(b.id), sc.fire)
+      if (!hit || useApp.getState().building?.id !== b.id) return false
       const { entry, distance } = hit
       if (!useApp.getState().runs[entry.id]) {
         const run = await loadDemoRun(entry)
+        if (useApp.getState().building?.id !== b.id) return false
         useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {} })
       } else useApp.getState().switchRun(entry.id)
       const here = sc.fire.x !== undefined ? `, ${distance.toFixed(1)} m from your click` : ''
-      set({ runNote: `Static mode: nearest precomputed run, fire in ${entry.fire.room}${here}` })
+      set({
+        runFallback: afterLiveFailure,
+        runNote: afterLiveFailure
+          ? `Live run unavailable: showing the nearest precomputed fire (room ${entry.fire.room}).`
+          : `Static mode: nearest precomputed run, fire in ${entry.fire.room}${here}`,
+      })
+      return true
     }
+    // Set when the live run failed, and whether the backend could not be reached at all (which also ends live mode).
+    let failure: Error | null = null
+    let unreachable = false
     try {
       if (useApp.getState().mode === 'live') {
         try {
@@ -229,13 +243,20 @@ export const useApp = create<AppState>((set) => ({
           useApp.getState().addRun({ key: id, label: `Your run ${id.slice(3, 7)}`, run, doors: sc.doors ?? {}, scenario: sc })
           return
         } catch (e) {
-          const unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
-          if (!unreachable) throw e
-          setLoaderMode('static')
-          set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
+          // Spec §8 beat 3: the judge's fire "runs live, or loads the nearest precomputed run". Whatever went wrong (no backend, an HTTP
+          // error, a run that failed, one that outlasted pollRun's wait), the screen gets the precomputed run below.
+          failure = e instanceof Error ? e : new Error(String(e))
+          unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
+          console.warn(`live run failed, showing the nearest precomputed run instead: ${failure.message}`)
+          if (unreachable) {
+            setLoaderMode('static')
+            set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
+          }
+          set({ running: 'Loading precomputed run…' })
         }
       }
-      await loadNearest()
+      // With no precomputed run for this building the error is today's: the live failure itself, or after a connection failure "No precomputed run".
+      if (!(await showNearest(failure !== null))) throw failure && !unreachable ? failure : new ApiError('No precomputed run for this building')
     } catch (e) {
       set({ runError: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -298,7 +319,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

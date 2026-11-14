@@ -8,7 +8,7 @@ const MIX: Profile[] = ['typical', 'older', 'visitor']
 const STATES: DoorState[] = ['open', 'closed', 'propped', 'blocked']
 
 export default function ScenarioPanel() {
-  const { draft, building, patchDraft, placing, setPlacing, running, runError, runNote, runScenario } = useApp()
+  const { draft, building, patchDraft, placing, setPlacing, running, runError, runNote, runFallback, runScenario } = useApp()
   const [doorPick, setDoorPick] = useState('')
   if (!draft || !building) return <p className="dim">Load a building to set up a scenario.</p>
   const doorIds = building.floors.flatMap((f) => f.doors.map((d) => d.id))
@@ -151,7 +151,11 @@ export default function ScenarioPanel() {
         {running ?? 'Run'}
       </button>
       {runError && <p className="err">{runError}</p>}
-      {runNote && <p className="dim">{runNote}</p>}
+      {runNote && (
+        <p className={runFallback ? 'warn' : 'dim'} role="status">
+          {runNote}
+        </p>
+      )}
       <WhatIfCard />
     </div>
   )

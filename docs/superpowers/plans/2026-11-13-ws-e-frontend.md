@@ -534,3 +534,48 @@
   - `npm run qa -- --open public/demo/batch-example-office.json` exits 0. Its `qa/fixes-list.png` shows keepClear-E1 with a "trade-off" badge, "; but +1.3 trapped per fire" and "→ #4 Exit Main entrance".
 - [x] **Step 8: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): trade-off badges for measured fixes; spots named by label, never raw id"` (no attribution lines).
   - Say in the commit body that office and clinic interior doors read well once D23 lands and A reruns the precompute.
+
+### Task E35 (P0 · Sat 5 PM): Live mode falls back to the nearest precomputed run
+- **Files:** Modify `frontend/src/store/app.ts`, `frontend/src/ui/ScenarioPanel.tsx`, `frontend/src/model/fixes.ts`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Interfaces:**
+  - **Consumes:**
+    - Spec §8 beat 3: the judge's fire "runs live, or loads the nearest precomputed run".
+    - `runScenario` (`store/app.ts`). In live mode (`VITE_API_URL` set and `/health` answered) it posts the scenario with `startRun` and waits with `pollRun` (the client's wait, `maxS` 180 s).
+      - Only a connection failure (`Could not reach`, `Timed out`) falls back today: the app switches to static mode (banner "Backend unreachable: precomputed runs only") and takes static mode's path.
+      - Every other failure shows only `runError`: `Request failed (500)`, a run that reports `status: error`, "Run did not finish within 180 s".
+    - Static mode's `loadNearest`: `listDemoRuns(b.id)`, `nearestPrecomputedRun(entries, sc.fire)` (same floor first, then the nearest fire), `addRun` or `switchRun`, then `runNote` "Static mode: nearest precomputed run, fire in <room>, <d> m from your click". With none: `ApiError('No precomputed run for this building')`.
+    - `ScenarioPanel` shows `runError` (`p.err`) and `runNote` (`p.dim`) under the Run button.
+    - `fixLine` and `measures()` (`model/fixes.ts`) write the t90 change as `sg(dT90) s t90`, so 0.3 s reads "+0 s t90" (and -0.3 s "0 s t90").
+  - **Produces:** `useApp.runFallback`, the live-failure note, "no change in 90% out" in fix lines, and qa step `live-fallback`.
+- [x] **Step 1: One path to the nearest run.**
+  - In `runScenario`, turn `loadNearest` into `showNearest(afterLiveFailure)`. It keeps the same rule and loading, and returns false when the building has no precomputed run, or is no longer the loaded building (a late fallback must never add a run to another building).
+  - Any live failure, not only a connection failure, falls through to it, and is logged with `console.warn`.
+  - A connection failure still ends live mode, as today (static mode and the banner). Other failures keep live mode, so the next click tries the backend again.
+  - While it loads, the Run button reads "Loading precomputed run…".
+  - After a live failure the note is "Live run unavailable: showing the nearest precomputed fire (room <entry.fire.room>)." Static mode's note stays as it is.
+  - When nothing can be shown, the error is today's: the live failure itself, or "No precomputed run for this building" after a connection failure.
+  - A live run that succeeds takes the same lines as before.
+- [x] **Step 2: Show the note.**
+  - `useApp.runFallback` (false) is set with the note, and reset when a run starts and in `setBuilding`.
+  - `ScenarioPanel` renders the note as `p.warn` with `role="status"` when it is set, else `p.dim` as before. App.css: `.scenario .warn { color: var(--warn) }`.
+- [x] **Step 3: "no change in 90% out".**
+  - In `fixes.ts`, `t90Text(v)` is "no change in 90% out" when `Math.round(v) === 0`, else the signed "-12 s t90". `fixLine` and `measures()` use it.
+  - Example: "Self-closers on stair doors (vs propped open): no change in 90% out, -394 person-seconds in smoke across 36 fires".
+  - A trade-off never lists a t90 under 1 s, so its line is unchanged.
+- [x] **Step 4: QA.** Add step `live-fallback` after `fixes`, in a fresh page so the main page's runs stay as they are.
+  - qa has no backend, so the page is put in live mode by hand (`__app.setState({ mode: 'live' })`) and `POST /runs` and `GET /runs/*` are answered by routes.
+  - Four ways to fail, each ending on the precomputed run nearest the draft's fire, with the note (the only `p.warn`) and no `runError`. The draft's fire is first moved onto another precomputed fire, taken from `demo/index.json`:
+    - HTTP 500 on the start (mode still live);
+    - `{ status: 'error' }` on the poll (still live);
+    - `{ status: 'running' }` with `Date.now` jumped 200 s ahead, past the wait (still live);
+    - the connection refused (mode becomes static, with the banner "Backend unreachable: precomputed runs only").
+  - Then the building's id is renamed to one with no runs: the live error stays in `runError`, with no note. Shot `live-fallback.png`. Console errors from the routed 500 and the refused connection are expected in this page only.
+- [x] **Step 5: Verify.**
+  - `npm run build` passes with no type errors.
+  - `npm run qa` exits 0 with 0 axe violations (`qa/live-fallback.png` shows the amber note under Run).
+  - `python tools/check_all.py frontend privacy` ends with ALL OK.
+  - Manual, on throwaway servers (free ports; 5173 and 8000 stay untouched):
+    - A dev server with `VITE_API_URL=http://localhost:8099/api` and nothing listening there. The startup health check fails, so the app starts in static mode: put it in live mode by hand (`__app.setState({ mode: 'live' })`), pick a fire room and click Run. The amber note, the banner "Backend unreachable: precomputed runs only" and the nearest run appear.
+    - A stand-in API that answers `/health` and the buildings and fails `POST /runs` (HTTP 500, a run that reports an error, a run that never finishes), with a second dev server pointed at it: the app starts in live mode by itself, stays live after each failure, and shows the note and the nearest run.
+    - Stop both dev servers and the stand-in.
+- [x] **Step 6: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): live mode falls back to the nearest precomputed run"` (no attribution lines).
