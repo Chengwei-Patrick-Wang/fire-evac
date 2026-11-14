@@ -2,6 +2,7 @@
 # Overnight runner: works through one workstream plan unattended, one task per agent run.
 #
 #   tools/overnight/run.sh <claude|codex> <a|b|c|d|e> [hours=7]
+#   tools/overnight/run.sh <claude|codex> <a|b|c|d|e> check    # verify setup, then exit
 #
 # Each round it:
 #   1. saves leftover changes as a wip commit,
@@ -18,7 +19,8 @@ set -u
 
 TOOL="${1:?usage: tools/overnight/run.sh <claude|codex> <a-e> [hours]}"
 WS="${2:?usage: tools/overnight/run.sh <claude|codex> <a-e> [hours]}"
-HOURS="${3:-7}"
+MODE="${3:-7}"
+if [ "$MODE" = check ]; then CHECK=1; HOURS=0; else CHECK=0; HOURS="$MODE"; fi
 BRANCH="ws-$WS"
 TASK_TIMEOUT=5400   # seconds before a single agent run is killed
 WAIT_EMPTY=1200     # seconds to wait after a round with no commit
@@ -83,6 +85,36 @@ with_timeout() {
 }
 
 sync
+
+if [ "$CHECK" = 1 ]; then
+  ok=1
+  pass() { echo "  PASS  $*"; }
+  fail() { echo "  FAIL  $*"; ok=0; }
+  echo "Checking the overnight setup for $BRANCH with $TOOL:"
+  if [ -n "$(git config user.email)" ]; then pass "git identity: $(git config user.email)"
+  else fail "git identity missing: git config --global user.name 'You'; git config --global user.email you@example.com"; fi
+  if git push -q -u origin "$BRANCH" 2>/dev/null; then pass "can push $BRANCH to GitHub"
+  else fail "cannot push to GitHub: accept the repo invite, then log in (gh auth login, or the Git credential manager)"; fi
+  if python -c "import jupedsim, shapely, numpy, fastapi" 2>/dev/null; then pass "Python venv has the requirements ($(python --version 2>&1))"
+  else fail "Python: python -m venv .venv, activate it, pip install -r requirements.txt"; fi
+  case "$WS" in a|e)
+    if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then pass "Node $(node --version)"
+    else fail "Node 20 or newer is needed for the frontend"; fi ;;
+  esac
+  PLAN=$(ls docs/superpowers/plans/*-ws-"$WS"-*.md 2>/dev/null | head -1)
+  if [ -n "$PLAN" ]; then pass "plan: $PLAN"; else echo "  WAIT  plan for $BRANCH is not on main yet (the real run waits for it)"; fi
+  out="debug/overnight-$WS-check.txt"
+  if [ "$TOOL" = claude ]; then claude -p "Reply with the single word READY." --model sonnet --max-turns 1 >"$out" 2>&1 &
+  else codex exec "Reply with the single word READY." >"$out" 2>&1 & fi
+  pid=$!; ( sleep 180; kill "$pid" 2>/dev/null ) & watcher=$!
+  wait "$pid"; kill "$watcher" 2>/dev/null
+  if grep -qi ready "$out"; then pass "$TOOL answers in headless mode (logged in, no prompts)"
+  else fail "$TOOL did not answer (see $out): log in, and run '$TOOL' here once interactively to accept the folder prompt"; fi
+  if [ "$ok" = 1 ]; then echo "All set. Start the real run: tools/overnight/run.sh $TOOL $WS"
+  else echo "Fix the FAIL lines, then run the check again."; fi
+  exit $((1 - ok))
+fi
+
 PLAN=""
 for _ in $(seq 1 30); do
   PLAN=$(ls docs/superpowers/plans/*-ws-"$WS"-*.md 2>/dev/null | head -1)

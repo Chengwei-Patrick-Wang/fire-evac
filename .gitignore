@@ -13,3 +13,4 @@ debug/
 *.ifc
 .DS_Store
 .claude/settings.local.json
+handoff/
