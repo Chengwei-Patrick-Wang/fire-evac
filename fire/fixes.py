@@ -51,6 +51,18 @@ def widen_door(building: dict, door_id: str, extra=0.5) -> dict:
     return result
 
 
+STAT_KEYS = ("n", "dT90", "dT90Min", "dT90Max", "slower", "faster", "dTrapped", "dDosed", "dSmokeSeconds")
+
+
+def _sprinkler_whatif(fix: dict, entry: dict | None, baseline: list[dict]) -> bool:
+    """True when the sprinkler what-if already measured this fix: the same scenario (sprinklers on, no door
+    change) with every baseline fire paired, so a rerun would only repeat its runs."""
+    return bool(
+        entry and fix["kind"] == "sprinklers" and entry.get("sprinklers") is True
+        and not entry.get("doors") and not fix.get("doors")
+        and entry.get("n") == sum(r.get("ok", True) for r in baseline))
+
+
 def _inverse(variant):
     stats = {key: deepcopy(variant[key]) for key in
              ("n", "dT90", "dT90Min", "dT90Max", "slower", "faster", "dTrapped", "dDosed", "dSmokeSeconds")
@@ -161,6 +173,11 @@ def add_fixes(building: dict, base: dict, batch: dict, rooms=None, top=2,
             b = whatif.get(fix["derivedFrom"].split(".", 1)[-1], {}).get("baseSmokeSeconds")
             if b is not None and "dSmokeSeconds" in fix and b - fix["dSmokeSeconds"] > 0:
                 fix["smokePct"] = 100 * fix["dSmokeSeconds"] / (b - fix["dSmokeSeconds"])
+        elif _sprinkler_whatif(fix, whatif.get("sprinklers"), baseline):
+            # Same scenario and fires as the sprinkler what-if: its numbers are the rerun's, to the last digit.
+            fix.update({key: deepcopy(whatif["sprinklers"][key]) for key in STAT_KEYS if key in whatif["sprinklers"]})
+            if whatif["sprinklers"].get("smokePct") is not None:
+                fix["smokePct"] = whatif["sprinklers"]["smokePct"]
         else:
             scenario = deepcopy(base)
             scenario["id"] = f"{base['id']}-{fix['id']}"

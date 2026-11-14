@@ -506,9 +506,9 @@ six-room, seeds 1 and 2 CLI completed 48 simulations in 83.9 s with 12
 baseline runs, no baseline failures, and 12 matched pairs per variant:
 
 ```text
-Stair doors propped open: 90% out 0 s later on average (slower in 0 of 12 fires); +427 person-seconds in smoke, +0.5 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
-Exit Main entrance blocked: 90% out 54 s later on average (slower in 10 of 12 fires); +5,250 person-seconds in smoke, +23.8 people at an illustrative smoke dose of 1, -9.8 trapped per fire.
-Sprinklers on: 90% out 1 s sooner on average (slower in 0 of 12 fires); -72 person-seconds in smoke, -0.8 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+Stair doors propped open: 90% out 0 s later on average (slower in 0 of 12 fires); +427 person-seconds in smoke, +0.5 people at an illustrative smoke dose of 1, +0.0 trapped per fire. (before C14; see D19)
+Exit Main entrance blocked: 90% out 54 s later on average (slower in 10 of 12 fires); +5,250 person-seconds in smoke, +23.8 people at an illustrative smoke dose of 1, -9.8 trapped per fire. (before C14; see D19)
+Sprinklers on: 90% out 1 s sooner on average (slower in 0 of 12 fires); -72 person-seconds in smoke, -0.8 people at an illustrative smoke dose of 1, +0.0 trapped per fire. (before C14; see D19)
 ```
 
 These measured examples include the lobby routing artifact identified in the
@@ -655,11 +655,11 @@ Verified example output (6 sampled rooms x 2 seeds, 12 matched fires per fix;
 `LLM_PROVIDER=off`; zero baseline failures):
 
 ```text
-Keep Exit Main entrance clear (vs blocked): 90% out 55 s sooner on average and 1472 fewer person-seconds in smoke across 12 fires (faster in 12); +1.9 trapped per fire.
-Sprinklers: 90% out 2 s sooner on average and 3% less time in smoke across 12 fires (faster in 5); -1.9 trapped per fire.
-Self-closers on stair doors (vs propped open): 90% out 0 s later on average and 394 fewer person-seconds in smoke across 12 fires (faster in 0); -0.0 trapped per fire.
-Widen Door DL1 from 4.00 m to 4.50 m: 90% out 0 s sooner on average and 1% less time in smoke across 12 fires (faster in 4); +0.2 trapped per fire.
-Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 18 s later on average and 3% less time in smoke across 12 fires (faster in 7); +0.5 trapped per fire.
+Keep Exit Main entrance clear (vs blocked): 90% out 55 s sooner on average and 1472 fewer person-seconds in smoke across 12 fires (faster in 12); +1.9 trapped per fire. (before C14; see D19)
+Sprinklers: 90% out 2 s sooner on average and 3% less time in smoke across 12 fires (faster in 5); -1.9 trapped per fire. (before C14; see D19)
+Self-closers on stair doors (vs propped open): 90% out 0 s later on average and 394 fewer person-seconds in smoke across 12 fires (faster in 0); -0.0 trapped per fire. (before C14; see D19)
+Widen Door DL1 from 4.00 m to 4.50 m: 90% out 0 s sooner on average and 1% less time in smoke across 12 fires (faster in 4); +0.2 trapped per fire. (before C14; see D19)
+Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 18 s later on average and 3% less time in smoke across 12 fires (faster in 7); +0.5 trapped per fire. (before C14; see D19)
 ```
 
 Verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
@@ -988,3 +988,186 @@ readable), `scoreRange` and `riskT90Range` beside the score and time, and
 
 All numbers use the illustrative model and are ideas for a fire protection engineer
 to check; they are not design or compliance results.
+
+## Refresh after C14 and C13b (D19)
+
+`python -m fire.refresh BUILDING SCENARIO [--occupants N] [--fire-type T] [--rooms 12] [--seeds 1,2,3] [--workers N] [--check] [--resume]`
+says which of the numbers we quote moved because of C14, the smoke-aware exit choice (people avoid a stair they can
+see filling with smoke), and which did not. It runs the same rooms and seeds twice on the same code, so only C14
+differs:
+
+- the **C14 terms off** side sets the scenario's `exitChoice` to `{"smoke": 0, "unfamiliar": 0}` and appends `-c14off`
+  to the scenario id. It is not "before C14": C14's separate `smoke` reroute trigger stays on;
+- the **current** side leaves the scenario alone (C14's weights: 4 s per smoky metre seen, 30 s for an unfamiliar exit).
+
+Both sides get the same what-if variants (taken from the current baseline, so `blockedExit` blocks the same door) and
+their own measured fixes (widening follows each side's own `top`). The order is both baselines, then each what-if on
+both sides in turn (one `add_whatif` call per variant and side, all from the one variant list), then the fixes, the
+current side first. So a run that is stopped early still holds paired what-ifs and, before anything of the legacy
+side's fixes, the whole current side, which is the one the demo quotes. After every stage the CLI saves that side's
+batch so far to `data/runs/batch-<id>[-c14off].partial.json` (deleted when the run finishes). It writes `data/runs/batch-<id>.json`, `batch-<id>-c14off.json`, `headlines-<id>.json` and
+`headlines-<id>-c14off.json` (all gitignored), after renaming an existing `batch-<id>.json` and `headlines-<id>.json`
+to `.prev.json` (`.prev2.json` and so on when that name is taken: nothing is overwritten or deleted).
+
+A baseline or what-if stage whose runs did not all finish is run again once, and the attempt with the most finished
+runs is kept (`retries=1`): on a shared laptop a worker can die, `BrokenProcessPool` then takes every run that pool had
+not finished, and a what-if with fewer pairs than baseline fires is not comparable. `--resume` continues a stopped run
+from its `.partial.json` checkpoints: stages they hold in full are not run again, a baseline or what-if that lacks
+fires is redone (and the fixes measured against it are dropped), and a checkpoint made with another scenario is refused.
+
+`add_fixes` (D14) now reuses a sprinkler what-if instead of rerunning the sprinkler fix, as D15 suggested, when that
+what-if paired every baseline fire (same scenario: sprinklers on, no door change). D15's and D18's saved batches show the
+two agree on every number (`n`, `dT90` and its range, `slower`, `faster`, `dTrapped`, `dDosed`, `dSmokeSeconds`), so this
+changes no result and saves a seventh of the runtime. Without that what-if, or with a `--fix-rooms` limit that leaves
+some of its fires out, the fix is rerun as before. The office refresh below used it from its fixes stage on.
+
+`--check` prints which of the two fixes this checkout has and exits 0:
+`C14 smoke-aware exit choice: yes|no; C13b stair arrivals: yes|no|n/a`. C14 is read from the simulator's source
+(`SMOKE_BETA` in `sim/brain.py`, or `exitChoice` in `sim/run.py`). C13b has no flag, so the probe is D15's repro
+(office, kitchen in R106, seed 2, 250 occupants, `D$77wwb` blocked, `maxTime` 240, through `_run_one`), which used to
+raise `too close to geometry boundaries`; it runs only for the building `office` (`n/a` for any other) and costs one
+run (88 s on the lead's laptop). Without `--check` the CLI exits 3 after that line and `nothing to refresh yet` when C14
+is missing, or C13b on the office; it exits 1 when a file is missing.
+
+What counts as changed (`diff_headlines(old, new)`, old = C14 terms off; the constants are at the top of
+`fire/refresh.py`):
+
+| Compared number | Changed when |
+| --- | --- |
+| `smokePct` (else `dSmokeSeconds`) of each what-if and fix | it moves by 5 points (`dSmokeSeconds`: by 10% of the larger value) |
+| `dT90` of each what-if and fix | it moves by 5 s |
+| `dTrapped` of each what-if and fix | it moves by 0.5 people per fire |
+| a fix's `helps` | it flips |
+| the ids of the top 3 weak spots, in order | they differ |
+| a what-if or fix id | it is on one side only |
+| `exitUse`: the baseline `runs[].exitCounts` summed per exit | an exit moves by 5% of the evacuees |
+
+Contract additions to `headlines/v0` (current pack only; all optional; readers ignore unknown fields; ASCII text):
+`features: {smokeAwareExits, stairArrivalsFixed}` (`stairArrivalsFixed` only on the office), `legacyHeadline` (the
+C14-off pack's `headline`) and `changes: [{key, label, old, new, changed, why}]`. `changes` holds only the entries that
+changed, so every one has `changed: true` (an entry measured on one side only leaves the other side's value out);
+`key` is `top3`, `whatIf.<id>.<smokePct|dSmokeSeconds|dT90|dTrapped>`, `fixes.<id>.<same four, or helps>` or
+`exitUse`. The CLI prints every changed `why` and the keys that did not change.
+
+### Measured: the example building (Sat 10:07-10:33, lead's laptop)
+
+Windows 11 Pro, Intel Core i9-10885H (8 cores, 16 threads), 16 GB RAM, 6 workers, shared with A's demo precompute
+(two more groups of 6 workers). Verification first: `python -m fire.smoke_test` and `python -m fire.checks --slow` both
+printed `fire checks OK` (the slow suite took 10 minutes on the shared laptop).
+
+```text
+$ OPENBLAS_NUM_THREADS=1 python -m fire.refresh contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2 --workers 6
+C14 smoke-aware exit choice: yes; C13b stair arrivals: n/a
+refresh plan: 6 rooms x 2 seeds = 12 fires per side; up to 6 paired reruns of each -> about 168 runs on 6 workers
+previous pack: Stair doors propped open: +26% person-seconds in smoke across 12 paired fires; 90% out 0 s later on average.
+C14 terms off: Stair doors propped open: +25% person-seconds in smoke across 12 paired fires; 90% out 0 s sooner on average.
+C14 terms on:  Stair doors propped open: +26% person-seconds in smoke across 12 paired fires; 90% out 0 s later on average.
+4 of 31 compared numbers changed:
+Exit Main entrance blocked, smoke exposure: +89% -> +94% with C14's exit-choice terms on (same 12 fires).
+Widen Door DL1 (Lobby to Corridor 1) from 4.00 m to 4.50 m, 90% out time: +4 s -> -5 s with C14's exit-choice terms on (same 12 fires).
+Widen Door DL1 (Lobby to Corridor 1) from 4.00 m to 4.50 m, trapped per fire: +0.5 -> -0.4 with C14's exit-choice terms on (same 12 fires).
+Widen Door DL1 (Lobby to Corridor 1) from 4.00 m to 4.50 m, helps: no -> yes with C14's exit-choice terms on (same 12 fires).
+wrote data/runs/batch-example-office-c14off.json (12 runs, 0 failed) and data/runs/headlines-example-office-c14off.json (7053 bytes)
+wrote data/runs/batch-example-office.json (12 runs, 0 failed) and data/runs/headlines-example-office.json (8507 bytes)
+runtime 1537.9 s
+```
+
+168 runs, none failed, 1,538 s (this run did the fixes of the C14-off side first; the code now starts with the current
+side, which changes no number). The exit-use line is not in the pack's `changes` because it did not change (no exit moved
+by 5% of the 1,895 evacuees); `exit_shift` on the two saved batches gives `Exit use across the baseline fires: Exit East stair exit 838 -> 829 people, Exit Main entrance 1057 -> 1062.`
+
+- **The headline does not move.** Propped stair doors cost +25% person-seconds in smoke with C14's terms off and +26%
+  with them on, and 90% out is 0 s either way (the sign flips from -0.23 s to +0.02 s, which is why the text says
+  "sooner" and "later"). The top 3 weak spots (Door DL1, the Lobby fire, Exit East stair exit) are the same; ranks 4
+  and 5 swap (Exit Main entrance and Door D104).
+- **The previous pack is the current side.** `batch-example-office.prev.json` (D18, Sat 09:43) and the new current batch
+  agree on all 12 runs, all 3 what-ifs and all 5 fixes to the last digit, so the simulator is deterministic and D18 already ran with C14. The
+  D11 and D14 lines above (+22% and so on) are older: they predate C14 and other simulator fixes, and since the C14-off
+  side on today's code gives +25%, most of the step from +22% to +26% is not C14's.
+- **What C14 does move** is small: the blocked main entrance costs +94% person-seconds in smoke instead of +89%, and the
+  measured fix "Widen Door DL1" goes from not helping (+3.9 s, +0.5 trapped per fire) to helping (-5.4 s, -0.4 trapped
+  per fire), a 9 s swing on a 12-fire sample. Exit use is nearly unchanged (East stair exit 838 -> 829 people, Main
+  entrance 1,057 -> 1,062 over the 12 baseline fires).
+
+### Measured: the office (Sat 10:33-12:30, lead's laptop), stopped at 12:30
+
+Same machine and 6 workers. Started at 10:33 (log `debug/refresh-office.log`) and continued twice with `--resume`
+(`debug/refresh-office-resume.log`, `debug/refresh-office-resume2.log`):
+
+```text
+$ LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m fire.refresh data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --rooms 12 --seeds 1,2,3 --workers 6
+C14 smoke-aware exit choice: yes; C13b stair arrivals: yes
+refresh plan: 12 rooms x 3 seeds = 36 fires per side; up to 6 paired reruns of each -> about 504 runs on 6 workers
+```
+
+The run did not finish. At 12:30 it was stopped (the 12:30 rule) and `fire.refresh.publish`, the function the CLI calls at
+the end, wrote the files from the checkpoints, comparing only what both sides had finished:
+
+```text
+renamed data/runs/batch-office.json to data/runs/batch-office.prev.json
+renamed data/runs/headlines-office.json to data/runs/headlines-office.prev.json
+previous pack: Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
+C14 terms off: Stair doors propped open: +49% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
+C14 terms on:  Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
+2 of 11 compared numbers changed:
+Top 3 weak spots: OPEN OFFICE (R237b), Exit Stair S1 (west), Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE) -> OPEN OFFICE (R237b), Exit Stair S1 (west), Exit Stair S2 (east) with C14's exit-choice terms on.
+Exit Stair S1 (west) blocked, smoke exposure: +60% -> +55% with C14's exit-choice terms on (same 36 fires).
+wrote data/runs/batch-office-c14off.json (36 runs, 0 failed) and data/runs/headlines-office-c14off.json (4732 bytes)
+wrote data/runs/batch-office.json (36 runs, 0 failed) and data/runs/headlines-office.json (7927 bytes)
+```
+
+The exit-use line (`exit_shift`, not in `changes` because it did not change): `Exit use across the baseline fires: Exit
+Entry (south) 976 -> 1224 people, Exit Open Office (west) 1410 -> 1313.`
+
+**What finished.** The current side is complete: baseline, 3 what-ifs and 5 fixes, 36 fires each, none failed. The C14-off
+side has its baseline and 3 what-ifs (36 fires each, none failed); its fixes were not measured, so no fix line is compared.
+
+**What happened to the run** (the reasons `retries`, `--resume` and the sprinkler reuse exist):
+
+- 11:08: a worker died. `BrokenProcessPool` took 15 of the 36 runs of the current side's propped-stairs what-if (`n` 21,
+  an unusable +172%), after a 60 s stall and two Windows power-source events (11:08:27 and 11:09:46). The old code
+  had no retry. The first process was stopped at 11:18 after the C14-off blocked-exit stage and `--resume` redid the short
+  stage (36 runs, no failure) and went on.
+- 11:52: resumed once more to use the sprinkler reuse for the fixes stage (the current side's fixes finished 12:07, 13 minutes).
+- 12:07-12:30: the C14-off fixes stage started at 12:07:43, but Windows logged a standby from 12:14:37 to 12:29:30
+  (Kernel-Power 506 and 507), and at 12:30 its second widened-door stage had 6 of 36 runs. Nothing of that stage was kept
+  (a fixes stage is saved only when it ends).
+- To finish: run the same command with `--resume`. The checkpoints `data/runs/batch-office.partial.json` and
+  `data/runs/batch-office-c14off.partial.json` were kept, so only the C14-off fixes run (two widened-door reruns of 36 fires,
+  about 15 minutes at the pace of 12:00-12:08; the sprinkler fix is reused). It then writes all four files again and
+  renames the present ones to `.prev2.json`. The pack's `changes` then also covers the fixes.
+
+**Reading the numbers.**
+
+- **The headline barely moves.** Propped stair doors add +152 person-seconds in smoke per fire with C14's terms off and
+  on, and 90% out is 0 s later either way (+0.11 s and +0.05 s). The percent goes from +49% to +54%, 4.9 points and so just
+  under the 5-point line, because C14 lowers the baseline: the mean person-seconds in smoke per fire falls from 309 to 281
+  (-9%), since people steer away from stairs they can see filling with smoke.
+- **The third weak spot changes.** With the terms off it is Door DQnt_pi (the SECURE DOC ROOM's only door, 29 waiting
+  person-seconds, all in smoke); with them on it is Exit Stair S2 (east), whose waiting rises from 72 to 114
+  person-seconds per fire (score 31.4 to 44.8) while DQnt_pi stays near its score (44.3 to 43.9) and drops to 4th. The
+  R237b fire and Stair S1's exit keep ranks 1 and 2. The seed-stability lines of the two packs differ as well.
+- **Blocking Stair S1's exit** is the one what-if line that moves: 15 s later with the terms off and 13 s with them on,
+  +187 person-seconds in smoke (+60%) against +154 (+55%).
+- **Exit use** shifts toward the south entry: Exit Entry (south) 976 -> 1,224 people and Exit Open Office (west) 1,410 ->
+  1,313 across the 36 baseline fires. The largest move, 248 people, is 2.8% of the 8,954 evacuees (the line is 5%), and the stair
+  exits hardly move (S1 2,749 -> 2,709, S2 2,512 -> 2,517). People trapped: 50 -> 46 over the 36 fires; mean 90% out
+  136.4 -> 136.6 s. Sprinklers are unchanged by C14 (-1.3 and -1.2 trapped per fire).
+- **D15's batch is the current side.** The new current batch agrees with D15's `batch-office.prev.json` on all 36
+  runs, all 3 what-ifs and all 5 fixes to the last digit (the sprinkler fix included, which was reused from its what-if
+  this time and rerun in D15: the reuse checks out). D15 ran Sat 08:12, after C14 (04:21) and C13b (04:26), so D15's and
+  D18's lines are not marked "(before C14)": they already include C14. The new pack adds the percent at the source, so the derived fixes
+  have one now (keeping Stair S1's exit clear -35%, self-closers -35%). With the example (D18's batch reproduced exactly as well), the
+  simulator is deterministic: the same fires give the same numbers, whatever else the laptop is doing.
+- **The C13b probe passed** (`C13b stair arrivals: yes`): the blocked-exit sweeps ran on both sides with no failed run.
+
+Handoff for A: quote only the newest `data/runs/headlines-<id>.json` (the `.prev` and `-c14off` files are for
+comparison only; do not copy them into the demo), regenerate the precompute from the new `batch-<id>.json`, and use the
+changed `why` lines above in the demo notes and the report card: they say in plain words what the smoke-aware exit
+choice did to each number. The earlier caveats stand: do not headline the sprinklers entry by smoke (D15), and every
+number is an illustrative model result, an idea for a fire protection engineer to check.
+
+Handoff for E: the current pack may carry `features`, `legacyHeadline` and `changes`. Show the changed entries under the
+headline as "Updated for smoke-aware exit choice" (each `why` is ready to print and each entry has `changed: true`),
+and say nothing when `changes` is absent. The `-c14off` pack has the same shape as any other pack and carries no
+`changes`; its `scenario.exitChoice` is `{"smoke": 0, "unfamiliar": 0}`.
