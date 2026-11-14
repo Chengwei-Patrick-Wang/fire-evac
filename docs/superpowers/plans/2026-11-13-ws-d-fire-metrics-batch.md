@@ -383,7 +383,6 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
 > From the lead's demo review. P0 tasks fix things judges see; do them first, in order.
 
 ### Task D22 (P0 · Sat 3 PM): Trade-offs, not "helps": a fix that traps more people says so, and says where
-BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/fixes.py` (`VERDICT`, `verdict`, `restate`, `_why`, `_inverse`, `STAT_KEYS`, `add_fixes`), `fire/whatif.py` (`room_deltas`, `_why`, `add_whatif`), `fire/headlines.py` (`FIX_KEYS`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `data/runs/batch-example-tradeoff.json` and `debug/d22-restated-<id>.json` (gitignored).
 
@@ -419,29 +418,29 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - Optional `dTrappedRooms` (first 3) on what-if entries and rerun fixes, inherited with `delta` negated by derived fixes.
   - `restate(batch) -> dict`: pure, no reruns.
 
-- [ ] **Step 1: Where the change happens.**
+- [x] **Step 1: Where the change happens.**
   - `room_deltas` pairs runs like `compare` (by `_key`, dropping failed runs). It sums `variant[key] - baseline[key]` per ignition room, drops zeros, and sorts by |delta| (then floor, room).
   - Each row gets `label`, which is `<room name> (<id>)`.
   - Each row gets `opensOnto`: `"exit"` if one of `doors` joins that room to `outside`, `"door"` if it joins it to another room, else null.
   - `add_whatif` stores the first 3 as `dTrappedRooms` when there are any (with the variant's `doors`). `add_fixes` does the same for a rerun fix (with its `door` or `doors`).
   - `_inverse` adds `dTrappedRooms` with each `delta` negated. It's a list, so keep it out of the `d`-prefix negation loop.
   - `STAT_KEYS` gains `dTrappedRooms`.
-- [ ] **Step 2: Verdict.**
+- [x] **Step 2: Verdict.**
   - `add_fixes` sets `helps`, `tradeoff` and `costs` from `verdict`, replacing D14's helps line.
   - Sort helping fixes first, then trade-offs, then the rest, each by `dT90`, then `dSmokeSeconds`.
   - Cost phrases: `"1.3 more trapped per fire"`, `"18% more time in smoke"` (or `"427 more person-seconds in smoke"` without `smokePct`), `"90% out 12 s later on average"`.
   - A smoke cost adds ` (people no longer trapped keep counting)` when trapped is a gain.
-- [ ] **Step 3: Name the fires behind a trapped number.**
+- [x] **Step 3: Name the fires behind a trapped number.**
   - Let the total be `round(dTrapped * n)`. When |total| ≥ 1, and the first `dTrappedRooms` row has the same sign and at least half of it, the trapped phrase gets ` (47 of 47 in fires in Lobby (L1), which this exit opens onto)`.
   - Use `door` for `opensOnto == "door"`, and drop the "which ..." part when it's null.
-- [ ] **Step 4: Wording.**
+- [x] **Step 4: Wording.**
   - `_why(fix)` keeps D14's exact sentence for helping and no-gain fixes.
   - A trade-off lists its gains, then `but` and its costs, joined with commas and a final `and`. Exactly: `"Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner on average and 68% less time in smoke across 36 fires (faster in 34), but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)."`
   - The what-if `_why(label, stats)` adds the same parenthesis after its trapped number when `stats` has `dTrappedRooms`: `... -1.3 trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto).`
-- [ ] **Step 5: Saved batches without reruns.**
+- [x] **Step 5: Saved batches without reruns.**
   - `restate(batch)` returns a copy. Every fix gets `helps`, `tradeoff`, `costs` and `why` from Steps 2–4 and is re-sorted, and every what-if `why` is re-rendered. The parentheses appear only where `dTrappedRooms` exists.
   - `FIX_KEYS` gains `tradeoff` and `costs`, so headline packs keep them.
-- [ ] **Step 6: Checks.**
+- [x] **Step 6: Checks.**
   - **Fast `check_tradeoffs()`, no sim:**
     - `verdict` on keepClear-E1's numbers (`dT90` -58.29, `smokePct` -67.7, `dTrapped` +1.31, `n` 36) gives a trade-off.
     - On widen-E2's numbers (`dT90`, `smokePct`, `dTrapped` = -10.6, -2.9, -0.19) it gives helps. The tuples below use the same order.
@@ -457,12 +456,12 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
     - Example, ignitions L1 and R105, seed 1, 160 occupants, `maxTime` 400, 2 workers, `add_whatif` with only the E1-blocked variant.
     - `dTrappedRooms[0]` is L1 with a negative delta and `opensOnto` `"exit"`.
     - Its `why` contains `in fires in Lobby (L1), which this exit opens onto`.
-- [ ] **Step 7: Verify:**
+- [x] **Step 7: Verify:**
   - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
   - Restate the three demo batches into `debug/d22-restated-<id>.json` and print their fix `why` lines.
   - Run `python -m fire.batch contracts/building.example.json contracts/scenario.example.json --seeds 1,2,3 --whatif --whatif-rooms 3 --fixes --fix-rooms 3 --out data/runs/batch-example-tradeoff.json` (99 runs) in the background to `debug/d22-example.log`. Its keepClear-E1 `why` names Lobby (L1).
   - README section "Trade-offs (D22)": the rule, the L1 table above, and every changed `why`.
-- [ ] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): measured fixes with a cost read as trade-offs and name the fires behind them"` (no attribution lines). Handoffs in the README:
+- [x] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): measured fixes with a cost read as trade-offs and name the fires behind them"` (no attribution lines). Handoffs in the README:
   - For A: call `fire.fixes.restate(batch)` on each batch in the precompute before writing `batch-<id>.json` and the pack (no reruns). Rerun the sweeps without `--resume` to get the "in fires in ..." parentheses.
   - For E: E34 mirrors `VERDICT`. `tradeoff` and `costs` are optional, and `helps` now excludes trade-offs.
 
