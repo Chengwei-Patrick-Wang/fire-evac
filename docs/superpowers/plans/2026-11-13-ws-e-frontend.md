@@ -162,4 +162,4 @@
 - [x] **Step 1: Lens.** Profile chips (typical, older, visitor, cane, walker, wheelchair); a deselected profile's agents are dimmed to `#1f2937` (instance color, not opacity); `<Html>` timers over status 2 agents show seconds waited since that stretch began, capped at 30 labels.
 - [x] **Step 2: LLM agents and trails.** Agents with `llm: true` or any `llm` event get a ring (second InstancedMesh); hovering an agent (`onPointerMove`, `e.instanceId`) shows profile, status, `note` when present and the latest `reason` with event `t` ≤ now. Trails toggle: `LineSegments` over the frames of the last 20 s for up to 300 agents from `RunIndex`, rebuilt only when the frame index changes, alpha fading with age.
 - [x] **Step 3: Verify.** `npm run build` passes. `npm run dev`: chips dim agents, timers count up, a run with `llm` events shows rings and tooltips, trails follow the crowd at 30+ fps; console clean. (build passes; visual check not run unattended)
-- [ ] **Step 4: Commit and push** `feat(frontend): accessibility lens, LLM highlight, trails`.
+- [x] **Step 4: Commit and push** `feat(frontend): accessibility lens, LLM highlight, trails`.
