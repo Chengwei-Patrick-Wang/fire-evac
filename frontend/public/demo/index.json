@@ -1,6 +1,6 @@
 {
   "version": "demo-index/v0",
-  "generated": "2026-11-14T14:04:57Z",
+  "generated": "2026-11-14T15:54:21Z",
   "buildings": [
     {
       "id": "example-office",
@@ -66,54 +66,6 @@
         "t50": 95.29,
         "t90": 120.73,
         "t100": 171.13,
-        "evacuated": 160,
-        "trapped": 0
-      }
-    },
-    {
-      "id": "example-office-R106-base",
-      "buildingId": "example-office",
-      "label": "Lounge, baseline",
-      "file": "run-example-office-R106-base.json",
-      "whatIf": null,
-      "fire": {
-        "floor": "F1",
-        "room": "R106",
-        "x": 17,
-        "y": 12.75,
-        "type": "kitchen"
-      },
-      "doors": {
-        "DSA1": "closed"
-      },
-      "metrics": {
-        "t50": 93.14,
-        "t90": 123.23,
-        "t100": 202.07,
-        "evacuated": 160,
-        "trapped": 0
-      }
-    },
-    {
-      "id": "example-office-R106-propped",
-      "buildingId": "example-office",
-      "label": "Lounge, DSA1 propped",
-      "file": "run-example-office-R106-propped.json",
-      "whatIf": "propped",
-      "fire": {
-        "floor": "F1",
-        "room": "R106",
-        "x": 17,
-        "y": 12.75,
-        "type": "kitchen"
-      },
-      "doors": {
-        "DSA1": "propped"
-      },
-      "metrics": {
-        "t50": 93.14,
-        "t90": 123.23,
-        "t100": 204.42,
         "evacuated": 160,
         "trapped": 0
       }
@@ -187,9 +139,159 @@
         "evacuated": 160,
         "trapped": 0
       }
+    },
+    {
+      "id": "office-R143-base",
+      "buildingId": "office",
+      "label": "SCIF OPEN OFFICE, baseline",
+      "file": "run-office-R143-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R143",
+        "x": 9.54,
+        "y": 31.26,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 97.17,
+        "t90": 134.3,
+        "t100": 183.68,
+        "evacuated": 250,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "office-R143-propped",
+      "buildingId": "office",
+      "label": "SCIF OPEN OFFICE, D$77xsW propped",
+      "file": "run-office-R143-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R143",
+        "x": 9.54,
+        "y": 31.26,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "propped"
+      },
+      "metrics": {
+        "t50": 96.94,
+        "t90": 133.67,
+        "t100": 183.68,
+        "evacuated": 250,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "office-R203c-base",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R203c), baseline",
+      "file": "run-office-R203c-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F2",
+        "room": "R203c",
+        "x": 41.35,
+        "y": 22.74,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 98.44,
+        "t90": null,
+        "t100": null,
+        "evacuated": 219,
+        "trapped": 31
+      }
+    },
+    {
+      "id": "office-R203c-propped",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R203c), D$77xsW propped",
+      "file": "run-office-R203c-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F2",
+        "room": "R203c",
+        "x": 41.35,
+        "y": 22.74,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "propped"
+      },
+      "metrics": {
+        "t50": 98.44,
+        "t90": null,
+        "t100": null,
+        "evacuated": 219,
+        "trapped": 31
+      }
+    },
+    {
+      "id": "office-R237b-base",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R237b), baseline",
+      "file": "run-office-R237b-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F2",
+        "room": "R237b",
+        "x": 6.52,
+        "y": 12.15,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 96.15,
+        "t90": 139.19,
+        "t100": null,
+        "evacuated": 238,
+        "trapped": 12
+      }
+    },
+    {
+      "id": "office-R237b-propped",
+      "buildingId": "office",
+      "label": "OPEN OFFICE (R237b), D$77xsW propped",
+      "file": "run-office-R237b-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F2",
+        "room": "R237b",
+        "x": 6.52,
+        "y": 12.15,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "propped"
+      },
+      "metrics": {
+        "t50": 96.15,
+        "t90": 139.19,
+        "t100": null,
+        "evacuated": 238,
+        "trapped": 12
+      }
     }
   ],
   "batches": [
+    {
+      "id": "office-batch",
+      "buildingId": "office",
+      "file": "batch-office.json",
+      "report": "report-office.md"
+    },
     {
       "id": "example-office-batch",
       "buildingId": "example-office",
