@@ -18,6 +18,7 @@ from shapely.geometry import Point, Polygon
 from sim.run import run, StuckWatch, floor_walkable
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
+from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -114,6 +115,7 @@ def check_300(building, scenario):
     elapsed = time.perf_counter() - start
     size = len(json.dumps(result))
     metrics = result["metrics"]
+    check_reroutes(result)
     assert metrics["evacuated"] == 300 and metrics["inStairs"] == metrics["remaining"] == 0
     assert not any(e["type"] == "stuck" for e in result["events"])
     assert elapsed < 120 and size < 8e6, (elapsed, size)
@@ -137,7 +139,53 @@ def check_300(building, scenario):
     print(f"300 agents: {elapsed:.2f} s, {size / 1e6:.2f} MB; {len(transfers)} transfers, zero stuck")
 
 
+def check_brain():
+    assert should_switch(10, 7.99) and not should_switch(10, 8.0)
+    # A hole forces a detour; this detects an accidentally permanent fallback.
+    poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)],
+                   [[(4, 2), (6, 2), (6, 8), (4, 8)]])
+    if ROUTING_MODE == "RoutingEngine":
+        assert route_length(poly, (2, 5), (8, 5)) > 6
+    brain = RuleBrain(42)
+    obs = {"idx": 0, "t": 0, "floor": "F1", "speed": 1, "current": None,
+           "trigger": "start", "options": [
+               {"id": "A", "dist": 10, "queue": 0, "flow": 1.3, "tail": 0}]}
+    assert brain.decide(obs)["target"] == "A"
+    obs.update(current="A", trigger="tick", options=[
+        {"id": "A", "dist": 1000, "queue": 0, "flow": 1.3, "tail": 0},
+        {"id": "B", "dist": 4, "queue": 0, "flow": 1.3, "tail": 0}])
+    obs["t"] = 14
+    assert brain.decide(obs) is None
+    obs["t"] = 15
+    assert brain.decide(obs)["target"] == "B"
+    obs.update(current="B", t=30)
+    obs["options"][0]["dist"], obs["options"][1]["dist"] = 4, 1000
+    assert brain.decide(obs) is None  # A was left only 15 seconds ago.
+    obs["t"] = 45
+    assert brain.decide(obs)["target"] == "A"
+    obs.update(current="A", t=75)
+    obs["options"][0]["dist"], obs["options"][1]["dist"] = 1000, 4
+    assert brain.decide(obs)["target"] == "B"
+    obs.update(current="B", t=105)
+    obs["options"][0]["dist"], obs["options"][1]["dist"] = 4, 1000
+    assert brain.decide(obs) is None  # Three-switch cap.
+
+
+def check_reroutes(result):
+    counts, left = {}, {}
+    for event in result["events"]:
+        if event["type"] != "reroute":
+            continue
+        idx, floor, t = event["idx"], event["floor"], event["t"]
+        counts[idx] = counts.get(idx, 0) + 1
+        assert counts[idx] <= 3
+        assert t - left.get((idx, floor, event["to"]), -float("inf")) >= 30
+        left[idx, floor, event["from"]] = t
+    print(f"routing: {ROUTING_MODE}; reroutes {sum(counts.values())}; t90 {result['metrics']['t90']}")
+
+
 def main() -> int:
+    check_brain()
     check_floors()
     check_watch_and_geometry()
     building = load_building()
@@ -150,6 +198,7 @@ def main() -> int:
     runtime = time.perf_counter() - t0
     m = r["metrics"]
     events = r["events"]
+    check_reroutes(r)
 
     assert r["version"] == "run/v0" and r["frameInterval"] == 0.5
     agents = r["agents"]

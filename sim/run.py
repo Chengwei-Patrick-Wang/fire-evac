@@ -9,7 +9,7 @@ Behavior:
   scenario.occupants.perRoom; profile, v0 and startDelay come from sim.profiles.
 - One CollisionFreeSpeedModel sim per floor. Stages: every exit on the floor, plus
   connected downward stairs. Arrivals wait for a clear spot before re-entry.
-- Each agent heads for the nearest exit, or stair on floors without exits, and stands still
+- Each agent chooses a route using travel time and queues, and stands still
   (desired_speed 0) until alarmTime + startDelay.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
 """
@@ -26,9 +26,10 @@ from pathlib import Path
 import jupedsim as jps
 import numpy as np
 import shapely
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Polygon
 
 from fire.stub import NoFire
+from sim.brain import RuleBrain, route_length, ROUTING_MODE
 from sim.profiles import PROFILES
 from sim.floors import StairNet, find_spot, reachable_zone
 
@@ -171,16 +172,19 @@ class _FloorSim:
         widths = {d["id"]: d["width"] for d in floor["doors"]}
         zones = [{"kind": "exit", "id": e["id"], "group": None,
                   "poly": Polygon(e["polygon"]), "to": None,
+                  "name": e.get("name", e["id"]), "tail": 0.0,
                   "width": widths.get(e["door"], 1.0)} for e in floor["exits"]]
         zones += [{"kind": "stair", "id": link["stair"], "group": link["group"],
-                   "poly": link["polygon"], "to": link["to"], "width": link["width"]}
+                   "poly": link["polygon"], "to": link["to"], "width": link["width"],
+                   "name": link["stair"], "tail": link["tail"]}
                   for link in net.links(self.id)]
         for zone in zones:
             if not reachable_zone(zone["poly"], self.walk, f"{self.id} {zone['kind']} {zone['id']}"):
                 continue
             stage = self.sim.add_exit_stage(zone["poly"])
             journey = self.sim.add_journey(jps.JourneyDescription([stage]))
-            self.stages.append(dict(zone, stage=stage, journey=journey))
+            self.stages.append(dict(zone, stage=stage, journey=journey,
+                                    nearby=zone["poly"].buffer(3.0)))
         # Agents who have not started yet "park" on a direct-steering stage aimed at their own
         # position: they still stand as obstacles, but skip JuPedSim's per-step routing, which
         # is ~5x the cost of everything else on this geometry.
@@ -254,6 +258,9 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     smoke_every = _interval_steps(scenario, "smokeInterval", SMOKE_INTERVAL)
     frame_interval, smoke_interval = frame_every * DT, smoke_every * DT
     watch = StuckWatch()
+    brain = RuleBrain(seed)
+    distances = {}
+    print(f"routing: {ROUTING_MODE}")
     net = StairNet(building, walkable={f["id"]: floor_walkable(f) for f in building["floors"]})
     agents = place_occupants(building, scenario, rng)
     net.check({a["floor"] for a in agents})
@@ -270,14 +277,11 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         fs = by_id[a["floor"]]
         if not fs.stages:
             raise ValueError(f"floor {fs.id} has occupants but no exits or stairs to go to")
-        pt = Point(a["x"], a["y"])
-        st = pick_target(fs, pt)
         jid = fs.sim.add_agent(jps.CollisionFreeSpeedModelAgentParameters(
             position=(a["x"], a["y"]), desired_speed=STOPPED, radius=a["radius"],
             journey_id=fs.park_journey, stage_id=fs.park_stage))
         fs.sim.agent(jid).target = (a["x"], a["y"])
         fs.jid2idx[jid] = a["idx"]
-        target[a["idx"]] = st
         where[a["idx"]] = (fs, jid)
 
     alarm = float(scenario.get("alarmTime", 0))
@@ -292,6 +296,47 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     trapped: set[int] = set()
     transit = {}
     arrivals = {}
+
+    def zone_queues(t):
+        queues = {}
+        for fs in sims:
+            positions = np.asarray([ag.position for ag in fs.sim.agents()]).reshape(-1, 2)
+            for st in fs.stages:
+                count = int(shapely.contains_xy(st["nearby"], positions[:, 0], positions[:, 1]).sum())
+                if st["kind"] == "stair":
+                    count += net.backlog(fs.id, st["group"], t)
+                queues[fs.id, st["id"]] = count
+        return queues
+
+    queues = zone_queues(0)
+
+    def choose(i, t, fs, pos, trigger, speed=None):
+        current = None if trigger in ("start", "arrive") else target[i]["id"]
+        stages = fs.stages
+        if trigger == "stuck":
+            stages = [st for st in stages if st["id"] != current] or stages
+        options = []
+        for st in stages:
+            key = (fs.id, st["id"], round(pos[0] * 2), round(pos[1] * 2))
+            if key not in distances:
+                goal = st["poly"].intersection(fs.walk).representative_point()
+                distances[key] = route_length(fs.walk, pos, (goal.x, goal.y))
+            options.append({"id": st["id"], "kind": st["kind"], "name": st["name"],
+                            "dist": distances[key], "queue": queues.get((fs.id, st["id"]), 0),
+                            "flow": (1.3 if st["kind"] == "exit" else 1.1) * st["width"],
+                            "tail": st["tail"]})
+        obs = {"idx": i, "t": t, "floor": fs.id, "x": pos[0], "y": pos[1],
+               "profile": agents[i]["profile"], "visibility": fire.visibility(fs.id, *pos),
+               "speed": agents[i]["v0"] if speed is None else speed,
+               "current": current, "trigger": trigger, "options": options}
+        decision = brain.decide(obs)
+        if decision is None:
+            return target[i]
+        st = next(st for st in stages if st["id"] == decision["target"])
+        if current is not None and st["id"] != current:
+            events.append({"t": t, "type": "reroute", "idx": i, "floor": fs.id,
+                           "from": current, "to": st["id"], "reason": decision["reason"]})
+        return st
 
     def enter_stair(i, t, fs, st):
         entry = net.enter(i, t, fs.id, st["group"], rng)
@@ -310,11 +355,14 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     k, t = 0, 0.0
     while True:
         t = round(k * DT, 2)
+        if k % FIRE_EVERY == 0:
+            queues = zone_queues(t)
         while next_start < n and alarm + agents[start_order[next_start]]["startDelay"] <= t + 1e-9:
             i = start_order[next_start]
             next_start += 1
             if status[i] == 0 and i not in trapped:
                 fs, jid = where[i]
+                target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
                 fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
                 fs.sim.agent(jid).model.desired_speed = agents[i]["v0"]
                 status[i] = 1
@@ -327,7 +375,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 entry = transit[i]
                 if entry["arrive"] > t + 1e-9:
                     break
-                st = pick_target(fs, entry["arrival"].centroid)
+                if "target" not in entry:
+                    center = entry["arrival"].centroid
+                    entry["target"] = choose(i, t, fs, (center.x, center.y), "arrive")
+                st = entry["target"]
                 if st["kind"] == "stair" and st["group"] == group:
                     queue.popleft()
                     enter_stair(i, t, fs, st)
@@ -349,28 +400,32 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
 
         if k % FIRE_EVERY == 0:
             fire.step(t)
-            for fs in sims:
-                for ag in list(fs.sim.agents()):
-                    i = fs.jid2idx.get(ag.id)
-                    if i is None or i in trapped:
-                        continue
-                    x, y = ag.position
-                    if fire.untenable(fs.id, x, y):
-                        fs.sim.mark_agent_for_removal(ag.id)
-                        trapped.add(i)
-                        active -= 1
-                        events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
+            moving = [(fs, ag) for fs in sims for ag in fs.sim.agents()
+                      if ag.id in fs.jid2idx]
+            for fs, ag in sorted(moving, key=lambda item: item[0].jid2idx[item[1].id]):
+                i = fs.jid2idx.get(ag.id)
+                if i is None or i in trapped:
+                    continue
+                x, y = ag.position
+                if fire.untenable(fs.id, x, y):
+                    fs.sim.mark_agent_for_removal(ag.id)
+                    trapped.add(i)
+                    active -= 1
+                    events.append({"t": t, "type": "trapped", "idx": i, "floor": fs.id,
+                                   "x": round(x, 2), "y": round(y, 2)})
+                elif status[i] == 1:
+                    stuck = watch.update(i, t, x, y)
+                    if stuck:
+                        events.append({"t": t, "type": "stuck", "idx": i, "floor": fs.id,
                                        "x": round(x, 2), "y": round(y, 2)})
-                    elif status[i] == 1:
-                        if watch.update(i, t, x, y):
-                            events.append({"t": t, "type": "stuck", "idx": i, "floor": fs.id,
-                                           "x": round(x, 2), "y": round(y, 2)})
-                            st = pick_target(fs, Point(x, y), exclude={target[i]["id"]})
-                            fs.sim.switch_agent_journey(ag.id, st["journey"], st["stage"])
-                            target[i] = st
-                        v0 = agents[i]["v0"]
-                        vis = fire.visibility(fs.id, x, y)
-                        ag.model.desired_speed = min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - vis)))
+                    v0 = agents[i]["v0"]
+                    vis = fire.visibility(fs.id, x, y)
+                    ag.model.desired_speed = min(v0, max(MIN_SMOKE_SPEED, v0 - 0.34 * (3.0 - vis)))
+                    st = choose(i, t, fs, (x, y), "stuck" if stuck else "tick",
+                                ag.model.desired_speed)
+                    if st is not target[i]:
+                        fs.sim.switch_agent_journey(ag.id, st["journey"], st["stage"])
+                        target[i] = st
 
         if k % frame_every == 0:
             frames.append({"t": t, "a": _frame(sims, trapped, status, transit)})
