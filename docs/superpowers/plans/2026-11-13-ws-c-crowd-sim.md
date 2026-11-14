@@ -182,10 +182,14 @@ Decision: `{"target":"E1","action":"go","reason":"start: estimated travel and qu
 - Consumes: A's `backend.llm.features.decide_batch(observations: list[dict]) -> list[dict | None]` (same length and order; None means rules) and the C4 `obs`.
 - Produces: `LLMBrain.decide_batch(observations)` (timeout 12 s; on timeout or exception every entry falls back to rules); scenario `brain: "llm"` (at most 150 agents, else `ValueError`; every `agents[].llm = true`); `llm` events as in C7.
 
-- [ ] On each 1 s tick, collect `obs` for every agent at a decision point (C7 triggers plus a `tick` every 15 s per agent); make one `decide_batch` call if the list is non-empty; apply each decision through the C4 switch code and log one `llm` event with its `reason`; None entries use rules.
-- [ ] Smoke test with a stub: calls ≤ number of ticks; some call carries > 1 observation; every stub decision is applied; `N = 151` raises `ValueError`; a stub that raises falls back and everyone still exits; with `brain` unset, behavior equals C4.
-- [ ] Verify: `python -m sim.smoke_test` ends with `OK`; with A's backend live, one showcase run (`brain: "llm"`, ≤ 150 agents) through `python -m sim.run`, then hand the run file to A.
-- [ ] Commit and push: `git add sim && git commit -m "feat(sim): all-LLM crowd mode" && git push`.
+- [x] On each 1 s tick, collect `obs` for every agent at a decision point (C7 triggers plus a `tick` every 15 s per agent); make one `decide_batch` call if the list is non-empty; apply each decision through the C4 switch code and log one `llm` event with its `reason`; None entries use rules.
+- [x] Smoke test with a stub: calls ≤ number of ticks; some call carries > 1 observation; every stub decision is applied; `N = 151` raises `ValueError`; a stub that raises falls back and everyone still exits; with `brain` unset, behavior equals C4.
+- [x] Verify: `python -m sim.smoke_test` ends with `OK`; with A's backend live, one showcase run (`brain: "llm"`, ≤ 150 agents) through `python -m sim.run`, then hand the run file to A.
+- [x] Commit locally: `git add sim docs/superpowers/plans/2026-11-13-ws-c-crowd-sim.md && git commit -m "feat(sim): all-LLM crowd mode"`. The runner handles syncing; no push in this session.
+
+**Verification / lead rulings:** `LLM_PROVIDER=off .venv/bin/python -m sim.smoke_test` passed (about 9 s). Tests cover multi-agent batches, one call per tick, applied reroutes, all agents flagged, the 151-agent rejection, exception/None/malformed-response fallbacks, bounded timeout with no queued calls while busy, and unchanged rule-only events. The 24-agent stub run made 21 batches / 46 decisions and evacuated everyone. Following STATUS.md's 04:10 quota and timeout instructions, the default timeout is 60 s for individual and batch calls (superseding the original 4/12 s), and the backend-connected CLI showcase uses `LLM_PROVIDER=off`, with no live quota consumed.
+
+**Handoff for A:** `data/runs/c8-llm-showcase.run.json` is the ignored local showcase artifact, generated via `python -m sim.run contracts/building.example.json /tmp/c8-llm-showcase.scenario.json data/runs/c8-llm-showcase.run.json` with the provider off. All 24 evacuated, zero trapped/remaining/inStairs, t90 115.66 s, t100 128.58 s, 47 logged fallback decisions, 0.40 MB, 0.3 s wall time. All-LLM starts and stair arrivals wait until the next one-second batch tick; moving agents also request decisions every 15 s, with C7 event triggers and its 10 s cooldown. Batch/what-if rule mode is unchanged. Live-model showcase verification remains for demo preparation when quota is available; the backend path and logged fallback replay are verified here.
 
 ## Added overnight (Sat 2:35 AM)
 

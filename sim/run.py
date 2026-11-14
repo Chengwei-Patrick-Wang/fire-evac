@@ -38,7 +38,7 @@ import shapely
 from shapely.geometry import Point, Polygon
 
 from fire.stub import NoFire
-from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider
+from sim.brain import RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
 from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
@@ -396,9 +396,12 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         count = min(n, max(10, min(20, round(0.08 * n))))
         flagged = set(np.random.default_rng([seed, 2]).choice(n, count, replace=False).tolist())
     elif mode == "llm":
-        # C8 adds batched showcase decisions; C7 supplies individual decisions.
+        if n > 150:
+            raise ValueError("all-LLM showcase supports at most 150 agents")
         flagged = set(range(n))
-    llm = LLMBrain(brain, load_llm_decider()) if flagged else None
+    llm = (LLMBrain(brain, decide_batch=load_llm_batch_decider()) if mode == "llm"
+           else LLMBrain(brain, load_llm_decider()) if flagged else None)
+    pending_llm = {}
     last_llm = {}
     seen_smoke = set()
 
@@ -485,12 +488,22 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                "profile": agents[i]["profile"], "visibility": fire.visibility(fs.id, *pos),
                "speed": agents[i]["v0"] if speed is None else speed,
                "current": current, "trigger": trigger, "options": options}
+        if mode == "llm" and target[i] is None and trigger == "tick":
+            trigger = obs["trigger"] = "start"
+            current = obs["current"] = None
         llm_trigger = trigger if trigger in {"start", "arrive", "blocked"} else None
         if i in flagged and trigger == "tick":
             if obs["visibility"] < 5 and i not in seen_smoke:
                 llm_trigger = "smoke"
             elif any(o["id"] == current and o["queue"] / o["flow"] > 30 for o in options):
                 llm_trigger = "queue"
+        if mode == "llm":
+            if llm_trigger is None and t - last_llm.get(i, -math.inf) >= 15:
+                llm_trigger = trigger
+            if llm_trigger and t - last_llm.get(i, -math.inf) >= 10:
+                obs["trigger"] = llm_trigger
+                pending_llm[i] = (obs, fs)
+            return target[i] if current is not None else None
         if i in flagged and llm_trigger and t - last_llm.get(i, -math.inf) >= 10:
             obs["trigger"] = llm_trigger
             last_llm[i] = t
@@ -506,6 +519,9 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     brain.switches[i] = brain.switches.get(i, 0) + 1
         else:
             decision = brain.decide(obs)
+        return apply_choice(i, t, fs, current, trigger, decision)
+
+    def apply_choice(i, t, fs, current, trigger, decision):
         if decision is None or decision["action"] == "wait":
             return target[i] if current is not None else None
         st = next(st for st in fs.stages if st["id"] == decision["target"])
@@ -649,6 +665,40 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     elif st is not target[i] or ag.stage_id == fs.park_stage:
                         fs.sim.switch_agent_journey(ag.id, st["journey"], st["stage"])
                         target[i] = st
+
+        if mode == "llm" and k % FIRE_EVERY == 0 and pending_llm:
+            batch = [(i, obs, fs) for i, (obs, fs) in sorted(pending_llm.items())
+                     if i not in trapped and (where[i] is not None or i in transit)]
+            pending_llm.clear()
+            for _, obs, _ in batch:
+                obs["t"] = t
+            decisions = llm.decide_batch([obs for _, obs, _ in batch])
+            for (i, obs, fs), decision in zip(batch, decisions):
+                last_llm[i] = t
+                if obs["visibility"] < 5:
+                    seen_smoke.add(i)
+                events.append({"t": t, "type": "llm", "idx": i, "floor": fs.id, **decision})
+                current = obs["current"]
+                if not decision.get("fallback") and decision["action"] != "wait":
+                    brain.last_choice[i] = t
+                    if current is not None and current != decision["target"]:
+                        brain.left[i, fs.id, current] = t
+                        brain.switches[i] = brain.switches.get(i, 0) + 1
+                st = apply_choice(i, t, fs, current, obs["trigger"], decision)
+                if i in transit:
+                    transit[i]["target"] = st
+                else:
+                    target[i] = st
+                    _, jid = where[i]
+                    ag = fs.sim.agent(jid)
+                    if st is not None:
+                        fs.sim.switch_agent_journey(jid, st["journey"], st["stage"])
+                        ag.model.desired_speed = smoke_speed(agents[i]["v0"],
+                                                            fire.visibility(fs.id, *ag.position))
+                    else:
+                        fs.sim.switch_agent_journey(jid, fs.park_journey, fs.park_stage)
+                        ag.target = ag.position
+                        ag.model.desired_speed = STOPPED
 
         if k % frame_every == 0:
             frames.append({"t": t, "a": _frame(sims, trapped, status, transit)})

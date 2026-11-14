@@ -90,6 +90,63 @@ def check_llm(building, scenario, baseline):
     print(f"mixed LLM OK: {len(flagged)} flagged, {len(logs)} decisions; timeout and rules fallback OK")
 
 
+def check_llm_batch(building, scenario):
+    from unittest.mock import patch
+    from sim.brain import LLMBrain
+
+    showcase = dict(scenario, brain="llm", occupants={"total": 24, "mix": {"typical": 1}},
+                    premovement={"office": [0, 0], "classroom": [0, 0]}, alarmTime=0)
+    calls = []
+    def nearest(observations):
+        calls.append(deepcopy(observations))
+        return [{"target": min(o["options"], key=lambda p: p["dist"])["id"],
+                 "action": "go", "reason": "batch stub"} for o in observations]
+
+    with patch("sim.run.load_llm_batch_decider", return_value=nearest):
+        result = run(building, showcase, NoFire(building, showcase))
+    logs = [e for e in result["events"] if e["type"] == "llm"]
+    assert all(a.get("llm") for a in result["agents"])
+    assert result["metrics"]["evacuated"] == 24
+    assert any(len(call) > 1 for call in calls)
+    assert len(calls) == len({e["t"] for e in logs})
+    assert len(calls) <= int(result["frames"][-1]["t"]) + 1
+    assert len(logs) == sum(map(len, calls))
+    for event, obs in zip(logs, (o for call in calls for o in call)):
+        assert event["reason"] == "batch stub" and not event.get("fallback")
+        assert event["target"] == min(obs["options"], key=lambda p: p["dist"])["id"]
+        if obs["current"] is not None and event["target"] != obs["current"]:
+            assert any(e["type"] == "reroute" and e["idx"] == event["idx"]
+                       and e["t"] == event["t"] and e["to"] == event["target"]
+                       for e in result["events"])
+    def broken(observations):
+        raise RuntimeError("offline")
+    with patch("sim.run.load_llm_batch_decider", return_value=broken):
+        fallback = run(building, showcase, NoFire(building, showcase))
+    assert fallback["metrics"]["evacuated"] == 24
+    assert all(e.get("fallback") for e in fallback["events"] if e["type"] == "llm")
+    oversized = dict(showcase, occupants={"total": 151, "mix": {"typical": 1}})
+    try:
+        run(building, oversized, NoFire(building, oversized))
+        assert False, "151-agent showcase accepted"
+    except ValueError as exc:
+        assert "150" in str(exc)
+    observations = calls[0]
+    for provider in (lambda obs: [], lambda obs: [None] * len(obs),
+                     lambda obs: [{"target": "invalid"}] * len(obs)):
+        answers = LLMBrain(RuleBrain(42), decide_batch=provider).decide_batch(observations)
+        assert len(answers) == len(observations) and all(a.get("fallback") for a in answers)
+    def slow(observations):
+        time.sleep(0.2)
+        return [None] * len(observations)
+    timed_brain = LLMBrain(RuleBrain(42), timeout=0.01, decide_batch=slow)
+    assert all(a.get("fallback") for a in timed_brain.decide_batch(observations))
+    pending = timed_brain.pending
+    assert all(a.get("fallback") for a in timed_brain.decide_batch(observations))
+    assert timed_brain.pending is pending
+    pending.result(timeout=1)
+    print(f"all-LLM OK: {len(calls)} batches, {len(logs)} decisions; cap and fallbacks OK")
+
+
 def check_floors() -> None:
     building = load_building()
     net = StairNet(building)
@@ -731,6 +788,7 @@ def main(argv=None) -> int:
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
     timed("fast assistance", check_assistance, building, fast)
     timed("fast LLM", check_llm, building, fast, core)
+    timed("fast all-LLM", check_llm_batch, building, fast)
     timed("recording", check_recording, building, fast)
 
     if args.slow:
