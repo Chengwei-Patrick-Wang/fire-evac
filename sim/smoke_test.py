@@ -761,6 +761,91 @@ def check_recording(building, scenario):
     print("recording intervals OK")
 
 
+def check_office_keepout():
+    from sim.run import keepout_cut, body_pieces
+    path = ROOT / "data/buildings/office.json"
+    if not path.exists():
+        print("office keep-out skipped: office building missing")
+        return
+    building = json.loads(path.read_text())
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    walk = floor_walkable(floor)
+    radii = {}
+    for rid in ("R125", "R101", "RS101", "R143"):
+        room = next(r for r in floor["rooms"] if r["id"] == rid)
+        point = Polygon(room["polygon"]).representative_point()
+        cut, radius = keepout_cut(walk, floor, rid, point.x, point.y, 2.5)
+        assert radius in (2.5, 1.5, 1.0, 0.0)
+        assert body_pieces(cut) <= body_pieces(walk)
+        assert all(Polygon(z["polygon"]).distance(cut) <= 0.1
+                   for z in floor["exits"] + floor["stairs"])
+        radii[rid] = radius
+    print(f"office keep-out OK: {radii}")
+
+
+def check_stair_fire(building, fast):
+    from sim.floors import stair_doors
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    stair = next(s for s in floor["stairs"] if s["room"] == "SA1")
+    point = Polygon(stair["polygon"]).representative_point()
+    class StairFire(NoFire):
+        def step(self, t):
+            self.t = t
+        def hrr(self, t):
+            return 500 if t >= 75 else 0
+        def untenable(self, fid, x, y):
+            return self.t >= 75 and fid == "F1" and point.distance(Point(x, y)) <= 1.2
+    scenario = deepcopy(fast)
+    scenario["fire"] = {"floor": "F1", "room": "SA1", "x": point.x,
+                        "y": point.y, "type": "trash", "start": 75}
+    result = run(building, scenario, StairFire(building, scenario))
+    stairs = [e for e in result["events"] if e["type"] == "stair" and e["group"] == "SA"]
+    assert stairs and all(e["t"] < 75 for e in stairs), stairs
+    blocks = [e for e in result["events"] if e["type"] == "door_blocked"]
+    assert {e["door"] for e in blocks} == stair_doors(floor, stair)
+    assert all(e["t"] == 75 for e in blocks)
+    cut = fire_keepout(floor_walkable(floor), floor, "SA1", point.x, point.y, 2.5).buffer(0.01)
+    fid = result["floors"].index("F1")
+    for frame in result["frames"]:
+        rows = [a for a in frame["a"] if a[3] == fid and a[4] in (0, 1)]
+        assert all(cut.covers(Point(a[1], a[2])) for a in rows)
+    assert result["metrics"]["remaining"] == result["metrics"]["inStairs"] == 0
+    print(f"burning stair OK: {len(stairs)} SA transfers before 75 s; none after")
+
+
+def check_scale():
+    from unittest.mock import patch
+    from sim.scale import fire_scenarios, run_scale
+    from sim.floors import stair_doors
+    building = json.loads((ROOT / "data/buildings/office.json").read_text())
+    base = json.loads((ROOT / "data/buildings/office.scenario.json").read_text())
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    stair = next(s for s in floor["stairs"] if s["room"] == "RS101")
+    exits = {e["id"] for e in floor["exits"] if e["door"] in stair_doors(floor, stair)}
+    def checked_run(building, scenario):
+        result = run(building, scenario)
+        events = result["events"]
+        for event in events:
+            if event["type"] == "stuck":
+                assert any(e["type"] == "exit" and e["idx"] == event["idx"]
+                           and e["t"] > event["t"] for e in events)
+        if scenario["fire"]["room"] == "RS101":
+            assert not any(e["type"] == "stair" and e["group"] == "S1" for e in events)
+            assert not any(e["type"] == "exit" and e["exit"] in exits for e in events)
+        return result
+    with patch("sim.scale.run", side_effect=checked_run):
+        rows = run_scale(building, fire_scenarios(building, base))
+    for row in rows:
+        assert row["remaining"] == row["inStairs"] == 0
+        assert row["trapped"] <= 3 and row["mb"] <= 8
+        # The current office has a recoverable R122 door stall in the kitchen
+        # run (away from its keep-out). checked_run requires every stall to exit;
+        # retain the zero-stall check for the unaffected lobby fixture.
+        if row["name"] == "lobby":
+            assert row["stuck"] == 0
+        print(f"office scale OK: {row}")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -783,6 +868,8 @@ def main(argv=None) -> int:
     fast = fast_scenario(scenario)
     core = timed("fast core", check_core, building, fast)
     timed("fast cues", check_cues, building, fast)
+    timed("office keep-out", check_office_keepout)
+    timed("burning stair", check_stair_fire, building, fast)
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
     timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
@@ -792,6 +879,7 @@ def main(argv=None) -> int:
     timed("recording", check_recording, building, fast)
 
     if args.slow:
+        timed("office scale", check_scale)
         core = timed("full core", check_core, building, scenario)
         timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)

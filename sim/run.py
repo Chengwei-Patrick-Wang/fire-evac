@@ -17,6 +17,7 @@ Behavior:
   scenario.premovement overrides profile delay ranges by room type.
 - People keep 2.5 m from the burning item where room geometry permits;
   smaller keep-out areas preserve connected escape routes.
+- A burning stairwell is not an escape route; its doors close to route choice.
 - Every 1 s: fire.step(t), smoke slows agents, untenable cells trap them.
 - Mid-run blocked interior doors act only through slowdown and trapping.
   Agents in a stairwell (status 2 or 3) are not exposed to fire.
@@ -81,18 +82,34 @@ def floor_walkable(floor: dict, blocked=frozenset()) -> Polygon:
     return polys[0]
 
 
+def fire_room(floor, room, x, y):
+    """Resolve an ignition room by id, falling back to its point."""
+    return next((r for r in floor["rooms"] if r["id"] == room), None) or next(
+        (r for r in floor["rooms"] if Polygon(r["polygon"]).covers(Point(x, y))), None)
+
+
+def body_pieces(poly):
+    """Count usable components after allowing for a 0.2 m body radius."""
+    shrunk = poly.buffer(-0.2)
+    pieces = [shrunk] if shrunk.geom_type == "Polygon" else shrunk.geoms
+    return sum(p.area > 0.5 for p in pieces)
+
+
 def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
+    return keepout_cut(walk, floor, room, x, y, radius)[0]
+
+
+def keepout_cut(walk, floor, room, x, y, radius):
     """Cut a room-clipped fire disc, retaining connected exits and stair zones."""
     if not math.isfinite(radius) or radius < 0:
         raise ValueError("fireKeepout must be finite and nonnegative")
     if radius == 0:
-        return walk
+        return walk, 0.0
     point = Point(x, y)
-    origin = next((r for r in floor["rooms"] if r["id"] == room), None)
+    origin = fire_room(floor, room, x, y)
     if origin is None:
-        origin = next((r for r in floor["rooms"] if Polygon(r["polygon"]).covers(point)), None)
-    if origin is None:
-        return walk
+        return walk, 0.0
+    original_pieces = body_pieces(walk)
     room_poly = Polygon(origin["polygon"])
     room_area = walk.intersection(room_poly).area
     zones = [Polygon(z["polygon"]) for z in floor["exits"] + floor["stairs"]]
@@ -111,9 +128,11 @@ def fire_keepout(walk, floor, room, x, y, radius) -> Polygon:
             continue
         if any(z.distance(retained) > 0.1 for z in attached):
             continue
-        return retained
+        if body_pieces(retained) > original_pieces:
+            continue
+        return retained, candidate
     _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
-    return walk
+    return walk, 0.0
 
 
 def _largest_remainder(total: int, weights: list[float]) -> list[int]:
@@ -380,6 +399,13 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 walkable[floor["id"]] = fire_keepout(
                     walkable[floor["id"]], floor, ignition.get("room"),
                     ignition["x"], ignition["y"], radius)
+    burning_doors = set()
+    for floor in building["floors"]:
+        if floor["id"] == ignition.get("floor"):
+            origin = fire_room(floor, ignition.get("room"), ignition["x"], ignition["y"])
+            for stair in floor["stairs"]:
+                if origin and stair["room"] == origin["id"]:
+                    burning_doors.update(stair_doors(floor, stair))
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
     cue_rng = np.random.default_rng([seed, 3])
@@ -571,7 +597,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         t = round(k * DT, 2)
         if k % FIRE_EVERY == 0:
             fire.step(t)
-            new_blocks = set(fire.blocked_doors()) - blocked
+            fire_blocks = set(fire.blocked_doors())
+            if fire.hrr(t) > 0:
+                fire_blocks.update(burning_doors)
+            new_blocks = fire_blocks - blocked
             for door in sorted(new_blocks):
                 if door in door_floors:
                     events.append({"t": t, "type": "door_blocked", "door": door,
@@ -605,9 +634,12 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     heappop(queue)
                     enter_stair(i, t, fs, st)
                     continue
-                region = entry["arrival"].buffer(-0.3)
+                arrival = entry["arrival"]
+                if not arrival.within(fs.walk):
+                    arrival = arrival.intersection(fs.walk)
+                region = arrival.buffer(-0.3)
                 if region.is_empty:
-                    region = entry["arrival"].buffer(-0.1)
+                    region = arrival.buffer(-0.1)
                 positions = [ag.position for ag in fs.sim.agents()]
                 gap = max(MIN_SPACING, agents[i]["radius"] +
                           max((agents[fs.jid2idx[ag.id]]["radius"] for ag in fs.sim.agents()
