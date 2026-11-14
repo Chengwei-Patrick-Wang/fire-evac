@@ -1,5 +1,32 @@
 # Overnight status
 
+## Sat 09:15: D15 merged (office demo batch); lead took over D18
+
+**Merged:** ws-d **D15** (lead takeover), the real office demo batch. It ran 12 rooms x 3 seeds: 252 runs plus a pilot, 0 failed, and every comparison has n=36. Wall time was 49 min on the shared laptop. The command is in `fire/README.md`. The output `data/runs/batch-office.json` is gitignored and sits on the lead's laptop in `../HackUMass-ws-d-lead/data/runs/`. The blocked-exit sweep ran clean, so C13b fixed the old crash.
+
+**Office headline numbers (for the demo, A6 and E's Report tab):**
+- Weak spots:
+  1. Fire in OPEN OFFICE (R237b): 14.3 people trapped on average; 90% out after 141 s.
+  2. Exit Stair S1 (west): 15 people queued at peak; 181 person-seconds of waiting per fire.
+  3. Exit Stair S2 (east): 10 people queued at peak; 114 person-seconds.
+  4. The door from SECURE DOC ROOM to OPEN OFFICE: 5 people queued at peak; 26 person-seconds, all of them in smoke.
+
+  The top 3 hold in 2 of 3 seeds, and S1 ranks first in 3 of 3.
+- What-ifs, per fire:
+  - Propped stair doors: +152 person-seconds in smoke (+54%), no change in 90% out.
+  - Stair S1 blocked: 90% out 13 s later (slower in 36 of 36), +154 person-seconds in smoke.
+  - Sprinklers: 1.2 fewer people trapped.
+- Best measured fix: widen Exit Stair S1 (west) from 0.86 m to 1.36 m. 90% are out 2 s sooner, with 6% less time in smoke (faster in 23 of 36 fires).
+- The story: the fire's location barely changes 90% out (135-141 s for every room). Nearly everyone trapped comes from the OPEN OFFICE fire, because the SECURE DOC ROOM (R205) has its only door into the open office.
+
+**Needs to know:**
+- **D, E, A (sprinklers):** the sprinklers what-if shows +47% time in smoke. That is how smoke time is counted, not harm: the sim drops trapped people from the frames, so their smoke time stops counting. In a paired check, trapped went 12 -> 0 and smoke time went 2,003 -> 3,626 person-seconds. Show sprinklers by people trapped, not by smoke time. The caveat is in `fire/README.md`.
+- **C (Althan):** every fire in office room R227 logs `WARNING (sim): F2/R227: no safe fire keep-out cut; keeping walkable area`, so people can still walk through that burning room. Worth a look at 10 AM.
+- **Everyone running batches or the precompute:** prefix the command with `OPENBLAS_NUM_THREADS=1`. Each pool worker drops from about 550 MB to about 33 MB with identical results. Memory reached 47.8 of 48.6 GB while two batches ran.
+- **D (Aidan):** the lead took over **D18 (headline numbers pack)** at 09:10; it is running now. D20 (run cache, P1) is still yours. The sprinklers what-if and the sprinklers fix rerun the same scenario (about 1/7 of the runtime) and could share one set of runs. `--budget-min 20` gives a 30-35 min batch on a shared laptop.
+
+**Still running:** A5, the demo precompute.
+
 ## Sat 08:05: Morning summary (read this first)
 
 **On `main`, by workstream (every check passes):**
