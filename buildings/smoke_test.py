@@ -142,6 +142,66 @@ def check_ifc():
     print(f"IFC: {len(floors)} floors, {len(polygons)} rooms, {maxx:.1f} x {maxy:.1f} m")
 
 
+def check_building():
+    from buildings.validate import validate
+    building = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    assert validate(building)["ok"]
+    assert "license" in building["credits"].lower()
+    assert any(f["exits"] for f in building["floors"] if f["level"] == 0)
+    groups = {}
+    for floor in building["floors"]:
+        rooms = {r["id"]: Polygon(r["polygon"]) for r in floor["rooms"]}
+        for stair in floor["stairs"]:
+            groups.setdefault(stair["group"], set()).add(floor["id"])
+        for door in floor["doors"]:
+            assert 0.6 <= door["width"] <= 3.0
+            if "outside" not in door["connects"]:
+                for rid in door["connects"]:
+                    assert Polygon(door["rect"]).intersection(rooms[rid]).area >= 0.01, (door["id"], rid)
+    assert groups and all(len(floors) >= 2 for floors in groups.values())
+
+
+def check_traced():
+    from shapely import make_valid
+    from buildings.validate import validate
+
+    def room(rid, polygon):
+        return {"id": rid, "type": "office", "polygon": polygon}
+
+    def door(did, x, y):
+        return {"id": did, "a": [x, y], "b": [x, y + 1], "width": 1}
+
+    plan = {"id": "sloppy-trace", "source": "trace", "floors": [{
+        "id": "F1", "rooms": [
+            room("A", [[0, 0], [4, 0], [4, 4], [4, 4], [0, 4]]),
+            room("B", [[4.15, 0], [8.15, 0], [8.15, 4], [4.15, 4]]),
+            room("C", [[8.05, 0], [12.15, 0], [12.15, 4], [8.05, 4]]),
+            room("bow", [[12, 0], [16, 4], [12, 4], [16, 0]]),
+        ], "doors": [door("AB", 3.7, 1), door("BC", 8.1, 1),
+                     door("bottom", 12.05, 0.2), door("top", 12.05, 2.8)]}]}
+    floor = plan_to_building(plan)["floors"][0]
+    assert validate({"floors": [floor]})["disconnected"] == []
+    rooms = {r["id"]: make_valid(Polygon(r["polygon"])) for r in floor["rooms"]}
+    interior = [d for d in floor["doors"] if "outside" not in d["connects"]]
+    assert {d["id"] for d in interior} == {"AB", "BC", "bottom", "top"}
+    for d in interior:
+        for rid in d["connects"]:
+            assert Polygon(d["rect"]).intersection(rooms[rid]).area >= 0.01, (d["id"], rid)
+    walkable = unary_union([Polygon(p["outer"], p["holes"]) for p in floor["walkable"]])
+    assert walkable.intersection(rooms["bow"]).area > 1
+
+
+def check_one_door():
+    fixture = ROOT / "buildings/fixtures/one_door.plan.json"
+    plan = json.loads(fixture.read_text(encoding="utf-8-sig"))
+    building = plan_to_building(plan)
+    assert len(building["floors"]) == 1
+    floor = building["floors"][0]
+    assert {e["id"] for e in floor["exits"]} == {"D1"}
+    exit_poly = Polygon(floor["exits"][0]["polygon"])
+    assert all(exit_poly.intersection(Polygon(r["polygon"])).area < 1e-8 for r in floor["rooms"])
+
+
 def main() -> int:
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
     b = plan_to_building(plan)
@@ -195,8 +255,11 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_traced()
+    check_one_door()
     check_hard()
     check_overrides()
+    check_building()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:

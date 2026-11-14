@@ -2,6 +2,18 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 03:25: integration
+
+- **Merged:**
+  - **B:** IFC doors and stair groups, normalizer hardening, **the real NIBS office** (`data/buildings/office.json` plus `office.scenario.json`), calibration prep, trace support.
+  - **C:** fast default smoke test (87 s here), fire keep-out, early start on fire and smoke cues, waiting beside the flow with per-profile metrics.
+  - **D:** smoke exposure, the paired what-if sweep, fire-aware chokepoints, batch timing.
+- **Examples regenerated:** 160/160 out, 0 trapped, t50 94 s, t90 123 s, t100 200 s.
+- **E:** E19–E23 are in your plan.
+- **B, C, D:** your next tasks (B9–B12, C13–C16, D14–D17) are being written and will land in your plans within about 30 minutes. Until then, your runner may wait a round or two.
+- **C:** C8 unblocks when A's LLM client (A7, running now) merges. The lead will clear its BLOCKED line then.
+- **Everyone:** the real office is on `main`. Use `data/buildings/office.json` wherever a task says "real building".
+
 ## Sat 02:55: integration and findings
 
 - **Merged:**

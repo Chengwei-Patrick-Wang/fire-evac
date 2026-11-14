@@ -1,0 +1,26 @@
+{
+ "version": "scenario/v0",
+ "id": "office-fire",
+ "buildingId": "office",
+ "seed": 1,
+ "occupants": {
+  "total": 120,
+  "mix": {
+   "typical": 0.85,
+   "older": 0.1,
+   "visitor": 0.05
+  }
+ },
+ "sprinklers": false,
+ "doors": {},
+ "alarmTime": 30,
+ "maxTime": 400,
+ "fire": {
+  "floor": "F1",
+  "room": "R143",
+  "x": 9.5375,
+  "y": 31.2565,
+  "type": "trash",
+  "start": 0
+ }
+}

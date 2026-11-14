@@ -342,6 +342,118 @@ def check_metrics():
     assert heatmap["cell"] > 0.5 and not any(base64.b64decode(heatmap["d"]))
 
 
+def check_smoke_queues():
+    from copy import deepcopy
+    from fire.metrics import compute
+    from fire.batch import aggregate
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    door = next(d for d in building["floors"][0]["doors"] if d["id"] == "D101")
+    mx, my = (np.asarray(door["a"]) + np.asarray(door["b"])) / 2
+    pair = [[0, float(mx - 0.5), float(my - 0.5), 0, 1],
+            [1, float(mx + 0.5), float(my + 0.5), 0, 1]]
+    for start, expected in ((100, 10.0), (0, 0.0)):
+        # The early warm-up uses t=0; queue frames start at .01 to avoid negative time.
+        offset = 0.01 if start == 0 else 0
+        frames = [{"t": max(0, start - 0.5), "a": [[*r[:4], 0] for r in pair]}]
+        frames += [{"t": start + offset + k * 0.5, "a": pair} for k in range(10)]
+        run = {"floors": [f["id"] for f in building["floors"]],
+               "frameInterval": 0.5, "frames": frames}
+        result = compute(run, building, scenario)
+        measured = next(d for d in result["doors"] if d["id"] == "D101")
+        assert measured["waitPersonSeconds"] == 10.0 and measured["smokeWait"] == expected, measured
+        assert all("smokeWait" not in d for d in compute(run, building)["doors"])
+        json.dumps(result, allow_nan=False)
+
+    records = [{"ok": True, "ignition": {"floor": "F1", "room": "R101"},
+                "t90": 100, "trapped": 0, "heatmaps": [],
+                "doors": [{"id": ident, "floor": "F1", "peakQueue": peak,
+                           "waitPersonSeconds": wait, "smokeWait": smoke}
+                          for ident, peak, wait, smoke in
+                          (("E1", 2, 100, 0), ("DSB1", 10, 40, 40), ("D101", 1, 80, 0))]}]
+    original = deepcopy(records)
+    result = aggregate(building, scenario, records)
+    assert {d["id"]: d["score"] for d in result["doors"]} == {"E1": 54.0, "DSB1": 70.0, "D101": 42.0}
+    assert next(d for d in result["doors"] if d["id"] == "DSB1")["meanSmokeWait"] == 40
+    assert "40 of them in smoke" in next(t["why"] for t in result["top"] if t["id"] == "DSB1")
+    assert records == original
+    # Missing doors contribute zero over successful runs, like meanWait.
+    absent = {**records[0], "doors": []}
+    assert next(d for d in aggregate(building, scenario, records + [absent])["doors"]
+                if d["id"] == "DSB1")["meanSmokeWait"] == 20
+    for record in records:
+        for d in record["doors"]:
+            d["smokeWait"] = 0
+    assert {d["id"]: d["score"] for d in aggregate(building, scenario, records)["doors"]} == {
+        "E1": 76.0, "DSB1": 58.0, "D101": 59.0}
+    for d in records[0]["doors"]:
+        del d["smokeWait"]
+    assert all("meanSmokeWait" not in d for d in aggregate(building, scenario, records)["doors"])
+
+
+def check_exposure():
+    from copy import deepcopy
+    from fire.metrics import DOSE_UNIT, SMOKE_D, compute, exposure
+    from fire.model import FireModel
+
+    building = fixture_building()
+    scenario = {"fire": {"floor": "F1", "room": "A", "x": 8, "y": 5,
+                         "type": "kitchen", "start": 0},
+                "sprinklers": False, "doors": {}, "maxTime": 400}
+    model = FireModel(building, scenario)
+    x, y = model.source_xy
+    west = [float(x - 3), float(y)]
+    run = {"floors": ["F1"], "frameInterval": 0.5,
+           "agents": [{"idx": idx, "room": "A" if idx != 1 else "B"} for idx in range(3)],
+           "frames": [{"t": k * 0.5,
+                       "a": [[0, *west, 0, 2], [1, 17, 3, 0, 3]] +
+                            ([[2, *west, 0, 0]] if k <= 80 else [])} for k in range(401)]}
+    original = deepcopy(run)
+    result = exposure(run, building, scenario)
+    assert DOSE_UNIT == 2700 and SMOKE_D == 10
+    assert result["dosed"] == 2 and result["dosedIdx"] == [0, 1], result
+    assert result["agentsInSmoke"] == 2 and result["personSecondsInSmoke"] > 0
+    individual = []
+    for idx in range(3):
+        one = {**run, "agents": [run["agents"][idx]],
+               "frames": [{**frame, "a": [row for row in frame["a"] if row[0] == idx]}
+                          for frame in run["frames"]]}
+        individual.append(exposure(one, building, scenario)["meanDose"])
+    assert abs(individual[0] - 3.4) < 0.15, individual
+    assert abs(individual[1] - 1.4) < 0.15 and individual[1] < individual[0], individual
+    assert individual[2] < 0.05, individual
+    assert np.isclose(result["meanDose"], sum(individual) / 3)
+    assert np.isclose(result["maxDose"], individual[0])
+    assert run == original
+    assert compute(run, building, scenario)["exposure"] == result
+    assert "exposure" not in compute(run, building)
+    # Snap lookup equals the scalar query, including off-grid and invalid-floor rows.
+    probe = {"floors": ["unknown", "F1"], "frameInterval": 0.5, "agents": [{"idx": 9}],
+             "frames": [{"t": 200, "a": [[9, *west, 1, 1], [10, -50, -50, 1, 1],
+                                         [11, *west, 0, 1], [12, *west, 1, -1]]}]}
+    model.step(200)
+    expected = float(model._density[model._node("F1", *west)]) * 0.5 / DOSE_UNIT
+    assert np.isclose(exposure(probe, building, scenario)["meanDose"], expected)
+    empty = exposure({"frames": [], "agents": []}, building, scenario)
+    assert empty["meanDose"] == empty["maxDose"] == empty["dosed"] == 0
+    json.dumps(result, allow_nan=False)
+    json.dumps(empty, allow_nan=False)
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    scenario = json.loads((root / "contracts/scenario.example.json").read_text())
+    stair_times = []
+    for overrides in ({}, {"DSA1": "propped"}):
+        measured = exposure({"frames": []}, building, {**scenario, "doors": overrides})
+        stair_times.append(next(s["smokeAt"] for s in measured["stairs"]
+                                if s["floor"] == "F1" and s["group"] == "SA"))
+        json.dumps(measured, allow_nan=False)
+    assert abs(stair_times[0] - 93) <= 3 and abs(stair_times[1] - 62) <= 3, stair_times
+    print(f"exposure: doses={individual}; F1/SA closed/propped smokeAt={stair_times}")
+
+
 def check_margins():
     from fire.metrics import compute
     from fire.model import FireModel, aset_by_room
@@ -481,6 +593,13 @@ def check_aggregate():
     assert result["rooms"][0]["riskT90"] == (100 + base["maxTime"]) / 2
     assert result["rooms"][0]["riskTrapped"] == 2 and result["rooms"][0]["n"] == 2
     assert result["rooms"][1]["riskT90"] is None
+    assert all("riskDosed" not in room for room in result["rooms"])
+    with_dose = deepcopy(records)
+    for record, dosed in zip(with_dose, (2, 4, 1)):
+        record["dosed"] = dosed
+    assert [r["riskDosed"] for r in aggregate(building, base, with_dose)["rooms"]] == [3, 1]
+    del with_dose[-1]["dosed"]
+    assert all("riskDosed" not in r for r in aggregate(building, base, with_dose)["rooms"])
     scores = {door["id"]: door["score"] for door in result["doors"]}
     assert scores == {"E1": 76.0, "DSB1": 58.0, "D101": 59.0}, scores
     top = result["top"]
@@ -524,6 +643,66 @@ def check_aggregate():
     json.dumps(result, allow_nan=False)
 
 
+def check_timing():
+    from contextlib import redirect_stdout
+    from io import StringIO
+    from unittest.mock import patch
+    from fire.batch import main, plan_rooms, run_many
+    # Load before patching batch.run_many: whatif keeps a module-level reference.
+    import fire.whatif
+
+    assert plan_rooms(1800, 60, (1, 2, 3), 12, variants=3) == 15
+    assert plan_rooms(0.01, 60, (1, 2, 3), 12, variants=3) == 1
+    for kwargs in ({"pilot_s": 0}, {"budget_s": float("inf")}, {"seeds": ()}, {"workers": 0}):
+        values = dict(budget_s=1800, pilot_s=60, seeds=(1,), workers=2)
+        values.update(kwargs)
+        try:
+            plan_rooms(**values)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid planning inputs must fail")
+    building = fixture_building()
+    base = {"id": "timing", "seed": 1, "fire": {}, "maxTime": 120}
+    def fake(task):
+        sc = task["scenario"]
+        if sc["seed"] == 2:
+            return {"ok": False, "scenarioId": sc["id"], "wallS": 2.0, "error": "fake failure"}
+        return {"ok": True, "scenarioId": sc["id"], "seed": sc["seed"],
+                "ignition": task["ignition"], "wallS": 6.0, "t90": 60, "t100": 80,
+                "trapped": 0, "doors": [], "heatmaps": []}
+    output = StringIO()
+    with patch("fire.batch._run_one", side_effect=fake), redirect_stdout(output):
+        batch = run_many(building, base, seeds=(1, 2), workers=1)
+    timing = batch["timing"]
+    assert timing["runs"] == 4 and timing["failed"] == 2 and timing["workers"] == 1
+    assert timing["wallS"] >= 0 and timing["meanRunS"] == 4.0
+    assert all("wallS" not in run for run in batch["runs"])
+    assert "eta " in output.getvalue() and "eta 0.0 min" in output.getvalue().splitlines()[-1]
+    empty = run_many(building, base, [], workers=1, progress=False)
+    assert empty["timing"]["runs"] == 0 and empty["timing"]["meanRunS"] == 0.0
+    json.dumps(batch, allow_nan=False)
+
+    # Exercise the CLI budget wiring without running a simulation or writing artifacts.
+    root = Path(__file__).resolve().parents[1]
+    argv = ["fire.batch", str(root / "contracts/building.example.json"),
+            str(root / "contracts/scenario.example.json"), "--budget-min", "3",
+            "--seeds", "1,2", "--workers", "4", "--whatif", "--whatif-rooms", "99"]
+    pilot = {"ok": True, "wallS": 60.0, "exitCounts": {}}
+    output = StringIO()
+    with (patch("sys.argv", argv), patch("fire.batch._run_one", return_value=pilot),
+          patch("fire.batch.run_many", return_value={"runs": [], "failed": [], "top": []}) as sweep,
+          patch("fire.whatif.add_whatif", side_effect=lambda b, s, batch, **kw: batch) as whatif,
+          patch("pathlib.Path.write_text"), patch("pathlib.Path.mkdir"), redirect_stdout(output)):
+        main()
+    # floor(180 * 4 / (60 * 2 * 2 * 4)) == 0, clamped to one room.
+    assert len(sweep.call_args.args[2]) == 1
+    assert sweep.call_args.args[3:] == ((1, 2), 4)
+    assert whatif.call_args.kwargs == {"rooms": 1, "workers": 4}
+    assert "3 what-ifs -> 1 rooms" in output.getvalue()
+    print("timing: worker durations, ETA, failure totals and pilot budget checked", flush=True)
+
+
 def check_batch_pool_slow():
     from copy import deepcopy
     from fire.batch import run_many
@@ -541,6 +720,8 @@ def check_batch_pool_slow():
     assert time.perf_counter() - started < 240
     serial = run_many(building, base, ignitions, seeds=(1,), workers=1)
     assert parallel["runs"] == serial["runs"], (parallel["runs"], serial["runs"])
+    assert all(r["dosed"] >= 0 and r["smokeSeconds"] >= 0 for r in parallel["runs"])
+    assert all("riskDosed" in room for room in parallel["rooms"])
     assert base == original
     # Kill a spawned batch before any simulation can finish; don't hang shutdown.
     started = time.perf_counter()
@@ -609,6 +790,99 @@ def check_exits_slow():
                for e in result["exits"])
     assert len(result["top"]) <= 5 and base == original and "exits" not in batch
     print("exits: E1/E2 blocked comparisons completed with two matched runs each", flush=True)
+
+
+def check_whatif():
+    from copy import deepcopy
+    from unittest.mock import patch
+    from fire.whatif import stair_doors, default_variants, compare, add_whatif
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["doors"] = {"D101": "closed", "DSA1": "closed"}
+    assert set(stair_doors(building)) == {"DSA1", "DSB1", "DSA2", "DSB2"}
+
+    def record(room, seed, t90, trapped=0, dosed=1, smoke=100):
+        return {"ignition": {"floor": "F1", "room": room}, "seed": seed, "t90": t90,
+                "trapped": trapped, "dosed": dosed, "smokeSeconds": smoke,
+                "exitCounts": {"E1": 45, "E2": 35}}
+
+    baseline = [record("R101", 1, 60), record("R105", 1, None, 2), record("R105", 2, 80)]
+    variants = default_variants(building, base, baseline[:2])
+    assert variants[1]["doors"] == {"E1": "blocked"}
+    one_exit = deepcopy(building)
+    for floor in one_exit["floors"]:
+        floor["exits"] = [e for e in floor["exits"] if e["door"] == "E1"]
+    assert "blockedExit" not in {v["id"] for v in default_variants(one_exit, base, baseline)}
+    assert "sprinklers" not in {v["id"] for v in default_variants(building, {**base, "sprinklers": True}, baseline)}
+    # Count ties prefer width, then id, independent of building order.
+    tied = deepcopy(building)
+    doors = {d["id"]: d for f in tied["floors"] for d in f["doors"]}
+    doors["E2"]["width"] = doors["E1"]["width"] + 1
+    assert default_variants(tied, base, [])[1]["doors"] == {"E2": "blocked"}
+    doors["E2"]["width"] = doors["E1"]["width"]
+    assert default_variants(tied, base, [])[1]["doors"] == {"E1": "blocked"}
+    modified = [record("R101", 1, 80, 1, 3, 160), record("R105", 1, 100, 1, 2, 120)]
+    stats = compare(base, baseline, modified)
+    assert stats == {"n": 2, "dT90": (120 - base["maxTime"]) / 2,
+                     "dT90Min": 100 - base["maxTime"], "dT90Max": 20,
+                     "slower": 1, "faster": 1, "dTrapped": 0, "dDosed": 1.5, "dSmokeSeconds": 40}, stats
+    old = [{k: v for k, v in r.items() if k not in ("dosed", "smokeSeconds")} for r in modified]
+    assert "dDosed" not in compare(base, baseline, old)
+    assert "dSmokeSeconds" not in compare(base, baseline, old)
+    assert compare(base, baseline, [])["n"] == 0
+    boundary = compare(base, [record("R101", 1, 60), record("R105", 1, 60)],
+                       [record("R101", 1, 61), record("R105", 1, 59)])
+    assert boundary["slower"] == boundary["faster"] == 0
+    batch = {"runs": baseline, "rooms": [{"id": "R101", "floor": "F1", "riskT90": 60},
+                                           {"id": "R105", "floor": "F1", "riskT90": None}]}
+    original, original_base = deepcopy(batch), deepcopy(base)
+    calls = []
+
+    def rerun(b, sc, ignitions, seeds, workers, timeout, progress):
+        assert b is building and seeds == [1, 2] and workers == 1 and timeout == 12 and not progress
+        assert sc["doors"]["D101"] == "closed"
+        variant = variants[len(calls) % 3]
+        assert sc["id"] == f"{base['id']}-{variant['id']}"
+        assert sc["doors"] == {**base["doors"], **variant["doors"]}
+        assert sc["sprinklers"] == variant["sprinklers"]
+        calls.append(ignitions)
+        return {"runs": modified}
+
+    with patch("fire.whatif.run_many", side_effect=rerun):
+        result = add_whatif(building, base, batch, workers=1, timeout_s=12, progress=False)
+        subset = add_whatif(building, base, batch, rooms=1, workers=1, timeout_s=12, progress=False)
+    assert calls[:3] == [[{"floor": "F1", "room": "R101"}, {"floor": "F1", "room": "R105"}]] * 3
+    assert calls[3:] == [[{"floor": "F1", "room": "R105"}]] * 3
+    assert len(result["whatIf"]) == 3 and all(r["n"] == 2 for r in result["whatIf"])
+    assert all(r["n"] == 1 for r in subset["whatIf"])
+    assert all(r["why"].isascii() and any(c.isdigit() for c in r["why"]) for r in result["whatIf"])
+    assert batch == original and base == original_base
+    result["runs"][0]["exitCounts"]["E1"] = -1
+    assert batch == original
+    json.dumps(subset, allow_nan=False)
+
+
+def check_whatif_slow():
+    from fire.batch import run_many
+    from fire.whatif import add_whatif
+
+    root = Path(__file__).resolve().parents[1]
+    building = json.loads((root / "contracts/building.example.json").read_text())
+    base = json.loads((root / "contracts/scenario.example.json").read_text())
+    base["maxTime"] = 240
+    base["occupants"] = {"total": 60, "mix": base["occupants"]["mix"]}
+    ignitions = [{"floor": "F1", "room": room} for room in ("R101", "R105")]
+    batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=240)
+    assert len(batch["runs"]) == 2 and not batch["failed"]
+    assert all(sum(r["exitCounts"].values()) > 0 for r in batch["runs"])
+    result = add_whatif(building, base, batch, workers=2, timeout_s=240)
+    assert len(result["whatIf"]) == 3
+    assert all(r["n"] == 2 and all(np.isfinite(r[k]) for k in
+               ("dT90", "dT90Min", "dT90Max", "dTrapped", "dDosed", "dSmokeSeconds"))
+               for r in result["whatIf"])
+    print("what-if: three variants with two matched fires each", flush=True)
 
 
 def run_all(slow: bool = False):

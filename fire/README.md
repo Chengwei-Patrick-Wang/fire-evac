@@ -272,8 +272,9 @@ writing the file. All numeric explanations are ASCII, including building labels.
   risk-map state; its ranking time is still `maxTime`.
 - `doors`: mean waiting person-seconds over all successful runs (an absent door
   contributes zero), maximum queue, and score rounded to one decimal. The score
-  is 100 times (0.7 times mean wait / maximum mean wait + 0.3 times peak queue /
-  maximum peak queue). A zero maximum contributes zero.
+  uses the smoke-aware weights in D12 below when any door has positive mean
+  smoke waiting; otherwise it is 100 times (0.7 times mean wait / maximum mean
+  wait + 0.3 times peak queue / maximum peak queue). A zero maximum contributes zero.
 - `heatmaps`: decode each floor's Uint8 grids, average across successful runs,
   then rescale the busiest cell to 100 and encode again. Headers are preserved;
   inconsistent headers or byte counts raise ValueError. Empty grids stay zero.
@@ -403,3 +404,203 @@ A/E handoff: opt in through `add_exit_criticality` after `run_many`; optional
 `exits` contains door ids, floor, dT90, dTrapped and n. Existing batch fields
 are preserved. No shared contract or frontend files changed. Git syncing and
 integration are left to the overnight runner.
+
+## Smoke exposure and illustrative dose (D10)
+
+`exposure(run, building, scenario)` replays one fresh `FireModel` at the saved
+frame times, reading unrounded density through each floor's snap grid. Density
+lookups are vectorized per floor with the same cell arithmetic as `_node`;
+off-grid positions and unknown floors count as clear air. Every inside status
+(0 through 3, including waiting, landing and stair-transfer rows) contributes.
+Exited people disappear from frames and stop accumulating exposure.
+
+| Constant or field | Definition |
+| --- | --- |
+| `DOSE_UNIT`, `doseUnit` | 2,700 density-seconds = `UNTENABLE_D * UNTENABLE_HOLD_S`, or 30 s at density 90 |
+| `SMOKE_D`, `smokeD` | Density 10, corresponding to visibility at or below 10 m |
+| Per-agent dose | Sum of density times `run.frameInterval`, divided by `DOSE_UNIT` |
+| `personSecondsInSmoke` | Sum of `frameInterval` across all inside rows with density at least `SMOKE_D` |
+| `agentsInSmoke` | Distinct people with at least one row at or above `SMOKE_D` |
+| `meanDose` | Total dose divided by `len(run.agents)`, including unexposed people; 0 with no agents |
+| `maxDose` | Greatest observed individual dose; 0 with no rows |
+| `dosed`, `dosedIdx` | Count and sorted agent indexes whose accumulated dose reached 1 |
+| `stairs[].floor`, `group`, `smokeAt` | First whole second when any grid node inside that stair polygon reaches `SMOKE_D`; null if never observed through `scenario.maxTime` |
+| Batch `runs[].dosed`, `smokeSeconds` | Run dose count and `personSecondsInSmoke`, respectively |
+| Batch `rooms[].riskDosed` | Mean dosed count for fires ignited in that room; included only when every successful record carries `dosed` |
+
+This is an illustrative FED-style sum of the model's illustrative smoke
+density, not gas concentrations. It is not a prediction of injury or survival.
+`dosed` removes nobody from the replay. Exposure uses the saved position:
+stairwell time is sampled at the arrival stair below during a transfer, and at
+the landing during a wait. It does not reconstruct motion between frames.
+Whole-second stair probes and frame times share one forward model timeline;
+stair probes continue to `maxTime` even when the replay ends early or has no
+frames. Stair polygons are measured separately on each floor.
+
+A/E handoff: passing a scenario to `compute(run, building, scenario)` adds the
+optional `metrics.exposure` object. Batch `runs[].dosed`, `runs[].smokeSeconds`
+and `rooms[].riskDosed` are optional additions; older records still aggregate
+without them. Use exposure for the propped-stair-door comparison: the lead's
+paired runs show an exposure increase despite nearly unchanged evacuation
+times and trapped counts. D10 does not change the ranking formula.
+
+D10 fixed-position checks give doses 3.413 and 1.386 for two people remaining
+until 200 s, and 0.015 for a person present only through 40 s. On the example
+kitchen fire, F1 Stair A reaches the smoke threshold at 93 s with the doors as
+built and 62 s with DSA1 propped, including when no replay frames are supplied.
+Checks also cover all inside statuses, off-grid positions, floor lookup,
+empty runs, unchanged inputs and finite JSON output.
+
+D10 verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
+both print `fire checks OK`. Spawned and inline batches match with the new
+fields, room dose risks are present, and older hand-made records retain their
+previous output shape when dose data is absent.
+
+## What-if sweep (D11)
+
+`fire.whatif.add_whatif(building, base, batch, variants=None, rooms=None,
+workers=None, timeout_s=7200, progress=True)` returns a deep copy with optional
+`whatIf` comparisons. The CLI enables it with `--whatif`, after any `--exits`
+comparison; `--whatif-rooms N` restricts it to the N highest-risk rooms in the
+baseline (null `riskT90` counts as `maxTime`). Ignitions retain baseline order
+and seeds come from the baseline. Each variant receives a fresh copy of the
+base, merged door overrides, its explicit sprinkler setting, and a distinct id.
+Each rerun is rule-based and has its own batch timeout.
+
+The default variants are all interior stair doors propped open, the most-used
+exterior exit blocked (only for buildings with at least two exits), and
+sprinklers on (unless already on). Stair doors join a room listed in `stairs`
+or typed `stair`, excluding outside connections. Exit use is summed from
+`runs[].exitCounts`, keyed by exit id; ties prefer the wider door, then the
+lexically first exit id. The blocked override uses that exit's door id. All
+variants preserve other base door states and preserve base sprinklers except
+for the sprinkler variant.
+
+| Field | Definition |
+| --- | --- |
+| `id`, `label`, `doors`, `sprinklers` | Variant identity, display label, door overrides and explicit sprinkler setting |
+| `n` | Successful matched ignition-floor/room/seed pairs |
+| `dT90`, `dT90Min`, `dT90Max` | Mean, minimum and maximum variant-minus-baseline evacuation-time differences; null t90 counts as base maxTime |
+| `slower`, `faster` | Pair counts with evacuation-time difference strictly above +1 s or below -1 s |
+| `dTrapped` | Mean variant-minus-baseline trapped count over matched pairs |
+| `dDosed`, `dSmokeSeconds` | Mean variant-minus-baseline illustrative dose count and person-seconds in smoke; each included only if both sides of every matched pair carry that measure |
+| `why` | ASCII explanation of paired time, exposure and trapped differences |
+| Batch `runs[].exitCounts` | Per-exit evacuated counts retained from simulator metrics |
+
+Missing or failed runs drop the pair from both sides. No matched pairs gives
+`n=0`, zero time/trapped deltas, omitted exposure deltas, and an explicit
+no-data explanation. A zero censored time delta cannot establish equal
+clearance times. These are illustrative model comparisons, and the dose is
+not a prediction of injury or survival. Exposure is the useful headline for
+propped stair doors even when evacuation times barely change.
+
+A handoff: call `add_whatif` after `run_many` in the precompute; its `why` lines
+suit the report card. E handoff: optional batch `whatIf` contains these paired
+comparisons; optional `runs[].exitCounts` supports exit-use displays. No shared
+contract or frontend files changed.
+
+D11 verification: `python -m fire.smoke_test` and
+`python -m fire.checks --slow` both print `fire checks OK`. The requested
+six-room, seeds 1 and 2 CLI completed 48 simulations in 83.9 s with 12
+baseline runs, no baseline failures, and 12 matched pairs per variant:
+
+```text
+Stair doors propped open: 90% out 0 s later on average (slower in 0 of 12 fires); +427 person-seconds in smoke, +0.5 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+Exit Main entrance blocked: 90% out 54 s later on average (slower in 10 of 12 fires); +5,250 person-seconds in smoke, +23.8 people at an illustrative smoke dose of 1, -9.8 trapped per fire.
+Sprinklers on: 90% out 1 s sooner on average (slower in 0 of 12 fires); -72 person-seconds in smoke, -0.8 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+```
+
+These measured examples include the lobby routing artifact identified in the
+lead's overnight notes, pending C10. The lobby rank and the reduction in
+trapped people when blocking the main entrance must not be used as demo
+headlines; regenerate these comparisons after the routing fix. Propping
+stair doors increases exposure despite the nearly unchanged t90.
+
+
+## Queues in smoke (D12)
+
+With a scenario, `compute` adds optional `doors[].smokeWait`: person-seconds
+queued within 2 m of an opening, moving below 0.3 m/s with status 1, at smoke
+density at least `SMOKE_D` (10). This is the smoky subset of
+`waitPersonSeconds`, sampled from the same snap-grid row-density calculation
+as illustrative exposure. Calls without a scenario retain the existing shape.
+
+Batch workers carry `smokeWait` in door records. `aggregate` adds optional
+`doors[].meanSmokeWait` when all available records for that door carry the
+measure. As with `meanWait`, the denominator is all successful runs; a missing
+door contributes zero. Failed runs contribute to neither measure.
+
+When any door has positive `meanSmokeWait`, the relative score is
+`round(100 * (0.5 * wait/maxWait + 0.2 * peak/maxPeak + 0.3 * smoke/maxSmoke), 1)`.
+Otherwise the original 0.7 wait / 0.3 peak weights apply, including to old
+records without smoke waits. Zero maxima contribute zero. Explanations include
+", N of them in smoke" when mean smoke waiting is at least one person-second.
+These model-based relative scores are illustrative, not calibrated risk.
+
+A/E handoff: optional per-run `metrics.doors[].smokeWait` and batch
+`doors[].meanSmokeWait` support smoky-queue displays. Scores now weight waiting,
+peak queue and smoky waiting by 50%, 20% and 30% when smoky queues exist.
+
+D12 verification: `python -m fire.smoke_test` prints `fire checks OK`.
+The six-room, seed-1 CLI completed in 3.3 s with six successful runs and no
+failures, writing `debug/batch-smoke.json`. Its smoky-queue explanations were:
+
+```text
+Exit East stair exit: 12 people queued at peak; 182 person-seconds of waiting on average, 6 of them in smoke, across 6 fires.
+Door D106: 3 people queued at peak; 44 person-seconds of waiting on average, 8 of them in smoke, across 6 fires.
+Door D104: 4 people queued at peak; 54 person-seconds of waiting on average, 4 of them in smoke, across 6 fires.
+Exit Main entrance: 3 people queued at peak; 28 person-seconds of waiting on average, 5 of them in smoke, across 6 fires.
+```
+
+The sampled lobby fire still has the C10 routing artifact noted by the lead;
+its room ranking is not suitable for a demo headline pending that fix.
+
+## Batch timing and room budget (D13)
+
+`python -m fire.batch BUILDING SCENARIO --budget-min 30 --workers 12 --seeds 1,2,3 --whatif`
+measures one inline pilot in the first eligible room with the first seed, then
+samples rooms deterministically using the base seed. The pilot uses the same
+rule-based simulator and metrics as the sweep. An unsuccessful pilot stops with
+its error rather than producing a misleading estimate.
+
+| Field or parameter | Meaning |
+| --- | --- |
+| Worker record `wallS` | Seconds spent running the simulation and computing its metrics, including caught failures; excluded from batch `runs[]` |
+| Progress `eta N.N min` | Elapsed batch time per completed record times remaining records; updates as workers finish |
+| `timing.runs`, `timing.failed` | Total attempted records (successes plus failures), and failed records |
+| `timing.workers` | Configured worker count, using the existing CPU-based default when omitted |
+| `timing.wallS` | Wall seconds collecting baseline records, including pool startup and shutdown; excludes task construction and aggregation |
+| `timing.meanRunS` | Mean worker duration among records carrying `wallS`, including caught failures; zero if none; deadline/terminated-worker records have no duration |
+| `contention = 2.0` | Planning allowance for slower concurrent runs, not a measured guarantee |
+| `plan_rooms(budget_s, pilot_s, seeds, workers, variants=0, contention=2.0)` | `max(1, floor(budget_s * workers / (pilot_s * contention * len(seeds) * (1 + variants))))` |
+
+`--budget-min M` prints the pilot duration, worker/seed/what-if counts, selected
+room count and estimated sweep minutes. The selected count is capped at the
+building's eligible rooms and at an explicit `--rooms` limit. With `--whatif`,
+the estimate counts the available default variants (respecting existing
+sprinklers and the number of exits), and the selected count also becomes
+`--whatif-rooms`. The blocked exit is still chosen from baseline exit counts.
+The inline pilot is measured separately and rerun in the baseline sweep.
+
+This is a planning estimate, not a hard deadline. The printed estimate excludes
+pilot overhead, aggregation, pool startup, and optional `--exits` reruns. A single
+room can exceed a tiny budget, and room geometry, smoke and worker contention
+can make later runs slower than the pilot. Existing per-batch timeouts still
+apply. `timing` describes the baseline sweep; additional exit and what-if
+sweeps do not overwrite it. Timing is optional metadata; numerical `runs[]`
+records remain identical between spawned and inline execution.
+
+A handoff: use `--budget-min` for the real building's precompute, with an explicit
+worker count appropriate to the machine. For example:
+
+```sh
+python -m fire.batch contracts/building.example.json contracts/scenario.example.json --budget-min 3 --seeds 1 --workers 4 --out debug/batch-budget.json
+```
+
+D13 verification: the command above printed
+`pilot 2.5 s; budget 3 min, 4 workers, 1 seeds, 0 what-ifs -> 18 rooms (est. 0.4 min)`
+and wrote 18 successful runs with zero failures in 16.2 seconds, under the
+six-minute verification limit. The smoke test and slow checks also cover worker
+failures, empty batches, ETA output, budget clamping, CLI what-if wiring and
+spawned/inline result equality. The lobby routing artifact remains unsuitable
+for demo headlines, as noted by the lead.

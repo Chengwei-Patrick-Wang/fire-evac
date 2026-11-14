@@ -4,12 +4,18 @@ CLI: python -m fire.metrics RUN BUILDING (top five doors by waiting).
 """
 import base64
 import json
+import math
 import sys
 from pathlib import Path
 
 import numpy as np
+import shapely
 
 from fire.grid import grid_specs
+from fire.model import FireModel, UNTENABLE_D, UNTENABLE_HOLD_S
+
+DOSE_UNIT = UNTENABLE_D * UNTENABLE_HOLD_S
+SMOKE_D = 10.0
 
 QUEUE_RADIUS_M = 2.0
 QUEUE_SPEED_MS = 0.3
@@ -49,15 +55,85 @@ def _stack(frames: list):
             np.asarray(previous_rows, dtype=int))
 
 
+def _row_density(run: dict, building: dict, scenario: dict, rows: np.ndarray,
+                 frame_numbers: np.ndarray) -> np.ndarray:
+    """Sample density for each replay row; invalid positions/statuses have zero density."""
+    model = FireModel(building, scenario)
+    frames = run.get("frames") or []
+    floor_ids = list(run.get("floors") or [f["id"] for f in building["floors"]])
+    nodes = np.full(len(rows), -1, dtype=int)
+    for fi, floor_id in enumerate(floor_ids):
+        index = model.graph.floor_index.get(floor_id)
+        if index is None:
+            continue
+        grid = model.graph.floors[index]
+        selected = np.flatnonzero((rows[:, 3] == fi) & np.isfinite(rows[:, 1:3]).all(axis=1)
+                                  & (rows[:, 4] >= 0) & (rows[:, 4] <= 3))
+        cells = np.floor((rows[selected, 1:3] - grid.spec["origin"]) / grid.spec["cell"])
+        inside = ((cells[:, 0] >= 0) & (cells[:, 0] < grid.spec["cols"]) &
+                  (cells[:, 1] >= 0) & (cells[:, 1] < grid.spec["rows"]))
+        selected, cells = selected[inside], cells[inside].astype(int)
+        local = grid.snap[cells[:, 1], cells[:, 0]]
+        valid = local >= 0
+        nodes[selected[valid]] = model.graph.offset[index] + local[valid]
+
+    times = [float(frame["t"]) for frame in frames]
+    if any(not math.isfinite(t) or t < 0 for t in times) or times != sorted(times):
+        raise ValueError("Exposure frame times must be finite, non-negative and ordered")
+    density = np.zeros(len(rows))
+    boundaries = np.searchsorted(frame_numbers, np.arange(len(frames) + 1))
+    for k, t in enumerate(times):
+        model.step(t)
+        selected = np.arange(boundaries[k], boundaries[k + 1])
+        selected = selected[nodes[selected] >= 0]
+        density[selected] = model._density[nodes[selected]]
+    return density
+
+
+def exposure(run: dict, building: dict, scenario: dict) -> dict:
+    """Integrate illustrative smoke density at replay positions, without removing people."""
+    rows, frame_numbers, _, _ = _stack(run.get("frames") or [])
+    density = _row_density(run, building, scenario, rows, frame_numbers)
+    model = FireModel(building, scenario)
+    stairs, stair_nodes = [], []
+    for floor, grid, offset in zip(building["floors"], model.graph.floors, model.graph.offset):
+        for stair in floor.get("stairs", []):
+            inside = shapely.contains_xy(shapely.Polygon(stair["polygon"]), grid.xy[:, 0], grid.xy[:, 1])
+            stairs.append({"floor": floor["id"], "group": stair["group"], "smokeAt": None})
+            stair_nodes.append(offset + np.flatnonzero(inside))
+    horizon = float(scenario["maxTime"])
+    if not math.isfinite(horizon) or horizon < 0:
+        raise ValueError("Exposure horizon must be finite and non-negative")
+    for t in range(math.floor(horizon) + 1):
+        model.step(t)
+        for stair, indexes in zip(stairs, stair_nodes):
+            if stair["smokeAt"] is None and (model._density[indexes] >= SMOKE_D).any():
+                stair["smokeAt"] = float(t)
+
+    dt = float(run.get("frameInterval", 0.5))
+    indexes, inverse = np.unique(rows[:, 0].astype(int), return_inverse=True)
+    doses = np.bincount(inverse, weights=density * dt / DOSE_UNIT, minlength=len(indexes))
+    smoky = np.bincount(inverse, weights=(density >= SMOKE_D).astype(float), minlength=len(indexes))
+    dosed = indexes[doses >= 1].tolist()
+    count = len(run.get("agents") or [])
+    return {"doseUnit": DOSE_UNIT, "smokeD": SMOKE_D,
+            "personSecondsInSmoke": float(np.count_nonzero(density >= SMOKE_D) * dt),
+            "agentsInSmoke": int(np.count_nonzero(smoky)),
+            "meanDose": float(doses.sum() / count) if count else 0.0,
+            "maxDose": float(doses.max()) if len(doses) else 0.0,
+            "dosed": len(dosed), "dosedIdx": dosed, "stairs": stairs}
+
+
 def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
     """Copy sim metrics and add every door's queues/flow and per-floor heatmaps.
 
-    With a scenario, add smoke-only room ASET and observed clearance margins.
+    With a scenario, add smoke-only room ASET, clearance margins and exposure.
     """
     dt = float(run.get("frameInterval", 0.5))
     frames = run.get("frames") or []
     floor_ids = list(run.get("floors") or [f["id"] for f in building["floors"]])
     a, fno, speed, previous = _stack(frames)
+    density = _row_density(run, building, scenario, a, fno) if scenario is not None else None
     xy = a[:, 1:3]
     fl, st = a[:, 3].astype(int), a[:, 4].astype(int)
     times = np.asarray([frame["t"] for frame in frames], dtype=float)
@@ -108,6 +184,8 @@ def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
                           "peakQueue": int(counts.max()) if len(counts) else 0,
                           "waitPersonSeconds": round(float(counts.sum()) * dt, 3),
                           "flow": float(flow), "crossed": crossed})
+            if density is not None:
+                doors[-1]["smokeWait"] = round(float(np.count_nonzero(density[queued] >= SMOKE_D)) * dt, 3)
 
         moving = on_floor[st[on_floor] == 1]
         cells = np.floor((xy[moving] - spec["origin"]) / spec["cell"]).astype(int)
@@ -142,6 +220,7 @@ def compute(run: dict, building: dict, scenario: dict | None = None) -> dict:
             margin = available - rset if available is not None and rset is not None else None
             rooms.append({"id": room, "rset": rset, "aset": available, "margin": margin})
         result["rooms"] = rooms
+        result["exposure"] = exposure(run, building, scenario)
     return result
 
 

@@ -58,3 +58,14 @@ Totals include elements not assigned to a storey. The full command prints the pe
 | `data/raw/vtt/ARCH/IFC/ARK_NordicLCA_Office_Terrain_Timber_BuildingPermit_Revit.ifc` | IFC4, scale 0.001 | spaces=9, doors=0, stairs=0, flights=0 | NOT PICKABLE |
 | `data/raw/vtt/ARCH/IFC/ARK_NordicLCA_Office_Timber_As-Built_Revit.ifc` | IFC4, scale 0.001 | spaces=306, doors=266, stairs=16, flights=31 | PICKABLE |
 | `data/raw/vtt/ARCH/IFC/ARK_NordicLCA_Office_Timber_BuildingPermit_Revit.ifc` | IFC4, scale 0.001 | spaces=306, doors=266, stairs=16, flights=31 | PICKABLE |
+
+## Demo building
+
+`office` has two occupied floors and six exits on F1. Its source and license
+status are given in the credits above and in the building JSON. The IFC has
+split spaces sharing open boundaries; validation recognizes those where the
+walkable area crosses the shared boundary. The overrides omit the elevator and
+add assumed connections from the mechanical room to the corridor and from the
+electrical room to storage. These are modeling assumptions, not verified doors.
+Regenerate with `python -m buildings.ifc data/raw/team-downloads/Office_A_20110811.ifc data/raw/office.plan.json --id office --name "NIBS Office" --credits "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"`, then `python -m buildings.normalize data/raw/office.plan.json data/buildings/office.json`.
+Create a scenario with `python -m buildings.make_scenario data/buildings/office.json data/buildings/office.scenario.json` (optional `--total`).

@@ -2,10 +2,12 @@
 
 Runs the example scenario on the example building (NoFire) and checks the
 review-focus behavior: stair transfers, spawn points, frames, determinism,
-and a run that hits maxTime.
+and a run that hits maxTime. The default suite uses 40 agents; --slow also
+runs the full example and the 300-agent performance check.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import io
 from contextlib import redirect_stderr
@@ -17,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from sim.run import run, StuckWatch, floor_walkable, smoke_speed
+from sim.run import profile_metrics, _t_share, run, StuckWatch, floor_walkable, smoke_speed, fire_keepout, FIRE_KEEPOUT_M, place_occupants
 from fire.stub import NoFire
 from sim.floors import StairNet, find_spot
 from sim.brain import RuleBrain, should_switch, route_length, ROUTING_MODE, mobility_options
@@ -293,8 +295,12 @@ def check_fire(building, scenario, clear):
         def visibility(self, floor_id, x, y):
             return 1.0
 
-    slow = run(building, scenario, LowVisibility(building, scenario))
-    assert slow["metrics"]["t90"] >= 1.2 * clear["metrics"]["t90"]
+    # Start both crowds immediately to isolate smoke speed from the new cue starts.
+    immediate = dict(scenario, alarmTime=0, premovement={
+        r["type"]: [0, 0] for f in building["floors"] for r in f["rooms"]})
+    immediate_clear = run(building, immediate, NoFire(building, immediate))
+    slow = run(building, immediate, LowVisibility(building, immediate))
+    assert slow["metrics"]["t90"] >= 1.2 * immediate_clear["metrics"]["t90"]
     room = next(r for r in building["floors"][0]["rooms"] if r["id"] == "R101")
     poly = Polygon(room["polygon"])
 
@@ -315,19 +321,19 @@ def check_fire(building, scenario, clear):
           f"{len(victims)} trapped")
 
 
-def check_mobility(building, scenario):
-    scenario = dict(scenario, maxTime=900, occupants={"total": 160, "mix": {
+def check_mobility(building, scenario, total=160, delays=(180, 60)):
+    scenario = dict(scenario, maxTime=900, occupants={"total": total, "mix": {
         "typical": 0.8, "older": 0.05, "cane": 0.03, "walker": 0.02, "wheelchair": 0.1}})
     options = [{"id": "E", "kind": "exit"}, {"id": "S", "kind": "stair"}]
     assert mobility_options(options, False) == options[:1]
     assert mobility_options(options[1:], False)[0]["assist"]
-    for delay in (180, 60):
-        configured = scenario if delay == 180 else dict(scenario, assistDelay=delay)
+    for delay in delays:
+        configured = dict(scenario, assistDelay=delay)
         warnings = io.StringIO()
         with redirect_stderr(warnings):
             result = run(building, configured, NoFire(building, configured))
         assert "unknown profiles" not in warnings.getvalue()
-        assert result["metrics"]["evacuated"] == 160
+        assert result["metrics"]["evacuated"] == total
         assert result["metrics"]["remaining"] == result["metrics"]["inStairs"] == 0
         wheelchairs = {a["idx"]: a for a in result["agents"] if a["profile"] == "wheelchair"}
         assert {a["floor"] for a in wheelchairs.values()} == {"F1", "F2"}
@@ -348,20 +354,75 @@ def check_mobility(building, scenario):
         print(f"mobility OK: {len(waits)} waiters, longest wait {max(e['until'] - e['t'] for e in waits):.0f} s")
 
 
-def main() -> int:
-    check_brain()
-    check_floors()
-    check_watch_and_geometry()
-    building = load_building()
-    scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
+def check_assistance(building, scenario, total=40):
+    net = StairNet(building)
+    rng = np.random.default_rng(1)
+    held = net.enter(0, 0, "F2", "SA", rng, hold_until=100)
+    assert held["enter"] >= 100
+    entries = [net.enter(i, i, "F2", "SA", rng) for i in range(1, 4)]
+    assert [entry["enter"] for entry in entries] == [1, 2, 3]
+    assert net.backlog("F2", "SA", 3) == 1
+    # Equal readiness and a slot too close to a future reservation preserve spacing.
+    extra = net.enter(4, 100, "F2", "SA", rng)
+    before = net.enter(5, 99.5, "F2", "SA", rng)
+    assert before["enter"] > extra["enter"] > held["enter"]
+    assert net.backlog("F2", "SA", before["enter"]) == 0
 
-    scenario["maxTime"] = 900
+    agents = [{"idx": i, "profile": profile} for i, profile in
+              enumerate(("typical", "typical", "wheelchair", "wheelchair", "visitor"))]
+    events = [{"type": "exit", "idx": 1, "t": 20},
+              {"type": "exit", "idx": 0, "t": 10},
+              {"type": "exit", "idx": 2, "t": 50},
+              {"type": "trapped", "idx": 3, "t": 30},
+              {"type": "wait", "idx": 2, "t": 5, "until": 35},
+              {"type": "wait", "idx": 3, "t": 10, "until": 70}]
+    profiles, assist = profile_metrics(agents, events)
+    assert profiles == {
+        "typical": dict(agents=2, evacuated=2, trapped=0, t50=10, t90=20, t100=20),
+        "wheelchair": dict(agents=2, evacuated=1, trapped=1, t50=50, t90=None, t100=None),
+        "visitor": dict(agents=1, evacuated=0, trapped=0, t50=None, t90=None, t100=None)}
+    assert assist == dict(waiting=2, meanWait=45, maxWait=60, personSeconds=90)
+    assert profile_metrics([], []) == ({}, dict(waiting=0, meanWait=None, maxWait=None, personSeconds=0))
 
+    mix = ({"typical": 0.95, "wheelchair": 0.05} if total == 160 else
+           {"typical": 0.8, "older": 0.05, "cane": 0.03, "walker": 0.02, "wheelchair": 0.1})
+    times = []
+    for delay in (180, 0):
+        configured = dict(scenario, seed=1, maxTime=900, assistDelay=delay,
+                          occupants={"total": total, "mix": mix})
+        result = run(building, configured, NoFire(building, configured))
+        upper_walkers = {a["idx"] for a in result["agents"]
+                         if a["floor"] == "F2" and a["profile"] != "wheelchair"}
+        exits = sorted(e["t"] for e in result["events"]
+                       if e["type"] == "exit" and e["idx"] in upper_walkers)
+        times.append(_t_share(exits, len(upper_walkers), 0.9))
+        metrics = result["metrics"]
+        waits = [e for e in result["events"] if e["type"] == "wait"]
+        assert waits and metrics["assist"]["waiting"] == len(waits)
+        assert abs(metrics["assist"]["maxWait"] - delay) < 1e-9
+        assert abs(metrics["assist"]["personSeconds"] - delay * len(waits)) < 1e-9
+        assert sum(p["agents"] for p in metrics["profiles"].values()) == metrics["agents"]
+        assert sum(p["evacuated"] for p in metrics["profiles"].values()) == total
+    assert all(t is not None for t in times)
+    assert abs(times[0] - times[1]) <= 20, times
+    print(f"assistance ({total} agents): F2 non-wheelchair t90 "
+          f"{times[0]:.2f} s (180 s wait), {times[1]:.2f} s (0 s wait)")
+
+
+def fast_scenario(scenario, total=40) -> dict:
+    fast = deepcopy(scenario)
+    fast["occupants"] = {"total": total, "mix": fast["occupants"]["mix"]}
+    fast["maxTime"] = 900
+    return fast
+
+
+def check_core(building, scenario) -> dict:
     t0 = time.perf_counter()
     r = run(building, scenario, NoFire(building, scenario))
     runtime = time.perf_counter() - t0
     m = r["metrics"]
     events = r["events"]
+    assert not any(e["type"] == "start" for e in events)
     check_reroutes(r)
 
     assert r["version"] == "run/v0" and r["frameInterval"] == 0.5
@@ -508,10 +569,129 @@ def main() -> int:
     print(f"t50 {m['t50']}  t90 {m['t90']}  t100 {m['t100']}  (t-values count exits only; "
           f"stairs transfer to lower floors)")
     print(f"runtime {runtime:.1f} s for {times[-1]:.1f} s simulated ({len(times)} frames)")
-    check_fire(building, scenario, r)
-    check_300(building, scenario)
-    check_mobility(building, scenario)
-    check_llm(building, scenario, r)
+    return r
+
+
+def check_keepout(building, scenario, slow=False):
+    from fire.model import FireModel
+    floor = next(f for f in building["floors"] if f["id"] == "F1")
+    walk = floor_walkable(floor)
+    lobby = next(r for r in floor["rooms"] if r["id"] == "L1")
+    point = Polygon(lobby["polygon"]).representative_point()
+    cut = fire_keepout(walk, floor, "L1", point.x, point.y, FIRE_KEEPOUT_M)
+    assert cut.geom_type == "Polygon"
+    assert abs(walk.area - cut.area - 19.6) < 0.1
+    assert all(Polygon(z["polygon"]).distance(cut) <= 0.1
+               for z in floor["exits"] + floor["stairs"])
+    corridor = fire_keepout(walk, floor, "C1", 20, 8, FIRE_KEEPOUT_M)
+    assert abs(walk.area - corridor.area - np.pi) < 0.1
+    assert fire_keepout(walk, floor, None, point.x, point.y, 2.5).equals(cut)
+    assert fire_keepout(walk, floor, None, -100, -100, 2.5).equals(walk)
+    assert fire_keepout(walk, floor, "L1", point.x, point.y, 0).equals(walk)
+    # A tiny room cannot lose three quarters of its walkable area.
+    tiny = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    tiny_floor = {"id": "tiny", "rooms": [{"id": "r", "polygon": list(tiny.exterior.coords)}],
+                  "exits": [], "stairs": []}
+    warnings = io.StringIO()
+    with redirect_stderr(warnings):
+        assert fire_keepout(tiny, tiny_floor, "r", 0.5, 0.5, 2.5).equals(tiny)
+    assert "WARNING (sim)" in warnings.getvalue()
+
+    burning = deepcopy(scenario)
+    burning["fire"].update(floor="F1", room="L1", x=point.x, y=point.y)
+    protected = run(building, burning, FireModel(building, burning))
+    assert not any(e["type"] == "trapped" and e["floor"] == "F1"
+                   and np.hypot(e["x"] - point.x, e["y"] - point.y) < 2
+                   for e in protected["events"])
+    fid = protected["floors"].index("F1")
+    assert all(np.hypot(x - point.x, y - point.y) >= 2.5
+               for _, x, y, f, _ in protected["frames"][0]["a"] if f == fid)
+    if slow:
+        assert protected["metrics"]["trapped"] <= 15
+        print(f"lobby keep-out: {protected['metrics']['trapped']} trapped at full size")
+    else:
+        burning["fireKeepout"] = 0
+        unprotected = run(building, burning, FireModel(building, burning))
+        assert protected["metrics"]["trapped"] <= unprotected["metrics"]["trapped"] / 2
+        print(f"lobby keep-out: {unprotected['metrics']['trapped']} → "
+              f"{protected['metrics']['trapped']} trapped")
+
+
+def check_cues(building, scenario, slow=False):
+    if slow:
+        try:
+            from fire.model import FireModel
+        except ImportError:
+            print("fire cues: skipped full FireModel (not available)")
+            return
+        result = run(building, scenario, FireModel(building, scenario))
+        kitchen = {a["idx"] for a in result["agents"] if a["floor"] == "F1" and a["room"] == "R101"}
+        starts = [e for e in result["events"] if e["type"] == "start" and e["idx"] in kitchen]
+        assert kitchen and {e["idx"] for e in starts} == kitchen
+        assert len(starts) == len(kitchen)
+        assert all(e["cue"] == "fire" and e["t"] <= 11 for e in starts)
+        print(f"full fire cues: {len(starts)} kitchen occupants started by {max(e['t'] for e in starts)} s")
+        return
+
+    class KitchenFire(NoFire):
+        def hrr(self, t):
+            return 100.0 if t >= 5 else 0.0
+
+    result = run(building, scenario, KitchenFire(building, scenario))
+    kitchen = {a["idx"] for a in result["agents"] if a["floor"] == "F1" and a["room"] == "R101"}
+    starts = [e for e in result["events"] if e["type"] == "start"]
+    assert kitchen and {e["idx"] for e in starts} == kitchen
+    assert len(starts) == len(kitchen)
+    assert all(e["cue"] == "fire" and 5 <= e["t"] <= 15 for e in starts)
+    moving = {row[0] for f in result["frames"] if f["t"] < scenario["alarmTime"]
+              for row in f["a"] if row[4] == 1}
+    assert kitchen <= moving
+
+    room = next(r for f in building["floors"] if f["id"] == "F1"
+                for r in f["rooms"] if r["id"] == "R105")
+    poly = Polygon(room["polygon"])
+
+    class SmokyR105(NoFire):
+        def step(self, t):
+            self.t = t
+
+        def visibility(self, floor_id, x, y):
+            return 4.0 if self.t >= 20 and floor_id == "F1" and poly.contains(Point(x, y)) else 30.0
+
+    result = run(building, scenario, SmokyR105(building, scenario))
+    occupants = {a["idx"] for a in result["agents"] if a["floor"] == "F1" and a["room"] == "R105"}
+    starts = [e for e in result["events"] if e["type"] == "start"]
+    assert occupants and {e["idx"] for e in starts} == occupants
+    assert len(starts) == len(occupants)
+    assert all(e["cue"] == "smoke" and 20 <= e["t"] <= 30 for e in starts)
+    # The alarm wins an outstanding cue countdown without emitting a cue start.
+    early = dict(scenario, alarmTime=20, premovement={"office": [0, 0]})
+    result = run(building, early, SmokyR105(building, early))
+    assert not any(e["type"] == "start" for e in result["events"])
+
+    seed = scenario["seed"]
+    original = place_occupants(building, scenario, np.random.default_rng(seed))
+    override = dict(scenario, premovement={"office": [100, 100]})
+    changed = place_occupants(building, override, np.random.default_rng(seed))
+    types = {(f["id"], r["id"]): r["type"] for f in building["floors"] for r in f["rooms"]}
+    for before, after in zip(original, changed):
+        expected = dict(before)
+        if types[before["floor"], before["room"]] == "office":
+            expected["startDelay"] = 100.0
+        assert after == expected
+    for invalid in ([1], [2, 1], [-1, 2], [0, float("inf")],
+                    [float("nan"), 1], ["0", 1], [True, 1], None):
+        try:
+            place_occupants(building, dict(scenario, premovement={"office": invalid}),
+                            np.random.default_rng(seed))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid premovement accepted: {invalid}")
+    print(f"fire/smoke cues and room-type delays OK: {len(kitchen)} kitchen, {len(occupants)} office occupants")
+
+
+def check_recording(building, scenario):
     from tools.toy_fire import ToyFire
     sampled = dict(scenario, maxTime=10, frameInterval=1.0, smokeInterval=5)
     recorded = run(building, sampled, ToyFire(building, sampled))
@@ -522,6 +702,48 @@ def main() -> int:
         assert smoke["interval"] == 5
         assert [f["t"] for f in smoke["frames"]] == [0, 5, 10]
     print("recording intervals OK")
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--slow", action="store_true",
+                        help="also run full-size regressions and the 300-agent benchmark")
+    args = parser.parse_args(argv)
+    started = time.perf_counter()
+
+    def timed(label, check, *check_args, **kwargs):
+        before = time.perf_counter()
+        result = check(*check_args, **kwargs)
+        print(f"{label}: {time.perf_counter() - before:.1f} s", flush=True)
+        return result
+
+    timed("brain", check_brain)
+    timed("floors", check_floors)
+    timed("watch and geometry", check_watch_and_geometry)
+    building = load_building()
+    scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
+    scenario["maxTime"] = 900
+    fast = fast_scenario(scenario)
+    core = timed("fast core", check_core, building, fast)
+    timed("fast cues", check_cues, building, fast)
+    timed("fast keep-out", check_keepout, building, fast)
+    timed("fast fire", check_fire, building, fast, core)
+    timed("fast mobility", check_mobility, building, fast, total=40, delays=(60, 30))
+    timed("fast assistance", check_assistance, building, fast)
+    timed("fast LLM", check_llm, building, fast, core)
+    timed("recording", check_recording, building, fast)
+
+    if args.slow:
+        core = timed("full core", check_core, building, scenario)
+        timed("full cues", check_cues, building, scenario, slow=True)
+        timed("full keep-out", check_keepout, building, scenario, slow=True)
+        timed("full fire", check_fire, building, scenario, core)
+        timed("300 agents", check_300, building, scenario)
+        timed("full mobility", check_mobility, building, scenario)
+        timed("full assistance", check_assistance, building, scenario, total=160)
+        timed("full LLM", check_llm, building, scenario, core)
+
+    print(f"suite {'slow' if args.slow else 'fast'}: {time.perf_counter() - started:.1f} s")
     print("OK")
     return 0
 
