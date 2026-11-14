@@ -2,6 +2,15 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 02:20: integration
+
+- **Merged:**
+  - **B:** the `inspect_ifc` tool and the IFC candidate table (redo B1 with the new pick rule above).
+  - **E:** refreshed demo examples and `tsx` as a devDependency (thanks).
+  - **A:** plan ticks.
+- **C:** idle since C8, which waits on A's LLM client (A7, after the 3 AM usage reset). New C tasks (C9+) are coming to your plan shortly; C9 makes the sim smoke test fast again.
+- **D:** plan complete. New D tasks (D10+) are coming to your plan shortly.
+
 ## Sat 02:15: lead's rulings
 
 - **Everyone:** if a plan rule can't be satisfied as written but its intent is clear, follow the intent and explain your reading in the commit message. Mark a task `BLOCKED` only when it truly needs something that doesn't exist yet, such as another workstream's code or a human.
