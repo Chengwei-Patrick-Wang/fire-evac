@@ -10,6 +10,7 @@ import math
 import multiprocessing
 import os
 from pathlib import Path
+from statistics import median
 import time
 
 import numpy as np
@@ -259,6 +260,64 @@ def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
             "top": sorted(top, key=lambda item: -item["score"])}
 
 
+def seed_ranges(building: dict, base: dict, records: list[dict]) -> dict:
+    """Optional ranges and ranking stability over successful seeds; pure."""
+    records = [r for r in records if r["ok"]]
+    seeds = sorted({r["seed"] for r in records})
+    if len(seeds) < 2:
+        return {}
+
+    def bounds(values):
+        values = [float(v) for v in values]
+        return {"min": min(values), "median": float(median(values)), "max": max(values)}
+
+    result = aggregate(building, base, records)
+    by_room = defaultdict(list)
+    for record in records:
+        by_room[(record["ignition"]["floor"], record["ignition"]["room"])].append(record)
+    for room in result["rooms"]:
+        runs = by_room[(room["floor"], room["id"])]
+        room["riskT90Range"] = (bounds(r["t90"] if r["t90"] is not None else base["maxTime"]
+                                       for r in runs) if room["riskT90"] is not None else None)
+        room["riskTrappedRange"] = bounds(r["trapped"] for r in runs)
+        if "riskDosed" in room:
+            room["riskDosedRange"] = bounds(r["dosed"] for r in runs)
+
+    per_seed = [aggregate(building, base, [r for r in records if r["seed"] == seed])
+                for seed in seeds]
+    door_maps = [{(d["floor"], d["id"]): d for d in summary["doors"]} for summary in per_seed]
+    for door in result["doors"]:
+        for source, field in (("score", "scoreRange"), ("meanWait", "meanWaitRange")):
+            door[field] = bounds(mapping.get((door["floor"], door["id"]), {}).get(source, 0)
+                                 for mapping in door_maps)
+
+    def top_doors(summary):
+        return [(item["floor"], item["id"]) for item in summary["top"]
+                if item["kind"] in ("door", "stair", "exit")][:3]
+
+    top3 = top_doors(result)
+    seed_top3 = [top_doors(summary) for summary in per_seed]
+    for item in result["top"]:
+        key = (item["floor"], item["id"])
+        if item["kind"] == "room":
+            count = sum(any(t["kind"] == "room" and (t["floor"], t["id"]) == key
+                            for t in summary["top"]) for summary in per_seed)
+        else:
+            count = sum(key in ranked for ranked in seed_top3)
+        item.update(seedsInTop3=count, seeds=len(seeds))
+    held_in = sum(set(ranked) == set(top3) for ranked in seed_top3)
+    labels = [door_label(building, floor, ident)[1] for floor, ident in top3]
+    why = (f"The top 3 weak spots hold in {held_in} of {len(seeds)} seeds: "
+           + (", ".join(labels) if labels else "no queued doors") + ".")
+    if top3:
+        first = sum(bool(ranked) and ranked[0] == top3[0] for ranked in seed_top3)
+        why += f" {labels[0]} ranks first in {first} of {len(seeds)}."
+    result["stability"] = {"seeds": seeds, "top3": [ident for _, ident in top3],
+                           "heldIn": held_in, "n": len(seeds), "stable": held_in == len(seeds),
+                           "why": why.encode("ascii", "replace").decode("ascii")}
+    return result
+
+
 def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
              seeds=(1, 2, 3), workers: int | None = None, timeout_s: float = 7200,
              progress: bool = True) -> dict:
@@ -288,7 +347,7 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
                      for record in records if record["ok"]],
             "failed": [{"scenarioId": record["scenarioId"], "error": record["error"]}
                        for record in records if not record["ok"]],
-            **aggregate(building, base, records)}
+            **(seed_ranges(building, base, records) or aggregate(building, base, records))}
 
 
 def _exit_why(exit_result: dict, building: dict | None = None) -> str:
@@ -429,6 +488,8 @@ def main():
     print(f"wrote {out} ({len(batch['runs'])} runs, {len(batch['failed'])} failed)", flush=True)
     for item in batch["top"]:
         print(item["why"], flush=True)
+    if "stability" in batch:
+        print(batch["stability"]["why"], flush=True)
     printed = {item["why"] for item in batch["top"]}
     for exit_result in batch.get("exits", []):
         why = _exit_why(exit_result, building)

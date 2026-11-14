@@ -12,6 +12,12 @@
       "name": "NIBS Office",
       "file": "building-office.json",
       "credits": "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"
+    },
+    {
+      "id": "clinic",
+      "name": "NIBS Medical-Dental Clinic",
+      "file": "building-clinic.json",
+      "credits": "NIBS Common BIM Files (ERDC-CERL): Medical-Dental Clinic, via BSI (2020) Medical-Dental Test Files, buildingSMART International, https://github.com/buildingsmart-community/Community-Sample-Test-Files; license: CC BY 4.0; changes: converted to 2D plans; roof, void, elevator and outside-access service rooms removed"
     }
   ],
   "runs": [
@@ -30,9 +36,9 @@
       },
       "doors": {},
       "metrics": {
-        "t50": 94.34,
-        "t90": 123.03,
-        "t100": 199.68,
+        "t50": 95.29,
+        "t90": 120.73,
+        "t100": 199.79,
         "evacuated": 160,
         "trapped": 0
       }

@@ -116,35 +116,10 @@ def check_ifc():
     group_stairs(sample)
     assert sample[0]["rooms"][0]["group"] == sample[1]["rooms"][0]["group"]
     assert sample[1]["rooms"][0]["group"] != sample[1]["rooms"][1]["group"]
-    if not IFC_PATH.exists():
-        print("SKIP ifc: file missing")
-        return
-    from buildings.ifc import extract
-    plan = extract(IFC_PATH)
-    floors = plan["floors"]
-    assert floors and all(f["rooms"] for f in floors)
-    assert all(a["elevation"] < b["elevation"] for a, b in zip(floors, floors[1:]))
-    polygons = [Polygon(r["polygon"]) for f in floors for r in f["rooms"]]
-    assert all(p.is_valid and not p.interiors and 1 <= p.area <= 2000 for p in polygons)
-    minx, miny, maxx, maxy = unary_union(polygons).bounds
-    assert minx == 0 and miny == 0
-    assert 10 <= maxx <= 500 and 10 <= maxy <= 500
-    doors = [d for f in floors for d in f["doors"]]
-    assert len(doors) >= 5 and all(0.6 <= d["width"] <= 3 for d in doors)
-    groups = {}
-    for floor in floors:
-        stairs = [r["group"] for r in floor["rooms"] if r["type"] == "stair"]
-        assert len(stairs) == len(set(stairs))
-        for group in stairs:
-            groups.setdefault(group, set()).add(floor["id"])
-    assert sum(len(levels) >= 2 for levels in groups.values()) >= 2
-    assert plan["credits"]
-    print(f"IFC: {len(floors)} floors, {len(polygons)} rooms, {maxx:.1f} x {maxy:.1f} m")
 
-
-def check_building():
+def check_building(name="office"):
     from buildings.validate import validate
-    building = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    building = json.loads((ROOT / f"data/buildings/{name}.json").read_text(encoding="utf-8"))
     assert validate(building)["ok"]
     assert "license" in building["credits"].lower()
     assert any(f["exits"] for f in building["floors"] if f["level"] == 0)
@@ -159,6 +134,35 @@ def check_building():
                 for rid in door["connects"]:
                     assert Polygon(door["rect"]).intersection(rooms[rid]).area >= 0.01, (door["id"], rid)
     assert groups and all(len(floors) >= 2 for floors in groups.values())
+
+
+def check_clinic():
+    from buildings.fixups import apply_overrides
+    from buildings.ifc import _room_type
+    from buildings.normalize import largest_inner_rect
+    from buildings.validate import validate
+    b = json.loads((ROOT / "data/buildings/clinic.json").read_text(encoding="utf-8"))
+    assert len(b["floors"]) == 2 and not validate(b)["nonConvex"]
+    assert all({s["group"] for s in f["stairs"]} == {"S1", "S2", "S3"} for f in b["floors"])
+    assert all(r["name"].upper() not in {"ROOF", "OPEN TO BELOW", "ELEVATOR"} for f in b["floors"] for r in f["rooms"])
+    assert all(":" not in e["name"] for f in b["floors"] for e in f["exits"])
+    assert "CC BY 4.0" in b["credits"] and "buildingSMART" in b["credits"]
+    for name, kind in [("JAN. CL.", "storage"), ("TELE/COMM RM", "storage"), ("MENS RR", "restroom"), ("SEC. WAIT", "lounge"), ("VEST.", "lobby"), ("CONF. ROOM", "office"), ("INTERACTION STATION", "other")]:
+        assert _room_type(name) == kind
+    assert len(apply_overrides(hard_plan(), {"floors": {"remove": ["F2"]}})["floors"]) == 1
+    for fid in ("F1", "F9"):
+        try:
+            apply_overrides(hard_plan(), {"floors": {"remove": [fid]}})
+        except ValueError as exc:
+            assert fid in str(exc)
+        else:
+            raise AssertionError(fid)
+    office = json.loads((ROOT / "data/buildings/office.json").read_text(encoding="utf-8"))
+    stair = next(s for f in office["floors"] for s in f["stairs"] if s["id"] == "RS101")
+    poly = Polygon(stair["polygon"])
+    rect = largest_inner_rect(poly)
+    assert len(rect.exterior.coords) == 5 and poly.buffer(0.005).covers(rect)
+    assert 0.95 <= rect.area / poly.area <= 0.97
 
 
 def check_traced():
@@ -255,11 +259,16 @@ def main() -> int:
         expected_area = sum(Polygon(p["outer"], p["holes"]).area for p in expected["walkable"])
         assert abs(area - expected_area) / expected_area < 0.01
 
+    check_budget()
+    check_summary()
+    check_tidy()
     check_traced()
     check_one_door()
     check_hard()
     check_overrides()
     check_building()
+    check_building("clinic")
+    check_clinic()
     pick = ROOT / "data" / "raw" / "pick.plan.json"
     if pick.exists():
         for floor in plan_to_building(json.loads(pick.read_text(encoding="utf-8")))["floors"]:
@@ -275,5 +284,73 @@ def main() -> int:
     return 0
 
 
+
+
+
+def check_budget():
+    from buildings.normalize import door_openings
+    from buildings.summary import vertex_count
+    from buildings.validate import validate
+    base = plan_to_building(hard_plan())
+    budget = plan_to_building(hard_plan(), max_vertices=1)
+    assert validate(base) == validate(budget)
+    for a, b in zip(base["floors"], budget["floors"]):
+        before, after = door_openings(a), door_openings(b)
+        assert all(abs(value - after[key]) <= 0.02 for key, value in before.items())
+    plan = {"id": "notch", "source": "ifc", "floors": [{"id": "F1", "rooms": [
+        {"id": "R", "polygon": [[0,0],[6,0],[6,4],[3.3,4],[3.3,3.7],[3,3.7],[3,4],[0,4]]}],
+        "doors": [{"id": "D", "a": [1,0], "b": [2,0], "width": 1}]}]}
+    original = plan_to_building(plan)["floors"][0]
+    reduced = plan_to_building(plan, max_vertices=1)["floors"][0]
+    assert vertex_count(original) - vertex_count(reduced) == 4
+
+
+def check_summary():
+    from buildings.summary import build_index, summarize
+    folder = ROOT / "data/buildings"
+    office_path = folder / "office.json"
+    office = summarize(json.loads(office_path.read_text(encoding="utf-8")), str(office_path))
+    expected = {"floors": 2, "rooms": 109, "doors": 104, "exits": 6,
+                "stairGroups": ["S1", "S2"], "walkableArea": 3479.5,
+                "vertices": 1173, "size": [54.2, 38.4],
+                "shortCredit": "NIBS Common BIM File, US Army ERDC/CERL, free download"}
+    for key, value in expected.items():
+        assert office[key] == value, (key, office[key], value)
+    index = json.loads((folder / "index.json").read_text(encoding="utf-8"))
+    assert index == build_index(folder), "index.json is stale: run python -m buildings.summary"
+    assert "id" not in index and "floors" not in index
+    assert "umass" not in json.dumps(index).lower()
+    expected_files = {p.name for p in folder.glob("*.json")
+                      if json.loads(p.read_text(encoding="utf-8")).get("version") == "building/v0"
+                      and not json.loads(p.read_text(encoding="utf-8")).get("private", False)}
+    assert {b["file"] for b in index["buildings"]} == expected_files
+
+
+def check_tidy():
+    import copy
+    from buildings.tidy import tidy_floor
+    floor = json.loads((ROOT / "buildings/fixtures/ai_floor.json").read_text(encoding="utf-8-sig"))
+    original = copy.deepcopy(floor)
+    cleaned, notes = tidy_floor(floor)
+    expected = {
+        "AI1": [[0,0],[6,0],[6,4],[0,4]],
+        "AI2": [[6,0],[14,0],[14,2],[8,2],[8,6],[6,6]],
+        "AI3": [[0,7],[4,7],[4,10],[0,10]],
+        "AI5": [[8,2],[12,2],[12,5],[8,5]],
+        "AI8": [[20,0],[23,3],[20,6],[17,3]],
+    }
+    assert {r["id"]: r["polygon"] for r in cleaned["rooms"]} == expected
+    assert any("AI4: merged into AI1" in n for n in notes)
+    assert any("AI5: trimmed" in n for n in notes)
+    assert all(any(f"{rid}: dropped" in n for n in notes) for rid in ("AI6", "AI7", "AI9"))
+    polygons = [Polygon(r["polygon"]) for r in cleaned["rooms"]]
+    assert all(abs(c * 4 - round(c * 4)) < 1e-8 for r in cleaned["rooms"] for point in r["polygon"] for c in point)
+    assert all(a.intersection(b).area <= 0.01 for i, a in enumerate(polygons) for b in polygons[i+1:])
+    assert tidy_floor(cleaned) == (cleaned, [])
+    assert floor == original
+    plan_to_building({"version": "plan/v0", "id": "ai", "source": "trace", "floors": [cleaned]})
+
+
 if __name__ == "__main__":
     sys.exit(main())
+

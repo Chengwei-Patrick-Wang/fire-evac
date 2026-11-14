@@ -8,8 +8,9 @@ from shapely.ops import nearest_points, unary_union
 
 def validate(building: dict) -> dict:
     report = {"disconnected": [], "roomsNoDoor": [], "stairSingle": [],
-              "exits": {}, "upperExits": []}
+              "exits": {}, "upperExits": [], "nonConvex": []}
     groups = defaultdict(set)
+    lowest = min((f.get("level", 0) for f in building["floors"]), default=0)
     for floor in building["floors"]:
         fid = floor["id"]
         rooms = {r["id"]: make_valid(Polygon(r["polygon"])) for r in floor["rooms"]}
@@ -32,17 +33,24 @@ def validate(building: dict) -> dict:
                 report["roomsNoDoor"].append({"floor": fid, "id": rid, "name": room.get("name", rid)})
         for stair in floor["stairs"]:
             groups[stair.get("group")].add(fid)
+        for kind, zones in (("exit", floor["exits"]), ("stair", floor["stairs"] if floor.get("level", 0) > lowest else [])):
+            for zone in zones:
+                poly = Polygon(zone["polygon"])
+                if poly.convex_hull.area - poly.area > 1e-6:
+                    report["nonConvex"].append({"floor": fid, "kind": kind, "id": zone["id"]})
         report["exits"][fid] = [e["id"] for e in floor["exits"]]
         if floor.get("level", 0) > 0:
             report["upperExits"].extend({"floor": fid, "door": e["id"]} for e in floor["exits"])
     for group, floors in groups.items():
         if len(floors) == 1:
             report["stairSingle"].append({"group": group, "floor": next(iter(floors))})
-    report["ok"] = not (report["disconnected"] or report["roomsNoDoor"] or report["stairSingle"]) and any(report["exits"].values())
+    report["ok"] = not (report["disconnected"] or report["roomsNoDoor"] or report["stairSingle"] or report["nonConvex"]) and any(report["exits"].values())
     return report
 
 
 def print_report(report: dict) -> None:
+    for item in report["nonConvex"]:
+        print(f"WARN non-convex {item['kind']} {item['id']} on {item['floor']}: JuPedSim needs convex exit and stair zones")
     for item in report["disconnected"]:
         print(f"WARN disconnected on {item['floor']}: rooms {item['rooms']}, area {item['area']} m2, gap {item['gap']} m near {item['near']}; consider doors.add")
     for item in report["roomsNoDoor"]:

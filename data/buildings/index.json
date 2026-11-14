@@ -1,0 +1,96 @@
+{
+ "version": "buildings-index/v0",
+ "buildings": [
+  {
+   "id": "clinic",
+   "name": "NIBS Medical-Dental Clinic",
+   "source": "ifc",
+   "credits": "NIBS Common BIM Files (ERDC-CERL): Medical-Dental Clinic, via BSI (2020) Medical-Dental Test Files, buildingSMART International, https://github.com/buildingsmart-community/Community-Sample-Test-Files; license: CC BY 4.0; changes: converted to 2D plans; roof, void, elevator and outside-access service rooms removed",
+   "shortCredit": "NIBS Common BIM Files (ERDC-CERL): Medical-Dental Clinic, via BSI (2020) Medical-Dental Test Files, buildingSMART International, https://github.com/buildingsmart-community/Community-Sample-Test-Files",
+   "file": "clinic.json",
+   "scenario": "clinic.scenario.json",
+   "floors": 2,
+   "rooms": 252,
+   "doors": 236,
+   "exits": 9,
+   "stairGroups": [
+    "S1",
+    "S2",
+    "S3"
+   ],
+   "walkableArea": 3912.5,
+   "vertices": 2577,
+   "size": [
+    56.4,
+    57.5
+   ],
+   "perFloor": [
+    {
+     "id": "F1",
+     "level": 0,
+     "rooms": 145,
+     "doors": 145,
+     "exits": 9,
+     "stairs": 3,
+     "walkableArea": 2280.4,
+     "vertices": 1501
+    },
+    {
+     "id": "F2",
+     "level": 1,
+     "rooms": 107,
+     "doors": 91,
+     "exits": 0,
+     "stairs": 3,
+     "walkableArea": 1632.1,
+     "vertices": 1076
+    }
+   ]
+  },
+  {
+   "id": "office",
+   "name": "NIBS Office",
+   "source": "ifc",
+   "credits": "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165",
+   "shortCredit": "NIBS Common BIM File, US Army ERDC/CERL, free download",
+   "file": "office.json",
+   "scenario": "office.scenario.json",
+   "floors": 2,
+   "rooms": 109,
+   "doors": 104,
+   "exits": 6,
+   "stairGroups": [
+    "S1",
+    "S2"
+   ],
+   "walkableArea": 3479.5,
+   "vertices": 1173,
+   "size": [
+    54.2,
+    38.4
+   ],
+   "perFloor": [
+    {
+     "id": "F1",
+     "level": 0,
+     "rooms": 63,
+     "doors": 68,
+     "exits": 6,
+     "stairs": 2,
+     "walkableArea": 1756.6,
+     "vertices": 715
+    },
+    {
+     "id": "F2",
+     "level": 1,
+     "rooms": 46,
+     "doors": 36,
+     "exits": 0,
+     "stairs": 2,
+     "walkableArea": 1723.0,
+     "vertices": 458
+    }
+   ]
+  }
+ ]
+}

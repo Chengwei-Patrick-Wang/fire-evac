@@ -9,6 +9,7 @@ the following format are optional:
 
 ```json
 {
+  "floors": {"remove": ["F3"]},
   "doors": {"add": [{"floor": "F1", "id": "DFIX1", "a": [1, 2], "b": [2, 2], "width": 1.0, "fireDoor": false, "state": "open"}], "remove": ["D2"]},
   "rooms": {"remove": ["R2"]},
   "exits": {"add": ["D1"], "remove": ["D3"]},
@@ -21,6 +22,17 @@ additions force a door to be exterior; exit removals keep the door but suppress
 its exit. Stair groups assign the listed rooms to the same stairwell. Unknown
 referenced IDs raise an error. The command prints a connectivity report after
 writing the building; upper-level exits are informational warnings.
+Floor removals happen first and may only remove top storeys.
+
+## Clinic
+
+`clinic` is the NIBS Medical-Dental Clinic, via buildingSMART International's
+sample files, CC BY 4.0; it was converted to 2D plans. Modeling assumptions:
+remove roof floor F3, roof spaces R2R01 and R2R02, voids R2AC1-A and R2AC1-B,
+elevator RE1, outside-access service rooms R1E17, R1E20, R1E21, R1E22, R1E24,
+R1E25 and mechanical yard R1F01, and doorless toilet R1D04. Exit DnBZWSx
+opens onto the removed roof and is suppressed. Its two floors have nine exits
+and stair groups S1, S2 and S3.
 
 Run `python -m buildings.inspect_ifc data/raw` to reproduce the per-storey counts. Downloads are local and not committed. A model is pickable when at least two storeys have spaces and it has at least two stairs (or two flights if it has no stairs). Empty roof, foundation and footing storeys do not disqualify it. Of pickable models with at least 50 spaces, the smallest file is selected.
 
@@ -69,3 +81,27 @@ add assumed connections from the mechanical room to the corridor and from the
 electrical room to storage. These are modeling assumptions, not verified doors.
 Regenerate with `python -m buildings.ifc data/raw/team-downloads/Office_A_20110811.ifc data/raw/office.plan.json --id office --name "NIBS Office" --credits "NIBS Common BIM File, US Army ERDC/CERL, free download; no license found. Source: https://www.wbdg.org/node/9165"`, then `python -m buildings.normalize data/raw/office.plan.json data/buildings/office.json`.
 Create a scenario with `python -m buildings.make_scenario data/buildings/office.json data/buildings/office.scenario.json` (optional `--total`).
+
+## Tidying AI-proposed rooms
+
+Call `tidy_floor(floor, grid=0.25, min_area=1.0, min_width=0.6)` after
+sanitizing a proposed floor. It returns a cleaned copy and notes describing
+squaring, merges, trims and dropped rooms; doors and other metadata are kept.
+Run `python -m buildings.tidy IN OUT` to process a floor or every floor in a
+plan and print the notes. This cleanup is geometric and does not verify doors.
+
+## Building index
+
+`data/buildings/index.json` has version `buildings-index/v0` and a `buildings`
+array with each public building's identity, source, full and short credits, file
+and scenario names, floor and feature counts, stair groups, walkable area,
+vertex count, extents and per-floor counts. It contains no top-level building
+ID or floors. Rerun `python -m buildings.summary` after changing any building in
+`data/buildings/`; use `python -m buildings.summary --check` to detect a stale
+index without writing it. A folder and `--out PATH` may also be supplied.
+
+## Vertex budget (B12)
+
+Pass `--max-vertices N` to the normalizer to try reducing walkable vertices per floor. The budget is off by default; committed buildings are not budgeted. The normalizer preserves door openings and checks topology, exit and stair zones, and area; it warns when the target cannot be met.
+
+On the office with a 600-vertex per-floor target, the baseline had 1,173 vertices and ran in 12.3 and 12.7 seconds. The budgeted build had 1,077 vertices (F1: 715 to 619; F2: 458 unchanged) and ran in 10.5 and 10.7 seconds. Both evacuated 119 of 120, with t90 117.57 seconds; F1 could not reach the requested budget. Times are illustrative and machine-dependent.

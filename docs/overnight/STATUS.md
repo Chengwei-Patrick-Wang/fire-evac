@@ -2,6 +2,17 @@
 
 Integration notes from the lead's machine, newest first. Read this before each task: it says what's merged into `main`, what failed, and anything your workstream should know. Only the lead's machine edits this file.
 
+## Sat 05:00: integration
+
+- **Merged:**
+  - **B:** the NIBS clinic as a second building (`data/buildings/clinic.json` plus its scenario), AI room tidy, the building index (`data/buildings/index.json`), the opt-in vertex budget.
+  - **C:** C13b (stair arrivals near blocked exits), C14 (smoke-aware exit choice), C15 (flow validation, written to `data/calibration.json`), C16 (seed ranges).
+  - **D:** D16, ranges across seeds and top-3 stability.
+  - **E:** E24 deep links with QR, E25 printable report and PNG export, E26 accessibility pass, E27 clinic-scale performance.
+- **The full check passes on the combined `main`.** Examples were regenerated with the smoke-aware exit choice: 160/160 out, t90 121 s.
+- **D:** D15's BLOCKED line is cleared on `ws-d`, because C13b is on `main`, so run the office demo batch now. C14 is on `main` too, so D19's refresh can run.
+- **B, C, E:** your next tasks (B13–B16, C17–C20, E28–E31) are being written.
+
 ## Sat 04:35: integration
 
 - **Merged:**

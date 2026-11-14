@@ -70,14 +70,14 @@ def _simple_parts(geometry):
 
 
 _TYPES = [
-    ("stair", "stair"), ("restroom", "toilet restroom wc lavatory bath"),
+    ("stair", "stair"), ("restroom", "toilet restroom wc lavatory bath rr"),
     ("kitchen", "kitchen"), ("dining", "dining cafeteria cafe"),
     ("classroom", "classroom class lecture training"), ("lab", "lab"),
     ("bedroom", "bedroom sleep dorm"),
-    ("storage", "storage store closet janitor mech electrical utility shaft riser"),
-    ("lobby", "lobby vestibule entry foyer reception"),
+    ("storage", "storage store closet janitor mech electrical utility shaft riser jan sto stor elec mechanical comm trash soil lin"),
+    ("lobby", "lobby vestibule entry foyer reception vest recept"),
     ("corridor", "corridor hallway hall circulation passage"),
-    ("lounge", "lounge waiting break"), ("office", "office conference meeting exam"),
+    ("lounge", "lounge waiting wait break"), ("office", "office conference meeting exam conf ofcr"),
 ]
 
 
