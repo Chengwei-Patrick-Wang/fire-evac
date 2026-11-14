@@ -61,6 +61,8 @@ interface AppState {
   runNote: string | null
   riskMetric: 'riskT90' | 'riskTrapped'
   crowding: boolean
+  lens: boolean[]
+  trails: boolean
   selectedRoom: string | null
   focus: Focus | null
   batchRunning: string | null
@@ -111,6 +113,8 @@ export const useApp = create<AppState>((set) => ({
   runNote: null,
   riskMetric: 'riskT90',
   crowding: false,
+  lens: [true, true, true, true, true, true],
+  trails: false,
   selectedRoom: null,
   focus: null,
   batchRunning: null,
