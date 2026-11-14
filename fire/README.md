@@ -484,6 +484,7 @@ for the sprinkler variant.
 | `slower`, `faster` | Pair counts with evacuation-time difference strictly above +1 s or below -1 s |
 | `dTrapped` | Mean variant-minus-baseline trapped count over matched pairs |
 | `dDosed`, `dSmokeSeconds` | Mean variant-minus-baseline illustrative dose count and person-seconds in smoke; each included only if both sides of every matched pair carry that measure |
+| `baseSmokeSeconds`, `smokePct` | With `dSmokeSeconds` (D18): the mean person-seconds in smoke of the baseline runs that a successful variant run matches, and `100 * dSmokeSeconds / baseSmokeSeconds` (null when that mean is 0). The `why` line then reads `+427 person-seconds in smoke (+22%)` |
 | `why` | ASCII explanation of paired time, exposure and trapped differences |
 | Batch `runs[].exitCounts` | Per-exit evacuated counts retained from simulator metrics |
 
@@ -630,9 +631,11 @@ With `--whatif`, closing already-closed stair doors is instead compared against
 the saved propped-door variant, and keeping an exit clear against its saved
 blocked-exit variant. These derived results negate the original deltas and
 reverse their ranges and faster/slower counts without rerunning. Their
-`derivedFrom` names the comparison, their labels say "vs propped open" or
-"vs blocked", and `smokePct` is null: the original variant's exposure mean was
-not saved. Any reduction in smoke exposure qualifies a derived fix as helping.
+`derivedFrom` names the comparison and their labels say "vs propped open" or
+"vs blocked". Their `smokePct` is `100 * dSmokeSeconds / (b - dSmokeSeconds)`,
+where b is the named what-if's `baseSmokeSeconds` (D18; the fix's own baseline is
+the propped or blocked state), and null for a batch saved without it. Any
+reduction in smoke exposure qualifies a derived fix as helping.
 Derived results retain the original what-if's matched fires, even if a different
 `--fix-rooms` subset is requested. Inapplicable or unsafe suggestions are recorded
 in `fixesSkipped` with a reason.
@@ -667,8 +670,16 @@ both printed `fire checks OK`; the command above wrote `debug/batch-fixes.json`.
 Regenerate on the lead's machine from the repository root (activate `.venv` first):
 
 ```sh
-LLM_PROVIDER=off python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 30 --whatif --fixes --out data/runs/batch-office.json > debug/office-batch.log 2>&1
+LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 30 --whatif --fixes --out data/runs/batch-office.json > debug/office-batch.log 2>&1
 ```
+
+The three thread variables change no result. Without them every spawned worker
+reserves OpenBLAS buffers for each logical core: on the 16-thread laptop below
+a worker commits 515 MB at import, against 33 MB with one thread, so 15
+workers hold about 8 GB of commit before they simulate anything. B13/B16 put
+250 occupants and the kitchen preset into `office.scenario.json`, so the two
+overrides now change nothing; they keep the command valid for older scenario
+files.
 
 The batch CLI applies `--occupants` and `--fire-type` before the pilot and saves
 those overrides in `base`. Occupant overrides preserve the mobility mix and
@@ -692,56 +703,93 @@ deadline. A larger `--budget-min` samples more rooms (up to all eligible rooms).
 IFC family strings are replaced with room/stair labels in rankings, blocked-exit
 comparisons and suggested fixes. Short, readable exit names are preserved.
 
-Handoff for A/B: regenerate the gitignored office batch with the command above.
-Single-run office demos should use the same 250 occupants and kitchen preset;
-check `office.scenario.json` when integrating, since this task does not edit B's
-scenario. A should display the measured `why` lines verbatim. All numbers use the
-illustrative model and suggest ideas for a fire protection engineer to examine;
-they are not design or compliance results.
+### Measured office batch (Sat 08:12, lead's laptop)
 
-D15 run on macOS 14.5 arm64, 8 logical cores, 7 batch workers:
+Windows 11 Pro, Intel Core i9-10885H (8 cores, 16 threads), 16 GB RAM, 15
+workers (the default). The laptop was shared: A's demo precompute (two runs of
+6 workers), the merge gate and, from 08:47 to 08:59, this task's slow checks
+ran at the same time.
 
 ```text
-pilot 6.2 s; budget 30 min, 7 workers, 3 seeds, 3 what-ifs, 3 fixes -> 48 rooms (est. 29.9 min)
+pilot 51.4 s; budget 30 min, 15 workers, 3 seeds, 3 what-ifs, 3 fixes -> 12 rooms (est. 28.8 min)
 ```
 
-**Blocked on WS-C:** the baseline (48 rooms × 3 seeds = 144 runs) and propped
-stair-door sweep completed, but the blocked-exit sweep fails for multiple seeds.
-The batch was stopped rather than publishing incomplete comparisons. No completed
-`data/runs/batch-office.json`, aggregate `timing`, or final `why` lines were
-produced. Logs remain in `debug/office-batch.log` (gitignored). Repeating the same
-scenario directly reproduces the failure, without multiprocessing:
+12 rooms × 3 seeds = 36 baseline fires (R104, R113b, R123, R131, R143, R146,
+R210, R219, R226, R227, R230b, R237b), then 36 paired reruns for each of the
+3 what-ifs and 3 non-derived fixes: 252 runs plus the pilot, none failed, every
+comparison `n == 36`, nothing in `fixesSkipped`. Runtime 2942.7 s (49 min), not
+the estimated 28.8 min: with 15 runs at once a run took 120-225 s against the
+51.4 s pilot, about 3× rather than the planned contention of 2.0. Baseline
+`timing`:
 
-```python
-import json
-from fire.batch import _tasks
-from fire.model import FireModel
-from sim.run import run
-
-building = json.load(open("data/buildings/office.json"))
-base = json.load(open("data/buildings/office.scenario.json"))
-base["occupants"]["total"] = 250
-base["fire"]["type"] = "kitchen"
-base["fire"].pop("growth", None)
-base["doors"] = {**base.get("doors", {}), "D$77wwb": "blocked"}
-scenario = _tasks(building, base, [{"floor": "F1", "room": "R106"}], (2,))[0]["scenario"]
-run(building, scenario, FireModel(building, scenario))
+```json
+{"runs": 36, "failed": 0, "workers": 15, "wallS": 410.68, "meanRunS": 131.40}
 ```
+
+`top` and `stability.why`, then the `whatIf` and `fixes` `why` lines, as printed:
 
 ```text
-sim/run.py:602, in run
-    jid = fs.sim.add_agent(...)
-RuntimeError: Model constraint violation: Agent (0.36, 22.81) too close to geometry boundaries, distance <= 0.2
+Fire in OPEN OFFICE (R237b): 14.3 people trapped on average; 90% out after 141 s (3 fires).
+Exit Stair S1 (west): 15 people queued at peak; 181 person-seconds of waiting on average, 1 of them in smoke, across 36 fires.
+Exit Stair S2 (east): 10 people queued at peak; 114 person-seconds of waiting on average across 36 fires.
+Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE): 5 people queued at peak; 26 person-seconds of waiting on average, 26 of them in smoke, across 36 fires.
+Stair S1 door: 12 people queued at peak; 71 person-seconds of waiting on average across 36 fires.
+The top 3 weak spots hold in 2 of 3 seeds: Exit Stair S1 (west), Exit Stair S2 (east), Door DQnt_pi (SECURE DOC ROOM to OPEN OFFICE). Exit Stair S1 (west) ranks first in 3 of 3.
+
+Stair doors propped open: 90% out 0 s later on average (slower in 3 of 36 fires); +152 person-seconds in smoke, +0.1 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+Exit Stair S1 (west) blocked: 90% out 13 s later on average (slower in 36 of 36 fires); +154 person-seconds in smoke, -0.2 people at an illustrative smoke dose of 1, -0.2 trapped per fire.
+Sprinklers on: 90% out 0 s sooner on average (slower in 0 of 36 fires); +132 person-seconds in smoke, -0.0 people at an illustrative smoke dose of 1, -1.2 trapped per fire.
+
+Keep Exit Stair S1 (west) clear (vs blocked): 90% out 13 s sooner on average and 154 fewer person-seconds in smoke across 36 fires (faster in 36); +0.2 trapped per fire.
+Widen Exit Stair S1 (west) from 0.86 m to 1.36 m: 90% out 2 s sooner on average and 6% less time in smoke across 36 fires (faster in 23); -0.1 trapped per fire.
+Widen Exit Stair S2 (east) from 0.86 m to 1.36 m: 90% out 1 s sooner on average and 3% more time in smoke across 36 fires (faster in 20); +0.1 trapped per fire.
+Self-closers on stair doors (vs propped open): 90% out 0 s sooner on average and 152 fewer person-seconds in smoke across 36 fires (faster in 3); -0.0 trapped per fire.
+Sprinklers: 90% out 0 s sooner on average and 47% more time in smoke across 36 fires (faster in 1); -1.2 trapped per fire.
 ```
 
-The stair-arrival placement region is not safely inset from the changed walkable
-boundary after blocking the stair exit. WS-C owns `sim/run.py` and
-`sim/floors.py`; fix the arrival-region clearance there, then remove D15's BLOCKED
-line and rerun the command above to finish the measured results. No simulator or
-building files were changed here. Verification passed before this blocked commit:
-`LLM_PROVIDER=off python -m fire.smoke_test` and
-`LLM_PROVIDER=off python -m fire.checks --slow` (including the new two-fire,
-250-occupant office check), both ending in `fire checks OK`.
+Reading the numbers (all from this batch unless a probe is named):
+
+- Evacuation time hardly depends on where the fire is: every room's mean t90
+  lies between 135 and 141 s. The ranking comes from queues at the two stair
+  exits and from one room.
+- Fires in R237b trap people: 14.3 per fire, against 1.0 in R123 and 0 in the
+  other 10 rooms. R237b is an F2 open office, and the SECURE DOC ROOM (R205)
+  has a single door into it, `DQnt_pi`. That is the #3 door, and nearly all of
+  its 26 waiting person-seconds are spent in smoke.
+- Propping the stair doors leaves t90 unchanged (+0.1 s) and adds 152
+  person-seconds in smoke per fire, 54% of the 281 baseline mean. This is the
+  exposure story from D10/D11 again, now on the real building.
+- Blocking Stair S1's exit slows all 36 fires, by 13 s on average (5-22 s).
+  The matching fix, keep it clear, is derived from that what-if, not rerun.
+- The best rerun fix is widening Stair S1's exit by 0.5 m: 2 s sooner, 6% less
+  time in smoke, faster in 23 of 36 fires.
+- Do not read the sprinkler smoke numbers as harm. Trapped agents leave the
+  replay frames, so their time in smoke stops counting. Sprinklers save the
+  people an R237b fire traps, and those people then walk out through smoke. A
+  paired probe (seed 1, same code) showed it: in R237b sprinklers cut trapped
+  12 → 0 and raised person-seconds in smoke 2,003 → 3,626; in R143 trapped
+  stayed 0 and smoke time fell 691 → 637. Present sprinklers by trapped
+  (−1.2 per fire), not by smoke.
+
+The blocked-exit sweep stopped D's first attempt (macOS, 7 workers,
+`pilot 6.2 s ... -> 48 rooms`). Back then `sim/run.py` put a stair arrival within
+0.2 m of the boundary next to blocked exit `D$77wwb` (R106, seed 2). That
+`RuntimeError` is gone: C13b fixed the arrival region on main, the same
+repro now finishes (t90 147.4 s), and this batch's blocked-exit sweep, again
+`D$77wwb`, had no failures.
+
+Handoff for A: `data/runs/batch-office.json` (gitignored) is on the lead's
+machine. To regenerate it, use the command above. On a laptop shared with
+other jobs, `--budget-min 20` should take about 30-35 minutes. Show the `why` lines
+verbatim, with the sprinkler caveat above. The sprinkler what-if and the
+sprinkler fix rerun the same scenario, so deriving the fix from the what-if
+would save a seventh of the runtime. All numbers use the illustrative model and
+suggest ideas for a fire protection engineer to examine; they are not design
+or compliance results.
+
+Verification (same machine): `python -m fire.smoke_test` and
+`python -m fire.checks --slow` both printed `fire checks OK`, the slow suite
+including the 250-occupant office check.
 
 ## Ranges across seeds (D16)
 
@@ -827,3 +875,116 @@ This is not the blocked-stair simulator failure recorded under D15.
 Handoff for B/A: inspect the narrow IFC room fragment before using this
 batch as a complete office survey. No geometry or grid-resolution changes
 are included in the ranges task.
+
+## Headline numbers (D18)
+
+`python -m fire.headlines BUILDING BATCH [--sensitivity PATH] [--out PATH]` reads a
+saved batch and writes `data/runs/headlines-<buildingId>.json` (gitignored): the few
+numbers that demo scenes 4-6, A's report card and E's Report tab all quote, so none
+of them has to dig them out of the full batch. Nothing reruns. Without
+`--sensitivity` it adds D17's `data/runs/sensitivity-<buildingId>.json` when that file
+exists. Run it from the repository root with repo-relative paths: `sources` holds the
+paths as given, and the pack ships with the demo, so an absolute path is shortened to
+a relative one (or to its file name).
+
+Contract (every field but `version`, `buildingId` and `generated` may be absent; a
+missing section or field is left out, never null; readers ignore unknown fields;
+times are ISO 8601 UTC ending in `Z`; all text is ASCII):
+
+```text
+headlines/v0 = {version, buildingId, buildingName, generated, note, sources: {batch: {file, id, modified}, sensitivity: {file, modified}}, scenario: {id, occupants, mix, fireType, growth, sprinklers, alarmTime, maxTime, doors, exitChoice, seeds, rooms, runs, failed}, headline, weakSpots: [{rank, kind, id, floor, label, score, why, scoreRange, riskT90Range, seedsInTop3}], whatIf: [{id, label, n, dT90, slower, faster, dTrapped, dSmokeSeconds, baseSmokeSeconds, smokePct, dDosed, why}], fixes: [{id, kind, label, helps, n, dT90, dTrapped, dSmokeSeconds, smokePct, derivedFrom, why}], stability: {why, heldIn, n}, sensitivity: {note, why, variants: [{id, why}]}, timing}
+```
+
+- `scenario` is the batch's `base` (`id`, `occupants.total` as `occupants`, `mix`,
+  `fire.type` as `fireType`, `fire.growth` as `growth`, `sprinklers`, `alarmTime`,
+  `maxTime`, `doors`, and C14's `exitChoice` when set) plus `seeds`, the number of
+  ignition `rooms`, and the `runs` and `failed` counts.
+- `weakSpots` is `top` in order, `rank` from 1. `label` comes from `door_label` (a
+  room is `<room name> (<id>)`), `seedsInTop3` from D16, `scoreRange` from the
+  matching `doors[]` entry and `riskT90Range` from the matching `rooms[]` entry.
+- `whatIf` and `fixes` keep the fields above, in batch order. The pack never holds
+  `runs`, `doors` or heatmaps, so it stays small (well under 20 KB).
+- `headline` comes from the `proppedStairs` what-if when its `n > 0`, else from the
+  first what-if with `n > 0`:
+  `Stair doors propped open: +22% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.`
+  It says `sooner` for a negative `dT90`, `+427 person-seconds in smoke per fire`
+  when there is no `smokePct`, and only the time when there is no `dSmokeSeconds`.
+  With no usable what-if it is the first weak spot's `why`; with neither there is
+  no `headline` key.
+- `note` is always `Illustrative fire model and rule-based simulated occupants; ideas
+  for a fire protection engineer to check, not a compliance result.`
+
+Percent at the source: `add_whatif` now writes `baseSmokeSeconds` (the mean
+person-seconds in smoke of the baseline runs that a successful variant run matches)
+and `smokePct` (`100 * dSmokeSeconds / baseSmokeSeconds`, null when that mean is 0)
+on every what-if that has `dSmokeSeconds`, and its `why` reads `+427 person-seconds
+in smoke (+22%)`. A derived fix gets `smokePct = 100 * dSmokeSeconds / (b -
+dSmokeSeconds)`, with b the `baseSmokeSeconds` of the what-if named in its
+`derivedFrom`. `compare` is unchanged. With `--whatif-rooms` (D13 and D15 set it) the
+what-ifs cover fewer fires than the baseline has runs, which is why E's
+`batchHeadline` fell back to raw person-seconds: a batch saved without
+`baseSmokeSeconds` gets `smokePct` in the pack from the mean `runs[].smokeSeconds`
+only when `n` equals the number of runs (E's rule), and otherwise the headline says
+`person-seconds in smoke per fire`.
+
+The CLI exits 1 with `no batch at <path>: run D15's command (fire/README.md) first`
+when the batch file is missing (or when `--sensitivity` names a missing file), and 2,
+naming both ids, when the batch's `buildingId` is not the building's `id`. It writes
+`json.dumps(pack, indent=1)`, then prints the headline, every `why` (weak spots,
+stability, what-ifs, fixes, sensitivity) and `wrote <path> (<n> bytes)`.
+`fire.headlines.build_headlines(building, batch, sensitivity=None, sources=None,
+generated=None)` builds the same dict for callers that already hold the files.
+
+Measured (Windows 11, lead's laptop shared with A's demo precompute, 4 workers, Sat
+09:26-09:45). Verification first: `python -m fire.smoke_test` and `python -m fire.checks
+--slow` both printed `fire checks OK` (the slow suite took 6 minutes). Then:
+
+```text
+$ python -m fire.batch contracts/building.example.json contracts/scenario.example.json --rooms 6 --seeds 1,2 --whatif --fixes --workers 4 --out data/runs/batch-example-office.json
+runtime 1002.2 s
+wrote data\runs\batch-example-office.json (12 runs, 0 failed)
+
+$ python -m fire.headlines contracts/building.example.json data/runs/batch-example-office.json
+Stair doors propped open: +26% person-seconds in smoke across 12 paired fires; 90% out 0 s later on average.
+  ... the 5 weak-spot lines and the stability line, then:
+Stair doors propped open: 90% out 0 s later on average (slower in 2 of 12 fires); +401 person-seconds in smoke (+26%), +0.1 people at an illustrative smoke dose of 1, +0.0 trapped per fire.
+Exit Main entrance blocked: 90% out 48 s later on average (slower in 11 of 12 fires); +1,443 person-seconds in smoke (+94%), +1.5 people at an illustrative smoke dose of 1, -2.4 trapped per fire.
+Sprinklers on: 90% out 6 s sooner on average (slower in 0 of 12 fires); -55 person-seconds in smoke (-4%), -3.6 people at an illustrative smoke dose of 1, -2.4 trapped per fire.
+Keep Exit Main entrance clear (vs blocked): 90% out 48 s sooner on average and 49% less time in smoke across 12 fires (faster in 11); +2.4 trapped per fire.
+  ... three more fix lines
+wrote data/runs/headlines-example-office.json (7043 bytes)
+
+$ python -m fire.headlines data/buildings/office.json data/runs/batch-office.json
+Stair doors propped open: +54% person-seconds in smoke across 36 paired fires; 90% out 0 s later on average.
+  ... the same weak-spot, what-if and fix lines as D15 printed
+wrote data/runs/headlines-office.json (6811 bytes)
+```
+
+- The example batch has the percent at the source: `baseSmokeSeconds` 1532.5 on
+  all three what-ifs (12 matched fires each), so the derived fixes get a percent too:
+  -48.5% for keeping the main entrance clear, -20.7% for self-closers (the sprinklers
+  fix, rerun, shows the same -3.6% as the sprinklers what-if).
+- The office batch is D15's, saved before this task and not rerun (it takes 50
+  minutes): its what-ifs carry no `baseSmokeSeconds`, so the pack's `smokePct` comes
+  from the fallback, valid because every what-if has `n` 36 for 36 runs: +54% for
+  propped stairs (+152 on a 281 baseline mean), +55% for the blocked exit and +47% for
+  sprinklers (the trapped-agents caveat above). Its derived fixes have no `smokePct`
+  until the batch is regenerated.
+
+Handoff for A: the precompute runs `python -m fire.headlines` on each batch it
+saves, copies `data/runs/headlines-<id>.json` into `frontend/public/demo/` and lists
+it as `batches[].headlines`. The report card may use `headline` as its template
+headline and quotes the `why` lines verbatim; `whatIf[].baseSmokeSeconds` (written by
+`add_whatif` from now on) already feeds `_base_smoke`. Do not headline the sprinklers
+entry by smoke: trapped agents leave the replay frames, so sprinklers read as more
+time in smoke (D15); quote them by `dTrapped`. That is why the headline rule starts
+with propped stairs.
+
+Handoff for E: the Report tab can show the whole pack with no API or Gemini call.
+Use `smokePct` instead of recomputing the percent, `label` for names (it is already
+readable), `scoreRange` and `riskT90Range` beside the score and time, and
+`stability.why` below the weak spots; handle every missing field. `generated` and
+`sources` say which batch the numbers came from.
+
+All numbers use the illustrative model and are ideas for a fire protection engineer
+to check; they are not design or compliance results.

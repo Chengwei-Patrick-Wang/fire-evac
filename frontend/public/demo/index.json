@@ -1,11 +1,12 @@
 {
   "version": "demo-index/v0",
+  "generated": "2026-11-14T14:04:57Z",
   "buildings": [
     {
       "id": "example-office",
       "name": "Example office (synthetic, 2 floors)",
       "file": "building.example.json",
-      "credits": "Synthetic example building made by the team; free to use."
+      "credits": "Synthetic example building made by the team; license: free to use, no attribution needed."
     },
     {
       "id": "office",
@@ -21,6 +22,150 @@
     }
   ],
   "runs": [
+    {
+      "id": "example-office-R101-base",
+      "buildingId": "example-office",
+      "label": "Kitchen, baseline",
+      "file": "run-example-office-R101-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R101",
+        "x": 8,
+        "y": 3,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "closed"
+      },
+      "metrics": {
+        "t50": 95.29,
+        "t90": 120.73,
+        "t100": 199.79,
+        "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "example-office-R101-propped",
+      "buildingId": "example-office",
+      "label": "Kitchen, DSA1 propped",
+      "file": "run-example-office-R101-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R101",
+        "x": 8,
+        "y": 3,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "propped"
+      },
+      "metrics": {
+        "t50": 95.29,
+        "t90": 120.73,
+        "t100": 171.13,
+        "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "example-office-R106-base",
+      "buildingId": "example-office",
+      "label": "Lounge, baseline",
+      "file": "run-example-office-R106-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R106",
+        "x": 17,
+        "y": 12.75,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "closed"
+      },
+      "metrics": {
+        "t50": 93.14,
+        "t90": 123.23,
+        "t100": 202.07,
+        "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "example-office-R106-propped",
+      "buildingId": "example-office",
+      "label": "Lounge, DSA1 propped",
+      "file": "run-example-office-R106-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R106",
+        "x": 17,
+        "y": 12.75,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "propped"
+      },
+      "metrics": {
+        "t50": 93.14,
+        "t90": 123.23,
+        "t100": 204.42,
+        "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "example-office-L1-base",
+      "buildingId": "example-office",
+      "label": "Lobby, baseline",
+      "file": "run-example-office-L1-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "L1",
+        "x": 23,
+        "y": 3.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "closed"
+      },
+      "metrics": {
+        "t50": 103.55,
+        "t90": 221.77,
+        "t100": null,
+        "evacuated": 144,
+        "trapped": 16
+      }
+    },
+    {
+      "id": "example-office-L1-propped",
+      "buildingId": "example-office",
+      "label": "Lobby, DSA1 propped",
+      "file": "run-example-office-L1-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "L1",
+        "x": 23,
+        "y": 3.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "propped"
+      },
+      "metrics": {
+        "t50": 103.55,
+        "t90": 223.23,
+        "t100": null,
+        "evacuated": 144,
+        "trapped": 16
+      }
+    },
     {
       "id": "example-kitchen-fire-s1",
       "buildingId": "example-office",
@@ -46,9 +191,10 @@
   ],
   "batches": [
     {
-      "id": "example-kitchen-fire-batch",
+      "id": "example-office-batch",
       "buildingId": "example-office",
-      "file": "batch.example.json"
+      "file": "batch-example-office.json",
+      "report": "report-example-office.md"
     }
   ]
 }

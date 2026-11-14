@@ -153,9 +153,15 @@ def add_fixes(building: dict, base: dict, batch: dict, rooms=None, top=2,
     seeds = sorted({r["seed"] for r in baseline})
     result = deepcopy(batch)
     fixes, result["fixesSkipped"] = candidate_fixes(building, base, batch, top)
+    whatif = {v["id"]: v for v in batch.get("whatIf", [])}
     for fix in fixes:
         fix["smokePct"] = None
-        if "derivedFrom" not in fix:
+        if "derivedFrom" in fix:
+            # The fix's own baseline is the propped or blocked state: b minus the fix's (negated) change.
+            b = whatif.get(fix["derivedFrom"].split(".", 1)[-1], {}).get("baseSmokeSeconds")
+            if b is not None and "dSmokeSeconds" in fix and b - fix["dSmokeSeconds"] > 0:
+                fix["smokePct"] = 100 * fix["dSmokeSeconds"] / (b - fix["dSmokeSeconds"])
+        else:
             scenario = deepcopy(base)
             scenario["id"] = f"{base['id']}-{fix['id']}"
             scenario["doors"] = {**base.get("doors", {}), **fix.get("doors", {})}

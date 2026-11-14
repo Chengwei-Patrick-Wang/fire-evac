@@ -218,6 +218,6 @@ export interface DemoIndex {
   generated?: string
   buildings: { id: string; name: string; file: string; credits?: string }[]
   runs: DemoRun[]
-  batches: { id: string; buildingId: string; file: string; report?: string }[]
+  batches: { id: string; buildingId: string; file: string; report?: string; headlines?: string }[]
   calibration?: string
 }

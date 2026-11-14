@@ -1,0 +1,28 @@
+# Netlify static deploy of the demo (task A5). Nothing here is secret: no API URL, no keys.
+# The site is frontend/dist: the app plus frontend/public/demo/ (precomputed runs, batches and report cards).
+# Nothing is deployed from this file by itself; see tools/deploy_demo.py for the one-command deploy.
+
+[build]
+  base = "frontend"
+  # An empty VITE_SITE_URL (below) falls back to Netlify's own $URL, so the About overlay's QR code points at this site.
+  command = "VITE_SITE_URL=\"${VITE_SITE_URL:-$URL}\" npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Placeholder: the site's public URL (https://NAME.netlify.app). The About overlay draws a QR code for it.
+  # Leave it empty to use Netlify's $URL; set it only for a custom domain.
+  VITE_SITE_URL = ""
+
+# Single-page app: any path that is not a file gets the app. Files that exist (/demo/*.json) are served as they are.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Vite names everything in /assets by content hash, so it can be cached for good; /demo/*.json keeps Netlify's
+# default (revalidate with an ETag), because those names stay the same when the data is regenerated.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
