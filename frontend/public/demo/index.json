@@ -1,6 +1,6 @@
 {
   "version": "demo-index/v0",
-  "generated": "2026-11-14T16:19:27Z",
+  "generated": "2026-11-14T16:54:37Z",
   "buildings": [
     {
       "id": "example-office",
@@ -137,6 +137,54 @@
         "t90": 120.73,
         "t100": 199.79,
         "evacuated": 160,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "clinic-R1AC1-base",
+      "buildingId": "clinic",
+      "label": "CENTRAL WAITING, baseline",
+      "file": "run-clinic-R1AC1-base.json",
+      "whatIf": null,
+      "fire": {
+        "floor": "F1",
+        "room": "R1AC1",
+        "x": 42.12,
+        "y": 41.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DqxQ3VC": "closed"
+      },
+      "metrics": {
+        "t50": 95.03,
+        "t90": 138.47,
+        "t100": 175.31,
+        "evacuated": 280,
+        "trapped": 0
+      }
+    },
+    {
+      "id": "clinic-R1AC1-propped",
+      "buildingId": "clinic",
+      "label": "CENTRAL WAITING, DqxQ3VC propped",
+      "file": "run-clinic-R1AC1-propped.json",
+      "whatIf": "propped",
+      "fire": {
+        "floor": "F1",
+        "room": "R1AC1",
+        "x": 42.12,
+        "y": 41.25,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DqxQ3VC": "propped"
+      },
+      "metrics": {
+        "t50": 95.03,
+        "t90": 138.47,
+        "t100": 175.31,
+        "evacuated": 280,
         "trapped": 0
       }
     },
@@ -287,17 +335,25 @@
   ],
   "batches": [
     {
-      "id": "office-batch",
-      "buildingId": "office",
-      "file": "batch-office.json",
-      "report": "report-office.md"
-    },
-    {
       "id": "example-office-batch",
       "buildingId": "example-office",
       "file": "batch-example-office.json",
       "report": "report-example-office.md",
       "headlines": "headlines-example-office.json"
+    },
+    {
+      "id": "clinic-batch",
+      "buildingId": "clinic",
+      "file": "batch-clinic.json",
+      "report": "report-clinic.md",
+      "headlines": "headlines-clinic.json"
+    },
+    {
+      "id": "office-batch",
+      "buildingId": "office",
+      "file": "batch-office.json",
+      "report": "report-office.md",
+      "headlines": "headlines-office.json"
     }
   ]
 }
