@@ -169,8 +169,29 @@ export async function fetchReport(ref: { runId: string } | { batchId: string }, 
   if (!res || !res.ok) return ''
   return res.text()
 }
-export async function loadCalibration(): Promise<null> {
-  throw new ApiError('not implemented')
+export interface Calibration {
+  version: 'calibration/v0'
+  title: string
+  source: string
+  points: { label: string; width: number; simulated: number; references: { name: string; value: number }[] }[]
+}
+export async function loadCalibration(): Promise<{ data: Calibration; example: boolean } | null> {
+  const idx = await loadIndex()
+  const tries: [string, boolean][] = []
+  if (idx.calibration) tries.push([idx.calibration, false])
+  tries.push(['calibration.json', false], ['calibration.example.json', true])
+  for (const [file, example] of tries) {
+    try {
+      const res = await fetch(DEMO + file)
+      if (!res.ok) continue
+      const j = await res.json()
+      if (j?.version !== 'calibration/v0' || !Array.isArray(j.points)) continue
+      return { data: j as Calibration, example }
+    } catch {
+      /* try next */
+    }
+  }
+  return null
 }
 
 export type OpenedFile =

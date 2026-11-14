@@ -1,4 +1,5 @@
 import { useApp } from '../store/app'
+import { PROFILE_NAMES } from '../replay/runIndex'
 
 export default function Toolbar3D() {
   const building = useApp((s) => s.building)
@@ -11,7 +12,9 @@ export default function Toolbar3D() {
   const queues = useApp((s) => s.layers.queues)
   const risk = useApp((s) => s.layers.risk)
   const split = useApp((s) => s.split)
-  const nRuns = useApp((s) => s.runOrder.length)
+  const lens = useApp((s) => s.lens)
+  const trails = useApp((s) => s.trails)
+  const nRuns =useApp((s) => s.runOrder.length)
   if (!building) return null
   const set = useApp.setState
   const isOn = (id: string) => !visible || visible.includes(id)
@@ -54,6 +57,27 @@ export default function Toolbar3D() {
           />{' '}
           {name}
         </label>
+      ))}
+      <label>
+        <input type="checkbox" checked={trails} onChange={(e) => set({ trails: e.target.checked })} /> Trails
+      </label>
+      {PROFILE_NAMES.map((n, i) => (
+        <button
+          key={n}
+          title="Lens: highlight this profile"
+          className={lens.every(Boolean) || !lens[i] ? '' : 'on'}
+          onClick={() =>
+            set((s) => {
+              const all = s.lens.every(Boolean)
+              const only = s.lens[i] && s.lens.filter(Boolean).length === 1
+              if (only) return { lens: s.lens.map(() => true) }
+              if (all) return { lens: s.lens.map((_, j) => j === i) }
+              return { lens: s.lens.map((v, j) => (j === i ? !v : v)) }
+            })
+          }
+        >
+          {n}
+        </button>
       ))}
       <button disabled={nRuns < 2} className={split ? 'on' : ''} onClick={() => set((s) => ({ split: !s.split }))}>Split</button>
       <button onClick={() => set((s) => ({ topView: s.topView + 1 }))}>Top view</button>
