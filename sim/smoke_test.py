@@ -7,6 +7,7 @@ and a run that hits maxTime.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import sys
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ import numpy as np
 from shapely.geometry import Point, Polygon
 
 from sim.run import run
+from sim.floors import StairNet, find_spot
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,7 +29,54 @@ def load_building() -> dict:
     return plan_to_building(json.loads((ROOT / "contracts" / "plan.example.json").read_text(encoding="utf-8")))
 
 
+def check_floors() -> None:
+    building = load_building()
+    net = StairNet(building)
+    net.check({"F1", "F2"})
+    assert not net.links("F1")
+    links = net.links("F2")
+    assert {link["stair"] for link in links} == {"SA2", "SB2"}
+    assert all(link["to"] == "F1" and link["width"] == 1.0
+               and link["length"] == 7.0 and link["tail"] > 12.7 for link in links)
+    rng = np.random.default_rng(42)
+    entries = [net.enter(i, 0.0, "F2", "SA", rng) for i in range(5)]
+    assert all(b["enter"] - a["enter"] >= 0.909 for a, b in zip(entries, entries[1:]))
+    assert all(abs(e["arrive"] - e["enter"] - 12.73) < 0.01 for e in entries)
+    assert all(links[0]["arrival"].contains(Point(e["pos"])) for e in entries)
+    assert net.backlog("F2", "SA", 0.0) == 4
+    assert net.backlog("F2", "SA", entries[-1]["enter"]) == 0
+    assert net.backlog("F2", "SB", 0.0) == 0
+    repeat = StairNet(building)
+    repeat_rng = np.random.default_rng(42)
+    assert entries == [repeat.enter(i, 0.0, "F2", "SA", repeat_rng) for i in range(5)]
+
+    broken = deepcopy(building)
+    for floor in broken["floors"]:
+        if floor["id"] == "F2":
+            for stair in floor["stairs"]:
+                stair["group"] = "ZZ"
+    broken_net = StairNet(broken)
+    broken_net.check({"F1"})
+    try:
+        broken_net.check({"F2"})
+    except ValueError as exc:
+        assert "F2" in str(exc)
+    else:
+        raise AssertionError("disconnected F2 should have no exit route")
+
+    region = Polygon([(0, 0), (3, 0), (3, 3), (0, 3)])
+    packed = np.array([(x, y) for x in np.arange(0, 3.01, 0.45)
+                       for y in np.arange(0, 3.01, 0.45)])
+    assert find_spot(region, packed, rng) is None
+    half = packed[packed[:, 0] < 1.5]
+    pos = find_spot(region, half, rng)
+    assert pos is not None and region.contains(Point(pos))
+    assert np.all(np.linalg.norm(half - pos, axis=1) >= 0.5)
+    print("floors OK")
+
+
 def main() -> int:
+    check_floors()
     building = load_building()
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
 
