@@ -661,3 +661,84 @@ Widen Exit East stair exit from 1.00 m to 1.50 m: 90% out 18 s later on average 
 
 Verification: `python -m fire.smoke_test` and `python -m fire.checks --slow`
 both printed `fire checks OK`; the command above wrote `debug/batch-fixes.json`.
+
+## Real office batch (D15)
+
+Regenerate on the lead's machine from the repository root (activate `.venv` first):
+
+```sh
+LLM_PROVIDER=off python -m fire.batch data/buildings/office.json data/buildings/office.scenario.json --occupants 250 --fire-type kitchen --seeds 1,2,3 --budget-min 30 --whatif --fixes --out data/runs/batch-office.json > debug/office-batch.log 2>&1
+```
+
+The batch CLI applies `--occupants` and `--fire-type` before the pilot and saves
+those overrides in `base`. Occupant overrides preserve the mobility mix and
+replace any per-room counts; fire-type overrides remove a custom growth class.
+Invalid overrides fail through the argument parser. The task's design occupancy
+is 250: approximately 3,480 m² of walkable floor divided by 13.9 m² per person
+(the task's business-load assumption of 150 sq ft/person). This occupancy makes
+stair queues visible; 120 occupants barely queue. This is an illustrative scenario
+assumption, not an occupancy certification. The fast kitchen preset peaks at
+1.5 MW, so the illustrative 500 kW sprinkler cap can change results. The trash
+preset already peaks at the cap; no-op sprinkler what-ifs are now omitted.
+
+The budget estimates baseline runs plus what-if runs and non-derived fix runs:
+`top` widening fixes (default 2), a sprinkler fix when it reduces the peak,
+self-closers when stair doors are open/propped, and one keep-clear fix per blocked
+door. Derived inverse comparisons require no new simulations. Both comparison
+room limits follow the budget's room count. Geometry checks may skip widening
+candidates, so this count is conservative. This remains an estimate, not a hard
+deadline. A larger `--budget-min` samples more rooms (up to all eligible rooms).
+
+IFC family strings are replaced with room/stair labels in rankings, blocked-exit
+comparisons and suggested fixes. Short, readable exit names are preserved.
+
+Handoff for A/B: regenerate the gitignored office batch with the command above.
+Single-run office demos should use the same 250 occupants and kitchen preset;
+check `office.scenario.json` when integrating, since this task does not edit B's
+scenario. A should display the measured `why` lines verbatim. All numbers use the
+illustrative model and suggest ideas for a fire protection engineer to examine;
+they are not design or compliance results.
+
+D15 run on macOS 14.5 arm64, 8 logical cores, 7 batch workers:
+
+```text
+pilot 6.2 s; budget 30 min, 7 workers, 3 seeds, 3 what-ifs, 3 fixes -> 48 rooms (est. 29.9 min)
+```
+
+**Blocked on WS-C:** the baseline (48 rooms × 3 seeds = 144 runs) and propped
+stair-door sweep completed, but the blocked-exit sweep fails for multiple seeds.
+The batch was stopped rather than publishing incomplete comparisons. No completed
+`data/runs/batch-office.json`, aggregate `timing`, or final `why` lines were
+produced. Logs remain in `debug/office-batch.log` (gitignored). Repeating the same
+scenario directly reproduces the failure, without multiprocessing:
+
+```python
+import json
+from fire.batch import _tasks
+from fire.model import FireModel
+from sim.run import run
+
+building = json.load(open("data/buildings/office.json"))
+base = json.load(open("data/buildings/office.scenario.json"))
+base["occupants"]["total"] = 250
+base["fire"]["type"] = "kitchen"
+base["fire"].pop("growth", None)
+base["doors"] = {**base.get("doors", {}), "D$77wwb": "blocked"}
+scenario = _tasks(building, base, [{"floor": "F1", "room": "R106"}], (2,))[0]["scenario"]
+run(building, scenario, FireModel(building, scenario))
+```
+
+```text
+sim/run.py:602, in run
+    jid = fs.sim.add_agent(...)
+RuntimeError: Model constraint violation: Agent (0.36, 22.81) too close to geometry boundaries, distance <= 0.2
+```
+
+The stair-arrival placement region is not safely inset from the changed walkable
+boundary after blocking the stair exit. WS-C owns `sim/run.py` and
+`sim/floors.py`; fix the arrival-region clearance there, then remove D15's BLOCKED
+line and rerun the command above to finish the measured results. No simulator or
+building files were changed here. Verification passed before this blocked commit:
+`LLM_PROVIDER=off python -m fire.smoke_test` and
+`LLM_PROVIDER=off python -m fire.checks --slow` (including the new two-fire,
+250-occupant office check), both ending in `fire checks OK`.

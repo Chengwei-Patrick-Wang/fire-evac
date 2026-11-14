@@ -150,14 +150,23 @@ def door_label(building: dict, floor_id: str, door_id: str) -> tuple[str, str]:
     """Label a door, including stair and exterior openings; tolerate unknown ids."""
     floor = next((f for f in building.get("floors", []) if f["id"] == floor_id), {})
     door = next((d for d in floor.get("doors", []) if d["id"] == door_id), {})
+    rooms = [r for r in floor.get("rooms", []) if r["id"] in door.get("connects", [])]
+    stair = next((r for r in rooms if r.get("type") == "stair"), None)
     if "outside" in door.get("connects", []):
         info = next((e for e in floor.get("exits", []) if e["door"] == door_id), {})
-        return "exit", f"Exit {info.get('name') or door_id}"
-    stair = next((r for r in floor.get("rooms", [])
-                  if r["id"] in door.get("connects", []) and r.get("type") == "stair"), None)
+        name = info.get("name", "")
+        if name and ":" not in name and len(name) <= 30:
+            return "exit", f"Exit {name}"
+        if stair:
+            return "exit", f"Stair {stair.get('group', stair['id'])} exit"
+        if rooms and name:
+            room = rooms[0]
+            return "exit", f"Exit from {room.get('name', room['id'])} ({room['id']})"
+        return "exit", f"Exit {door_id}"
     if stair:
         return "stair", f"Stair {stair.get('group', stair['id'])} door"
-    return "door", f"Door {door_id}"
+    names = " to ".join(r.get("name", r["id"]) for r in rooms)
+    return "door", f"Door {door_id}" + (f" ({names})" if names else "")
 
 
 def aggregate(building: dict, base: dict, records: list[dict]) -> dict:
@@ -282,8 +291,10 @@ def run_many(building: dict, base: dict, ignitions: list[dict] | None = None,
             **aggregate(building, base, records)}
 
 
-def _exit_why(exit_result: dict) -> str:
-    return (f"Blocking Exit {exit_result['id']} adds {exit_result['dT90']:.0f} s "
+def _exit_why(exit_result: dict, building: dict | None = None) -> str:
+    label = (door_label(building, exit_result["floor"], exit_result["id"])[1]
+             if building is not None else f"Exit {exit_result['id']}")
+    return (f"Blocking {label} adds {exit_result['dT90']:.0f} s "
             f"to 90% evacuation (mean of {exit_result['n']} fires).")
 
 
@@ -328,7 +339,7 @@ def add_exit_criticality(building: dict, base: dict, batch: dict,
     maximum = max((exit_result["dT90"] for exit_result in exits), default=0)
     critical = [{"kind": "exit", "id": e["id"], "floor": e["floor"],
                  "score": round(100 * max(0, e["dT90"]) / maximum, 1) if maximum > 0 else 0.0,
-                 "why": _exit_why(e)} for e in exits if e["n"]]
+                 "why": _exit_why(e, building)} for e in exits if e["n"]]
     replaced = {(e["floor"], e["id"]) for e in critical}
     existing = [item for item in batch["top"]
                 if not (item["kind"] == "exit" and (item["floor"], item["id"]) in replaced)]
@@ -340,6 +351,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("building", type=Path)
     parser.add_argument("scenario", type=Path)
+    parser.add_argument("--occupants", type=int, help="override total occupants, preserving the mix")
+    parser.add_argument("--fire-type", help="override the fire preset and remove growth overrides")
     parser.add_argument("--rooms", type=int)
     parser.add_argument("--seeds", default="1,2,3")
     parser.add_argument("--workers", type=int)
@@ -353,6 +366,18 @@ def main():
     args = parser.parse_args()
     building = json.loads(args.building.read_text(encoding="utf-8"))
     base = json.loads(args.scenario.read_text(encoding="utf-8"))
+    if args.occupants is not None:
+        if args.occupants < 1:
+            parser.error("--occupants must be positive")
+        base["occupants"] = {"total": args.occupants, "mix": base["occupants"]["mix"]}
+    if args.fire_type is not None:
+        from fire.presets import fire_params
+        base["fire"]["type"] = args.fire_type
+        base["fire"].pop("growth", None)
+        try:
+            fire_params(base["fire"])
+        except ValueError as error:
+            parser.error(str(error))
     seeds = tuple(sorted({int(seed) for seed in args.seeds.split(",")}))
     args.workers = _workers(args.workers)
     if args.workers < 1:
@@ -372,15 +397,22 @@ def main():
         if args.whatif:
             from fire.whatif import default_variants
             variants = len(default_variants(building, base, [pilot]))
-        count = plan_rooms(args.budget_min * 60, pilot["wallS"], seeds, args.workers, variants)
+        fixes = 0
+        if args.fixes:
+            from fire.fixes import planned_fix_runs
+            fixes = planned_fix_runs(building, base)
+        count = plan_rooms(args.budget_min * 60, pilot["wallS"], seeds, args.workers, variants + fixes)
         args.rooms = min(count, len(candidates), args.rooms if args.rooms is not None else len(candidates))
         if args.rooms < 1:
             parser.error("--budget-min needs --rooms to be positive")
         if args.whatif:
             args.whatif_rooms = args.rooms
-        estimate = args.rooms * len(seeds) * (1 + variants) * pilot["wallS"] * 2 / args.workers / 60
+        if args.fixes:
+            args.fix_rooms = args.rooms
+        fix_plan = f", {fixes} fixes" if args.fixes else ""
+        estimate = args.rooms * len(seeds) * (1 + variants + fixes) * pilot["wallS"] * 2 / args.workers / 60
         print(f"pilot {pilot['wallS']:.1f} s; budget {args.budget_min:g} min, {args.workers} workers, "
-              f"{len(seeds)} seeds, {variants} what-ifs -> {args.rooms} rooms (est. {estimate:.1f} min)", flush=True)
+              f"{len(seeds)} seeds, {variants} what-ifs{fix_plan} -> {args.rooms} rooms (est. {estimate:.1f} min)", flush=True)
     batch = run_many(building, base, _ignitions(building, base, args.rooms), seeds, args.workers)
     if args.exits:
         batch = add_exit_criticality(building, base, batch, workers=args.workers)
@@ -399,7 +431,7 @@ def main():
         print(item["why"], flush=True)
     printed = {item["why"] for item in batch["top"]}
     for exit_result in batch.get("exits", []):
-        why = _exit_why(exit_result)
+        why = _exit_why(exit_result, building)
         if exit_result["n"] and why not in printed:
             print(why, flush=True)
 

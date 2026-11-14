@@ -63,6 +63,16 @@ def _inverse(variant):
     return stats
 
 
+def planned_fix_runs(building: dict, base: dict, top=2) -> int:
+    """Conservative rerun count; derived inverse comparisons cost no runs."""
+    doors = {d["id"]: d for f in building["floors"] for d in f["doors"]}
+    overrides = base.get("doors", {})
+    open_stairs = any(overrides.get(did, doors[did]["state"]) in ("open", "propped")
+                      for did in stair_doors(building))
+    return (top + int(sprinklers_matter(base)) + int(open_stairs)
+            + sum(state == "blocked" for state in overrides.values()))
+
+
 def candidate_fixes(building: dict, base: dict, batch: dict, top=2) -> tuple[list, list]:
     fixes, skipped = [], []
     doors = {d["id"]: (f, d) for f in building["floors"] for d in f["doors"]}

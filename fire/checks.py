@@ -1015,6 +1015,90 @@ def check_fixes_slow():
     print("fixes: widened door and sprinklers with two matched fires each", flush=True)
 
 
+def check_labels():
+    from contextlib import redirect_stdout, redirect_stderr
+    from copy import deepcopy
+    from io import StringIO
+    from unittest.mock import patch
+    from shapely.geometry import Polygon
+    from fire.batch import door_label, main
+    from fire.fixes import planned_fix_runs, widen_door
+    from fire.whatif import default_variants
+
+    root = Path(__file__).resolve().parents[1]
+    office = json.loads((root / "data/buildings/office.json").read_text())
+    base = json.loads((root / "data/buildings/office.scenario.json").read_text())
+    example = json.loads((root / "contracts/building.example.json").read_text())
+    expected = {"DrRS91$": "Exit from ENTRY (R101)", "D$77wwb": "Stair S1 exit",
+                "D$77xsW": "Stair S1 door", "D$77xVs": "Door D$77xVs (OPEN OFFICE to CORRIDOR)"}
+    for did, label in expected.items():
+        assert door_label(office, "F1", did)[1] == label, door_label(office, "F1", did)
+    for did, label in {"E1": "Exit Main entrance", "DSB1": "Stair SB door",
+                       "D101": "Door D101 (Kitchen to Corridor 1)"}.items():
+        assert door_label(example, "F1", did)[1] == label
+    trash = deepcopy(base)
+    trash["fire"]["type"] = "trash"
+    kitchen = deepcopy(base)
+    kitchen["fire"].update(type="kitchen", growth="slow")
+    assert "sprinklers" not in {v["id"] for v in default_variants(office, trash, [])}
+    assert "sprinklers" in {v["id"] for v in default_variants(office, kitchen, [])}
+    assert planned_fix_runs(office, trash) == 2
+    assert planned_fix_runs(office, kitchen) == 3
+    changed = deepcopy(kitchen)
+    changed["doors"] = {"D$77xsW": "propped", "DrRS91$": "blocked"}
+    assert planned_fix_runs(office, changed) == 5
+    widened = widen_door(office, "D$77wwb")
+    floor = widened["floors"][0]
+    assert next(d for d in floor["doors"] if d["id"] == "D$77wwb")["width"] == 1.41
+    zone = next(e for e in floor["exits"] if e["door"] == "D$77wwb")
+    assert abs(Polygon(zone["polygon"]).area - 1.70) < .02
+    argv = ["fire.batch", str(root / "data/buildings/office.json"),
+            str(root / "data/buildings/office.scenario.json"), "--occupants", "250",
+            "--fire-type", "kitchen", "--rooms", "1", "--seeds", "1"]
+    empty = {"runs": [], "failed": [], "top": []}
+    with (patch("sys.argv", argv), patch("fire.batch.run_many", return_value=empty) as sweep,
+          patch("pathlib.Path.write_text"), patch("pathlib.Path.mkdir"), redirect_stdout(StringIO())):
+        main()
+    passed = sweep.call_args.args[1]
+    assert passed["occupants"] == {"total": 250, "mix": base["occupants"]["mix"]}
+    assert passed["fire"]["type"] == "kitchen" and "growth" not in passed["fire"]
+    with (patch("sys.argv", argv + ["--budget-min", "30", "--whatif", "--fixes", "--workers", "2"]),
+          patch("fire.batch._run_one", return_value={"ok": True, "wallS": 30.0}),
+          patch("fire.batch.run_many", return_value=empty),
+          patch("fire.whatif.add_whatif", side_effect=lambda b, s, batch, **kw: batch) as whatif,
+          patch("fire.fixes.add_fixes", side_effect=lambda b, s, batch, **kw: batch) as fixes,
+          patch("pathlib.Path.write_text"), patch("pathlib.Path.mkdir"), redirect_stdout(StringIO()) as output):
+        main()
+    assert whatif.call_args.kwargs["rooms"] == fixes.call_args.kwargs["rooms"] == 1
+    assert "3 what-ifs, 3 fixes -> 1 rooms" in output.getvalue()
+    for flag, value in (("--occupants", "0"), ("--fire-type", "unknown")):
+        with patch("sys.argv", argv + [flag, value]), redirect_stderr(StringIO()):
+            try:
+                main()
+            except SystemExit as error:
+                assert error.code == 2
+            else:
+                raise AssertionError("bad override accepted")
+    print("labels: office labels, widening, overrides and fix budgeting checked", flush=True)
+
+
+def check_office_slow():
+    from fire.batch import run_many
+    root = Path(__file__).resolve().parents[1]
+    office = json.loads((root / "data/buildings/office.json").read_text())
+    base = json.loads((root / "data/buildings/office.scenario.json").read_text())
+    base["occupants"] = {"total": 250, "mix": base["occupants"]["mix"]}
+    base["fire"]["type"] = "kitchen"
+    base["fire"].pop("growth", None)
+    base["maxTime"] = 300
+    batch = run_many(office, base, [dict(floor="F1", room=r) for r in ("R110", "R143")],
+                     seeds=(1,), workers=2, timeout_s=600)
+    assert not batch["failed"], batch["failed"]
+    assert batch["top"]
+    assert all(item["why"].isascii() and "M_" not in item["why"] for item in batch["top"])
+    print("office: 250 occupants, two kitchen fires, readable weak spots", flush=True)
+
+
 def run_all(slow: bool = False):
     for name, check in sorted(globals().copy().items()):
         if name.startswith("check_") and callable(check) and (slow or not name.endswith("_slow")):

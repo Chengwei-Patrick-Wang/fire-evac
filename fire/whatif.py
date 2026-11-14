@@ -1,7 +1,8 @@
 """Paired, rule-based what-if sweeps with illustrative smoke exposure."""
 from copy import deepcopy
 
-from fire.batch import run_many
+from fire.batch import door_label, run_many
+from fire.presets import sprinklers_matter
 
 
 def stair_doors(building: dict) -> list[str]:
@@ -18,16 +19,16 @@ def default_variants(building: dict, base: dict, runs: list[dict]) -> list[dict]
     sprinklers = base.get("sprinklers", False)
     variants = [{"id": "proppedStairs", "label": "Stair doors propped open",
                  "doors": dict.fromkeys(stair_doors(building), "propped"), "sprinklers": sprinklers}]
-    exits = [e for f in building["floors"] for e in f.get("exits", [])]
+    exits = [{**e, "floor": f["id"]} for f in building["floors"] for e in f.get("exits", [])]
     widths = {d["id"]: d["width"] for f in building["floors"] for d in f["doors"]}
     if len(exits) >= 2:
         # Counts use exit ids; scenario overrides use the associated door ids.
         chosen = min(exits, key=lambda e: (
             -sum(r.get("exitCounts", {}).get(e["id"], 0) for r in runs),
             -widths[e["door"]], e["id"]))
-        variants.append({"id": "blockedExit", "label": f"Exit {chosen.get('name', chosen['id'])} blocked",
+        variants.append({"id": "blockedExit", "label": f"{door_label(building, chosen['floor'], chosen['door'])[1]} blocked",
                          "doors": {chosen["door"]: "blocked"}, "sprinklers": sprinklers})
-    if not sprinklers:
+    if sprinklers_matter(base):
         variants.append({"id": "sprinklers", "label": "Sprinklers on", "doors": {}, "sprinklers": True})
     return variants
 
