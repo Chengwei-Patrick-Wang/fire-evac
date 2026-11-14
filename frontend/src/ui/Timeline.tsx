@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { Pause, Play, RotateCcw } from 'lucide-react'
 import { useApp } from '../store/app'
-import { useClock } from '../store/clock'
+import { SPEEDS, useClock } from '../store/clock'
 import { useTour } from '../tour/tour'
 
-const fmt = (t: number) => {
-  const m = Math.floor(t / 60)
-  return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`
-}
+const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
-export default function Scrubber() {
+/** Replaces Scrubber: play and pause, restart, the time, the scrubber with its marks, the speed and the run. Same keys and marks. */
+export default function Timeline() {
   const lr = useApp((s) => (s.activeRunKey ? s.runs[s.activeRunKey] : undefined))
+  const runOrder = useApp((s) => s.runOrder)
+  const runs = useApp((s) => s.runs)
+  const activeRunKey = useApp((s) => s.activeRunKey)
+  const loading = useApp((s) => s.loading)
   const playing = useClock((s) => s.playing)
   const speed = useClock((s) => s.speed)
   const duration = useClock((s) => s.duration)
@@ -20,9 +23,9 @@ export default function Scrubber() {
     const paint = (t: number) => {
       if (range.current) {
         range.current.value = String(t)
-        range.current.setAttribute('aria-valuetext', `${fmt(t)} of ${fmt(useClock.getState().duration)}`)
+        range.current.setAttribute('aria-valuetext', `${mmss(t)} of ${mmss(useClock.getState().duration)}`)
       }
-      if (label.current) label.current.textContent = `${fmt(t)} / ${fmt(useClock.getState().duration)}`
+      if (label.current) label.current.textContent = `${mmss(t)} / ${mmss(useClock.getState().duration)}`
     }
     paint(useClock.getState().t)
     return useClock.subscribe((s) => paint(s.t))
@@ -70,19 +73,39 @@ export default function Scrubber() {
           }
       if (isFinite(best)) alarm = Math.max(0, best)
     }
-    if (alarm !== undefined) out.push({ t: alarm, label: 'Alarm', color: '#facc15' })
-    for (const e of run.events) if (e.type === 'door_blocked') out.push({ t: e.t, label: `Door blocked ${e.door ?? ''}`, color: '#ef4444' })
+    if (alarm !== undefined) out.push({ t: alarm, label: 'Alarm', color: 'var(--caution)' })
+    for (const e of run.events) if (e.type === 'door_blocked') out.push({ t: e.t, label: `Door blocked ${e.door ?? ''}`, color: 'var(--severe)' })
     const tr = run.events.find((e) => e.type === 'trapped')
-    if (tr) out.push({ t: tr.t, label: 'First trapped', color: '#ef4444' })
+    if (tr) out.push({ t: tr.t, label: 'First trapped', color: 'var(--severe)' })
     return out
   }, [lr])
 
   return (
-    <div className="scrubber">
-      <button id="play" aria-keyshortcuts="Space" onClick={() => useClock.getState().toggle()} title="Space">{playing ? 'Pause' : 'Play'}</button>
-      {[1, 2, 5, 10].map((s) => (
-        <button key={s} aria-pressed={s === speed} className={(s === speed ? 'on' : '') + (s === 2 || s === 5 ? ' opt' : '')} onClick={() => useClock.getState().setSpeed(s)}>{s}x</button>
-      ))}
+    <div className="timeline">
+      <button
+        id="play"
+        type="button"
+        className="playbtn"
+        aria-label={playing ? 'Pause' : 'Play'}
+        aria-keyshortcuts="Space"
+        title={`${playing ? 'Pause' : 'Play'} (Space)`}
+        onClick={() => useClock.getState().toggle()}
+      >
+        {playing ? <Pause size={18} strokeWidth={1.75} fill="currentColor" aria-hidden="true" /> : <Play size={18} strokeWidth={1.75} fill="currentColor" aria-hidden="true" />}
+      </button>
+      <button
+        type="button"
+        className="restartbtn"
+        aria-label="Restart"
+        title="Restart from the beginning"
+        onClick={() => {
+          useClock.getState().seek(0)
+          useClock.setState({ playing: true })
+        }}
+      >
+        <RotateCcw size={18} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+      <span ref={label} className="time" />
       <div className="track">
         <input
           ref={range}
@@ -106,15 +129,34 @@ export default function Scrubber() {
           marks.map((m, i) => (
             <button
               key={i}
+              type="button"
               className="mark"
-              title={`${m.label} ${fmt(m.t)}`}
-              aria-label={`${m.label} ${fmt(m.t)}`}
+              title={`${m.label} ${mmss(m.t)}`}
+              aria-label={`${m.label} ${mmss(m.t)}`}
               style={{ left: `${Math.min(100, (m.t / duration) * 100)}%`, background: m.color }}
               onClick={() => useClock.getState().seek(m.t)}
             />
           ))}
       </div>
-      <span ref={label} className="time" />
+      <div className="tl-sel">
+        <span className="cap" aria-hidden="true">Speed</span>
+        <select aria-label="Playback speed" value={speed} onChange={(e) => useClock.getState().setSpeed(+e.target.value)}>
+          {!SPEEDS.includes(speed) && <option value={speed}>{speed}×</option>}
+          {SPEEDS.map((s) => (
+            <option key={s} value={s}>{s}×</option>
+          ))}
+        </select>
+      </div>
+      <div className="tl-sel">
+        <span className="cap" aria-hidden="true">Run</span>
+        <select aria-label="Run" value={activeRunKey ?? ''} disabled={runOrder.length === 0} onChange={(e) => useApp.getState().switchRun(e.target.value)}>
+          {runOrder.length === 0 && <option value="">No run</option>}
+          {runOrder.map((k) => (
+            <option key={k} value={k}>{runs[k].label}</option>
+          ))}
+        </select>
+      </div>
+      {loading && <span className="spinner" role="status" aria-label="Loading" />}
     </div>
   )
 }

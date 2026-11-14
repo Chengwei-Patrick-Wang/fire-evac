@@ -28,7 +28,7 @@ export default function SplitView({ leftKey, rightKey }: { leftKey: string; righ
     </div>
   )
   return (
-    <div className="split">
+    <div className="splitview">
       {pane(leftKey, 'L')}
       {pane(rightKey, 'R')}
     </div>

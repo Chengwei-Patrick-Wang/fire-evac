@@ -21,7 +21,7 @@ export const STATUS_COLORS = {
 const WAITING = STATUS_COLORS.waiting
 const NOT_MOVING = STATUS_COLORS.notMoving
 const TRAPPED = STATUS_COLORS.trapped
-const DIM = '#1f2937'
+const DIM = '#CBD5E1'
 const STATUS_NAMES = ['not moving', 'moving', 'waiting', 'exiting']
 type Timer = { i: number; p: [number, number, number]; s: number }
 
@@ -199,16 +199,16 @@ export default function Agents({ runKey }: { runKey?: string }) {
         </instancedMesh>
       )}
       {timers.map((tm) => (
-        <Html key={tm.i} position={tm.p} center style={{ pointerEvents: 'none', color: '#fbbf24', font: '11px monospace', textShadow: '0 0 3px #000' }}>
-          {tm.s}s
+        <Html key={tm.i} position={tm.p} center style={{ pointerEvents: 'none' }}>
+          <div className="l3d timer">{tm.s}s</div>
         </Html>
       ))}
       {hv && hp && (
         <Html position={hp} center style={{ pointerEvents: 'none' }}>
-          <div style={{ background: '#111827ee', color: '#e5e7eb', padding: '4px 8px', borderRadius: 4, font: '12px sans-serif', width: 220, whiteSpace: 'normal' }}>
+          <div className="tip3d" style={{ width: 220, whiteSpace: 'normal' }}>
             <b>{hv.profile}</b> · {hst}
             {hv.note && <div>{hv.note}</div>}
-            {hreason && <div style={{ color: '#e879f9' }}>{hreason}</div>}
+            {hreason && <div className="why">{hreason}</div>}
           </div>
         </Html>
       )}

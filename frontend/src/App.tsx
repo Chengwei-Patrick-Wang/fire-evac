@@ -1,20 +1,25 @@
 import { creditParts, loadBuildingIndex } from './model/buildingIndex'
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Layers3 } from 'lucide-react'
 import './App.css'
 import { useApp } from './store/app'
 import { useClock } from './store/clock'
 import type { LoadedRun } from './store/app'
-import TopBar from './ui/TopBar'
+import TopNav from './ui/TopNav'
+import TracerBar from './ui/TracerBar'
+import AnalyticsSidebar from './ui/AnalyticsSidebar'
+import FloorStrip from './ui/FloorStrip'
+import Timeline from './ui/Timeline'
+import LegendCard from './ui/LegendCard'
+import FloatingCard from './ui/FloatingCard'
+import LayersCard from './ui/LayersCard'
 import Scene from './scene/Scene'
 import SplitView from './scene/SplitView'
-import Toolbar3D from './ui/Toolbar3D'
 import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
-import Scrubber from './ui/Scrubber'
 import ReplaySummary from './ui/ReplaySummary'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
-import AgentLegend from './ui/AgentLegend'
 import ErrorBoundary from './ui/ErrorBoundary'
 import NewBuildingCard from './ui/NewBuildingCard'
 import TourCaption from './tour/TourCaption'
@@ -42,7 +47,6 @@ import {
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
   Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour, __pose: cameraPose })
 
-const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
 const PrintReport = lazy(() => import('./ui/PrintReport'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
 
@@ -116,7 +120,11 @@ export async function restoreLink(link: LinkState) {
     }
     const patch: Partial<ReturnType<typeof useApp.getState>> = {}
     const cur = useApp.getState()
-    if (link.tab) patch.resultsTab = link.tab
+    if (link.tab) {
+      patch.resultsTab = link.tab
+      // A link's tab is there to be looked at, so show the sidebar that holds it. (A phone's default Overview link leaves the replay uncovered.)
+      if (link.tab !== 'results' || !window.matchMedia('(max-width: 900px)').matches) patch.sidebarOpen = true
+    }
     if (link.m) patch.riskMetric = link.m
     if (link.l) {
       const l = { ...cur.layers }
@@ -138,8 +146,6 @@ export async function restoreLink(link: LinkState) {
   }
 }
 
-let startLink: LinkState | null = null
-
 async function startup() {
   const app = useApp.getState()
   app.setLoading('Starting…')
@@ -158,7 +164,6 @@ async function startup() {
       link = decodeLink(location.hash)
       if (link) linkCtl.restoring = true
     }
-    startLink = link
     let list = await listBuildings().catch((e) => {
       useApp.getState().setNotice(msg(e))
       return []
@@ -297,8 +302,29 @@ function Credits() {
   )
 }
 
+/** Screen-reader announcements for the two drawers: navigation and analytics. */
+function ShellStatus() {
+  const navOpen = useApp((s) => s.navOpen)
+  const sidebarOpen = useApp((s) => s.sidebarOpen)
+  const prev = useRef({ navOpen, sidebarOpen })
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    const p = prev.current
+    prev.current = { navOpen, sidebarOpen }
+    const m: string[] = []
+    if (p.navOpen !== navOpen) m.push(navOpen ? 'Navigation expanded' : 'Navigation collapsed')
+    if (p.sidebarOpen !== sidebarOpen) m.push(sidebarOpen ? 'Analytics shown' : 'Analytics hidden')
+    if (m.length) setMsg(m.join('. '))
+  }, [navOpen, sidebarOpen])
+  return (
+    <p id="shell-status" className="sr-only" role="status">
+      {msg}
+    </p>
+  )
+}
+
 export default function App() {
-  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView } = useApp()
+  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView, navOpen, sidebarOpen, card } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
@@ -317,15 +343,6 @@ export default function App() {
       useApp.getState().setNotice(msg(e))
     }
   }, [])
-  const [phone, setPhone] = useState(() => window.matchMedia('(max-width: 900px)').matches)
-  const [openPanel, setOpenPanel] = useState<'left' | 'right' | null>(null)
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 900px)')
-    const on = () => setPhone(mq.matches)
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-
   useTourKeys()
   useLinkSync()
   useEffect(() => {
@@ -356,14 +373,13 @@ export default function App() {
     void startup().then(() => {
       if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
       else if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
-      if (startLink && startLink.tab && startLink.tab !== 'results' && window.matchMedia('(max-width: 900px)').matches) setOpenPanel('right')
     })
   }, [])
 
   if (view === 'tracer')
     return (
       <div className="app tracing" key="tracing">
-        <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
+        <TracerBar />
         <main className="center">
           <Suspense fallback={<div className="pad">Loading tracer…</div>}>
             <TracerPage onOpenBuilding={(id) => void onOpenBuilding(id)} />
@@ -374,54 +390,60 @@ export default function App() {
     )
 
   return (
-    <div className="app" key="replay">
+    <div className={'app' + (sidebarOpen ? '' : ' sb-closed') + (navOpen ? ' nav-open' : '')} key="replay">
       <button className="skip" onClick={() => document.getElementById('play')?.focus()}>Skip to replay controls</button>
-      <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
-      <aside className={'left' + (phone && openPanel !== 'left' ? ' collapsed' : '')}>
-        <h3>Scenario</h3>
-        <ScenarioPanel />
-      </aside>
-      {phone && (
-        <div className="toggles">
-          {(['left', 'right'] as const).map((k) => (
-            <button key={k} className={openPanel === k ? 'on' : ''} onClick={() => setOpenPanel(openPanel === k ? null : k)}>
-              {k === 'left' ? 'Scenario' : 'Results'}
-            </button>
-          ))}
-        </div>
-      )}
+      <TopNav onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
+      <AnalyticsSidebar />
       <main className="center">
-        <>
-            <ErrorBoundary label="3D view">
-              {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
-            </ErrorBoundary>
-            <Toolbar3D />
-            {notice && (
-              <div className="banner" role="status">
-                <span>{notice}</span>
-                <button aria-label="Dismiss" onClick={() => useApp.getState().setNotice(null)}>×</button>
-              </div>
+        <ErrorBoundary label="3D view">
+          {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
+        </ErrorBoundary>
+        {notice && (
+          <div className="banner" role="status">
+            <span>{notice}</span>
+            <button aria-label="Dismiss" onClick={() => useApp.getState().setNotice(null)}>×</button>
+          </div>
+        )}
+        {loading && !activeRunKey && (
+          <div className="loadingcover">
+            <span className="spinner" /> {loading}
+          </div>
+        )}
+        <div className="rightcol">
+          <LegendCard />
+          <div className="rail">
+            <button
+              type="button"
+              className="railbtn"
+              aria-label="Layers"
+              title="Layers"
+              aria-expanded={card === 'layers'}
+              onClick={() => useApp.getState().setCard(card === 'layers' ? null : 'layers')}
+            >
+              <Layers3 size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            {card === 'layers' && (
+              <FloatingCard id="layers" title="Layers" className="layerscard">
+                <LayersCard />
+              </FloatingCard>
             )}
-            {loading && !activeRunKey && (
-              <div className="loadingcover">
-                <span className="spinner" /> {loading}
-              </div>
-            )}
-            <AgentLegend />
-            <AgentReadout />
-            <NewBuildingCard />
-            <TourCaption />
-            <ReplaySummary />
-          </>
+          </div>
+        </div>
+        {card === 'scenario' && (
+          <FloatingCard id="scenario" title="Fire and scenario" className="scenariocard">
+            <ScenarioPanel />
+          </FloatingCard>
+        )}
+        <AgentReadout />
+        <NewBuildingCard />
+        <TourCaption />
+        <ReplaySummary />
       </main>
-      <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>
-        <Suspense fallback={<div className="pad dim">Loading…</div>}>
-          <ErrorBoundary label="Results">
-            <ResultsPanel />
-          </ErrorBoundary>
-        </Suspense>
-      </aside>
-      <footer className="bottom"><Scrubber /></footer>
+      <footer className="dock">
+        <FloorStrip />
+        <Timeline />
+        <Credits />
+      </footer>
       <ClockDriver />
       <AboutOverlay />
       <ShareCard />
@@ -430,8 +452,7 @@ export default function App() {
           <PrintReport />
         </Suspense>
       )}
-      <Credits />
-
+      <ShellStatus />
     </div>
   )
 }

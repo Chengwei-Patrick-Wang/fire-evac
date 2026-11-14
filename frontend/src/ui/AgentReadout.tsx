@@ -19,13 +19,13 @@ export default function AgentReadout() {
   }, [follow])
   if (follow === null) return null
   const profile = lr ? PROFILE_NAMES[lr.index.profile[follow]] ?? 'typical' : ''
-  const color = vis < 3 ? '#f87171' : vis < 10 ? '#fbbf24' : undefined
+  const tone = vis < 3 ? 'worse' : vis < 10 ? 'caution' : undefined
   return (
     <div className="agentreadout">
       <div>
         <b>Person #{follow}</b> · {profile} · {status}
       </div>
-      <div style={{ color }}>Visibility {vis >= 30 ? '30+' : vis.toFixed(1)} m</div>
+      <div className={tone}>Visibility {vis >= 30 ? '30+' : vis.toFixed(1)} m</div>
       <div>
         Walking {speed.toFixed(2)} m/s (wants {desired.toFixed(2)})
       </div>

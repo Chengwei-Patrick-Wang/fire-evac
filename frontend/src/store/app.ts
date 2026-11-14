@@ -28,6 +28,11 @@ export interface LoadedRun {
 
 export type View = 'replay' | 'tracer'
 export type ResultsTab = 'results' | 'risk' | 'report' | 'cred'
+/** The floating card open over the viewer, if any (one at a time). */
+export type Card = 'scenario' | 'layers' | null
+
+/** Phones (900 px and under) start with the analytics sidebar collapsed, so it doesn't cover the 3D view. */
+const phoneAtStart = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 900px)').matches
 
 export interface Layers {
   rooms: boolean
@@ -95,6 +100,14 @@ interface AppState {
   setAbout: (b: boolean) => void
   resultsTab: ResultsTab
   setResultsTab: (t: ResultsTab) => void
+  /** The top navigation (menus and toolbar) is a drawer: collapsed by default. */
+  navOpen: boolean
+  setNavOpen: (b: boolean) => void
+  /** The analytics sidebar: open by default, collapsed on phones. */
+  sidebarOpen: boolean
+  setSidebarOpen: (b: boolean) => void
+  card: Card
+  setCard: (c: Card) => void
   activeSpot: string | null
   fitView: number
   autoRotate: boolean
@@ -169,6 +182,12 @@ export const useApp = create<AppState>((set) => ({
   setAbout: (about) => set({ about }),
   resultsTab: 'results',
   setResultsTab: (resultsTab) => set({ resultsTab }),
+  navOpen: false,
+  setNavOpen: (navOpen) => set({ navOpen }),
+  sidebarOpen: !phoneAtStart(),
+  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  card: null,
+  setCard: (card) => set({ card }),
   activeSpot: null,
   fitView: 0,
   autoRotate: false,

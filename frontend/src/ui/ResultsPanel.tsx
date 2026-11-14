@@ -1,17 +1,13 @@
 import { useApp } from '../store/app'
 import type { ResultsTab } from '../store/app'
-import EvacCurve from '../dashboard/EvacCurve'
-import ExitBars from '../dashboard/ExitBars'
-import RunStats from '../dashboard/RunStats'
-import AccessStats from '../dashboard/AccessStats'
-
+import Overview from '../dashboard/Overview'
 import ReportCard from '../dashboard/ReportCard'
 import Credibility from '../dashboard/Credibility'
 import WeakSpots from '../dashboard/WeakSpots'
 
 const TABS: { id: ResultsTab; label: string }[] = [
-  { id: 'results', label: 'Results' },
-  { id: 'risk', label: 'Risk map' },
+  { id: 'results', label: 'Overview' },
+  { id: 'risk', label: 'Risk' },
   { id: 'report', label: 'Report' },
   { id: 'cred', label: 'Credibility' },
 ]
@@ -50,17 +46,7 @@ export default function ResultsPanel() {
         ))}
       </div>
       <div role="tabpanel" id="results-panel" aria-labelledby={`tab-${tab}`}>
-      {tab === 'results' && (
-        <>
-          <h4>Evacuation curve</h4>
-          <EvacCurve />
-          <h4>Exit use</h4>
-          <ExitBars />
-          <h4>Run</h4>
-          <RunStats />
-          <AccessStats />
-        </>
-      )}
+      {tab === 'results' && <Overview />}
       {tab === 'risk' && <WeakSpots />}
       {tab === 'report' && <ReportCard />}
       {tab === 'cred' && <Credibility />}
