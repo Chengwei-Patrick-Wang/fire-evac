@@ -22,7 +22,7 @@ Queues mark where the building runs short of capacity, not how people behave.
 
 - **Stair doors propped open:** +447 person-seconds in smoke per fire; +0.5 people per fire at an illustrative smoke dose of 1; 90% out 0.1 s sooner on average (slower in 4 of 36 fires); trapped +0.0 per fire.
 - **Exit Main entrance blocked:** +3,022 person-seconds in smoke per fire; +9.2 people per fire at an illustrative smoke dose of 1; 90% out 58.3 s later on average (slower in 34 of 36 fires); trapped -1.3 per fire.
-- **Sprinklers on:** -86 person-seconds in smoke per fire; -2.4 people per fire at an illustrative smoke dose of 1; 90% out 9.6 s sooner on average (slower in 0 of 36 fires); trapped -1.3 per fire.
+- **Sprinklers on:** 1.3 fewer people trapped per fire; 90% out 9.6 s sooner on average (slower in 0 of 36 fires); smoke time is not compared: people who become trapped drop out of the frames.
 
 ---
 
