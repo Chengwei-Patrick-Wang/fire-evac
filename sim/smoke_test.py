@@ -668,6 +668,10 @@ def check_keepout(building, scenario, slow=False):
     # Arrival clearance changes congestion and seeded trajectories. Compare
     # the intervention with its paired baseline rather than pinning one old
     # trajectory's absolute casualty count (formerly <= 15 at full size).
+    if slow:
+        nearby = [e for e in protected["events"] if e["type"] == "trapped"
+                  and e["floor"] == "F1" and Point(e["x"], e["y"]).distance(point) < 3.2]
+        print(f"full lobby traps near keep-out: {nearby}")
     burning["fireKeepout"] = 0
     unprotected = run(building, burning, FireModel(building, burning))
     assert protected["metrics"]["trapped"] <= unprotected["metrics"]["trapped"] / 2
@@ -784,7 +788,7 @@ def check_office_keepout():
     print(f"office keep-out OK: {radii}")
 
 
-def check_stair_fire(building, fast):
+def check_stair_fire(building, fast, open_stair=False):
     from sim.floors import stair_doors
     floor = next(f for f in building["floors"] if f["id"] == "F1")
     stair = next(s for s in floor["stairs"] if s["room"] == "SA1")
@@ -811,7 +815,88 @@ def check_stair_fire(building, fast):
         rows = [a for a in frame["a"] if a[3] == fid and a[4] in (0, 1)]
         assert all(cut.covers(Point(a[1], a[2])) for a in rows)
     assert result["metrics"]["remaining"] == result["metrics"]["inStairs"] == 0
+    if open_stair:
+        assert not blocks
+        stair_ids = {s["id"] for f in building["floors"] for s in f["stairs"]
+                     if s["group"] == "SA"}
+        assert all(e["reason"] == "stair SA closed" for e in result["events"]
+                   if e["type"] == "reroute" and e["from"] in stair_ids and e["t"] >= 75)
+        clear = run(building, scenario, NoFire(building, scenario))
+        assert not any(e["type"] == "door_blocked" or
+                       (e["type"] == "reroute" and "closed" in e["reason"])
+                       for e in clear["events"])
+        assert clear["metrics"]["evacuated"] == clear["metrics"]["agents"]
     print(f"burning stair OK: {len(stairs)} SA transfers before 75 s; none after")
+
+
+
+def check_open_stair(building, fast):
+    opened = deepcopy(building)
+    for floor in opened["floors"]:
+        floor["doors"] = [d for d in floor["doors"] if d["id"] not in {"DSA1", "DSA2"}]
+    check_stair_fire(opened, fast, open_stair=True)
+
+
+def check_keepout_slot():
+    from sim.run import keepout_cut
+    from sim.scale import FIRES
+    poly = Polygon([(0, 0), (10, 0), (10, 8), (0, 8)])
+    floor = {"id": "slot", "rooms": [{"id": "r", "polygon": list(poly.exterior.coords)}],
+             "stairs": [], "exits": []}
+    assert keepout_cut(poly, floor, "r", 5, 2.67, 2.5)[1] == 1.5
+    assert keepout_cut(poly, floor, "r", 5, 3.0, 2.5)[1] == 2.5
+    building = load_building()
+    floor = building["floors"][0]
+    walk = floor_walkable(floor)
+    lobby = next(r for r in floor["rooms"] if r["id"] == "L1")
+    point = Polygon(lobby["polygon"]).representative_point()
+    for rid, x, y, expected in (("L1", point.x, point.y, 2.5),
+                                ("R101", 8, 3, 2.5), ("C1", 20, 8, 1.0)):
+        assert keepout_cut(walk, floor, rid, x, y, 2.5)[1] == expected
+    for name, fires in FIRES.items():
+        path = ROOT / f"data/buildings/{name}.json"
+        if not path.exists():
+            print(f"keep-out radii: {name} missing; skipped")
+            continue
+        building = json.loads(path.read_text())
+        radii = {}
+        for label, (fid, rid, _) in fires.items():
+            floor = next(f for f in building["floors"] if f["id"] == fid)
+            room = next(r for r in floor["rooms"] if r["id"] == rid)
+            point = Polygon(room["polygon"]).representative_point()
+            radii[label] = keepout_cut(floor_walkable(floor), floor, rid, point.x, point.y, 2.5)[1]
+        print(f"{name} keep-out radii: {radii}")
+
+
+def check_clinic_scale():
+    from collections import Counter
+    from unittest.mock import patch
+    from sim.scale import CLINIC_FIRES, fire_scenarios, run_scale
+    path = ROOT / "data/buildings/clinic.json"
+    if not path.exists():
+        print("clinic scale: building missing; skipped")
+        return
+    building = json.loads(path.read_text())
+    base = json.loads(path.with_name("clinic.scenario.json").read_text())
+    def checked_run(building, scenario):
+        result = run(building, scenario)
+        events = result["events"]
+        stuck = [e for e in events if e["type"] == "stuck"]
+        assert all(n == 1 for n in Counter(e["idx"] for e in stuck).values()), stuck
+        exits = {e["idx"]: e["t"] for e in events if e["type"] == "exit"}
+        assert all(exits.get(e["idx"], -1) > e["t"] for e in stuck), stuck
+        stairs = [e for e in events if e["type"] == "stair"]
+        if scenario["fire"]["room"] == "R1AS1":
+            assert not any(e["group"] == "S2" for e in stairs)
+        if scenario["fire"]["room"] == "R2B17":
+            assert {a["idx"] for a in result["agents"] if a["floor"] == "F2"} <= {e["idx"] for e in stairs}
+        return result
+    with patch("sim.scale.run", side_effect=checked_run):
+        rows = run_scale(building, fire_scenarios(building, base, CLINIC_FIRES))
+    for row in rows:
+        assert row["remaining"] == row["inStairs"] == 0, row
+        assert row["trapped"] <= 3 and row["mb"] <= 8, row
+        print(f"clinic scale OK: {row}")
 
 
 def check_blocked_arrival(slow=False):
@@ -1164,6 +1249,8 @@ def main(argv=None) -> int:
     timed("fast cues", check_cues, building, fast)
     timed("office keep-out", check_office_keepout)
     timed("burning stair", check_stair_fire, building, fast)
+    timed("open stair", check_open_stair, building, fast)
+    timed("keep-out slot", check_keepout_slot)
     timed("blocked arrival", check_blocked_arrival)
     timed("fast keep-out", check_keepout, building, fast)
     timed("fast fire", check_fire, building, fast, core)
@@ -1179,6 +1266,7 @@ def main(argv=None) -> int:
         timed("full calibration", check_calibration, slow=True)
         timed("office blocked arrival", check_blocked_arrival, slow=True)
         timed("office scale", check_scale)
+        timed("clinic scale", check_clinic_scale)
         core = timed("full core", check_core, building, scenario)
         timed("full cues", check_cues, building, scenario, slow=True)
         timed("full keep-out", check_keepout, building, scenario, slow=True)

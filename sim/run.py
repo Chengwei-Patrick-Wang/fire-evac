@@ -118,8 +118,10 @@ def keepout_cut(walk, floor, room, x, y, radius):
     attached = [z for z in zones if not z.is_empty and z.distance(walk) <= 0.1]
     # Never enlarge an explicitly smaller user-supplied distance on fallback.
     radii = dict.fromkeys([radius] + [r for r in (1.5, 1.0) if r < radius])
+    fallback = None
     for candidate in radii:
-        cut = walk.difference(point.buffer(candidate).intersection(room_poly))
+        removed = point.buffer(candidate).intersection(room_poly).intersection(walk)
+        cut = walk.difference(removed)
         pieces = [cut] if cut.geom_type == "Polygon" else list(cut.geoms)
         pieces = sorted((p for p in pieces if p.geom_type == "Polygon" and not p.is_empty),
                         key=lambda p: p.area, reverse=True)
@@ -132,7 +134,16 @@ def keepout_cut(walk, floor, room, x, y, radius):
             continue
         if body_pieces(retained) > original_pieces:
             continue
+        if fallback is None:
+            fallback = (retained, candidate)
+        # JuPedSim can route into a positive gap narrower than a body.
+        # Prefer a smaller disc, but retain the original cut if all have slots.
+        gap = removed.distance(walk.boundary)
+        if 0.01 < gap < 0.3:
+            continue
         return retained, candidate
+    if fallback is not None:
+        return fallback
     _warn(f"{floor['id']}/{origin['id']}: no safe fire keep-out cut; keeping walkable area")
     return walk, 0.0
 
@@ -434,12 +445,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     walkable[floor["id"]], floor, ignition.get("room"),
                     ignition["x"], ignition["y"], radius)
     burning_doors = set()
+    burning_groups = set()
+    closed_groups = set()
     for floor in building["floors"]:
         if floor["id"] == ignition.get("floor"):
             origin = fire_room(floor, ignition.get("room"), ignition["x"], ignition["y"])
             for stair in floor["stairs"]:
                 if origin and stair["room"] == origin["id"]:
-                    burning_doors.update(stair_doors(floor, stair))
+                    doors = stair_doors(floor, stair)
+                    burning_doors.update(doors)
+                    if not doors:
+                        burning_groups.add(stair["group"])
     net = StairNet(building, walkable=walkable, blocked=blocked)
     agents = place_occupants(building, scenario, rng, walkable)
     cue_rng = np.random.default_rng([seed, 3])
@@ -518,6 +534,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             return set()
         if st["kind"] == "exit":
             return {st["door"]} & blocked
+        if st["group"] in closed_groups:
+            return {f"stair {st['group']} closed"}
         closed = set()
         for fid in (fs.id, st["to"]):
             floor = floors[by_id[fid].index]
@@ -644,7 +662,10 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         if current is not None and st["id"] != current:
             reason = decision["reason"]
             if trigger == "blocked":
-                reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
+                if target[i].get("group") in closed_groups:
+                    reason = f"stair {target[i]['group']} closed"
+                else:
+                    reason = "door " + ", ".join(sorted(blocking_doors(fs, target[i]))) + " blocked"
             events.append({"t": t, "type": "reroute", "idx": i, "floor": fs.id,
                            "from": current, "to": st["id"], "reason": reason})
         return st
@@ -698,6 +719,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             fire_blocks = set(fire.blocked_doors())
             if fire.hrr(t) > 0:
                 fire_blocks.update(burning_doors)
+                closed_groups.update(burning_groups)
             new_blocks = fire_blocks - blocked
             for door in sorted(new_blocks):
                 if door in door_floors:
