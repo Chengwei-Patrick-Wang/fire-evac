@@ -174,6 +174,12 @@ export interface Calibration {
   title: string
   source: string
   points: { label: string; width: number; simulated: number; references: { name: string; value: number }[] }[]
+  limits?: string[]
+  speedDensity?: {
+    title: string
+    source: string
+    points: { label: string; density?: number; simulated: number; references: { name: string; value: number }[] }[]
+  }
 }
 export async function loadCalibration(): Promise<{ data: Calibration; example: boolean } | null> {
   const idx = await loadIndex()

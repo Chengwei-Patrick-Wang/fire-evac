@@ -3,6 +3,7 @@ import { useDialogFocus } from './a11y'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
 import { useTour } from '../tour/tour'
+import { creditParts } from '../model/buildingIndex'
 import { phoneReachable, shareUrl } from '../model/link'
 
 
@@ -28,6 +29,10 @@ export function shouldAutoOpenAbout(): boolean {
 export default function AboutOverlay() {
   const about = useApp((s) => s.about)
   const credits = useApp((s) => s.building?.credits)
+  const summaries = useApp((s) => s.summaries)
+  const pack = useApp((s) => s.headlines)
+  const batch = useApp((s) => s.batch)
+  const bname = useApp((s) => s.building?.name)
 
   const cardRef = useRef<HTMLDivElement>(null)
   useDialogFocus(cardRef, about)
@@ -50,6 +55,21 @@ export default function AboutOverlay() {
 
   if (!about) return null
   const url = phoneReachable() ? shareUrl() : null
+  const sc = pack?.scenario
+  const spot0 = pack?.weakSpots?.[0]
+  const real = batch && (batch as { placeholder?: boolean }).placeholder !== true && batch.runs?.length > 0 ? batch : null
+  const numbers = pack
+    ? [
+        pack.headline,
+        spot0 ? `Top weak spot: ${spot0.label ?? spot0.id}` : null,
+        sc && typeof sc.runs === 'number' && typeof sc.rooms === 'number' && Array.isArray(sc.seeds) && typeof sc.occupants === 'number'
+          ? `${sc.runs} fires in ${sc.rooms} rooms over ${sc.seeds.length} seeds, ${sc.occupants} occupants`
+          : null,
+        pack.note,
+      ].filter((x): x is string => !!x)
+    : real
+      ? [`${real.runs.length} fires simulated.${real.top?.[0] ? ` Top weak spot: ${real.top[0].why}` : ''}`]
+      : []
   const extra = credits && !/synthetic/i.test(credits) ? credits : null
   return (
     <div className="about-backdrop" role="dialog" aria-modal="true" aria-label="About" onClick={close}>
@@ -66,9 +86,31 @@ export default function AboutOverlay() {
           Not a compliance tool. The fire and smoke model is illustrative (a smoke front, not CFD). Long waits point to gaps in the
           building, not to people.
         </p>
+        {numbers.length > 0 && (
+          <>
+            <h3>{pack?.buildingName ?? bname ?? 'Building'} in numbers</h3>
+            {numbers.map((n, i) => <p key={i} className="aboutnum">{n}</p>)}
+            <p className="dim">Illustrative model, not a compliance tool.</p>
+          </>
+        )}
         <h3>Credits</h3>
         <ul>
-          <li>IFC models: NIBS Common BIM Files, via buildingSMART</li>
+          {Object.values(summaries).length === 0 && <li>IFC models: NIBS Common BIM Files, via buildingSMART</li>}
+          {Object.values(summaries).map((b) => {
+            const cp = creditParts(b.credits, b.shortCredit)
+            return (
+              <li key={b.id}>
+                {b.name}: {cp.short}
+                {cp.license ? `, ${cp.license}, modified` : ''}
+                {cp.source && (
+                  <>
+                    {' · '}
+                    <a href={cp.source} target="_blank" rel="noreferrer">source</a>
+                  </>
+                )}
+              </li>
+            )
+          })}
           <li>Example building: synthetic, made by the team</li>
           {extra && <li>{extra}</li>}
           <li>Libraries: JuPedSim, three.js, React Three Fiber, Recharts</li>

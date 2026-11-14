@@ -1,3 +1,4 @@
+import type { BuildingSummary } from '../model/buildingIndex'
 import { create } from 'zustand'
 import type { Batch, Building, BuildingInfo, DoorState, Run, Scenario, Vec2 } from '../data/types'
 import type { Mode } from '../data/loader'
@@ -7,6 +8,7 @@ import { useClock } from './clock'
 import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
 import { spotPosition } from '../model/spots'
+import type { HeadlinePack } from '../model/headlines'
 import { findPrecomputedVariant, makeVariant } from '../model/whatif'
 
 /** Room labels start on only for small buildings (up to 40 rooms over all floors). */
@@ -44,6 +46,7 @@ export interface Focus {
 }
 
 interface AppState {
+  summaries: Record<string, BuildingSummary>
   mode: Mode
   view: View
   loading: string | null
@@ -55,6 +58,7 @@ interface AppState {
   compareKeys: string[]
   notice: string | null
   batch: Batch | null
+  headlines: HeadlinePack | null
   explode: number
   reveal: number
   visibleFloors: string[] | null
@@ -117,6 +121,7 @@ export const useApp = create<AppState>((set) => ({
   view: 'replay',
   loading: null,
   buildings: [],
+  summaries: {},
   building: null,
   runs: {},
   runOrder: [],
@@ -124,6 +129,7 @@ export const useApp = create<AppState>((set) => ({
   compareKeys: [],
   notice: null,
   batch: null,
+  headlines: null,
   explode: 0,
   reveal: 0,
   visibleFloors: null,
@@ -292,7 +298,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runError: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
