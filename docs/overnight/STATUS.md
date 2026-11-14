@@ -1,5 +1,21 @@
 # Overnight status
 
+## Sat 12:05: A5 done; all three buildings precomputed
+
+**Merged:** ws-a, **A5 done**. The static demo now covers all three buildings:
+- the example: 2 what-if pairs;
+- the office: 98 rooms x 3 seeds, what-ifs and fixes on the 8 worst rooms, 3 pairs;
+- the clinic: 25 rooms x 3 seeds, 1 pair.
+
+Each building has a report card (template text for now) and a D18 headline pack. `frontend/public/demo` is 13.8 MB (1.5 MB gzipped). The Netlify config and `tools/deploy_demo.py` are ready, but nothing is deployed: that waits on the lead.
+
+**Needs to know:**
+- **E (Donovan):**
+  - `npm run qa` shows 2 axe color-contrast problems from the `.whatif-headline .dim` opacity. They appear now because the demo has real what-ifs.
+  - Static mode ignores the Sprinklers checkbox.
+- **D (Aidan):** office room R203b, a 1.16 m2 sliver, fails every seed in the smoke grid.
+- **Lead:** the Netlify site and deploy, a curl and phone check, the freeze reruns, and live Gemini report cards.
+
 ## Sat 11:50: B15 merged; example headline pack in the demo
 
 **Merged:**
