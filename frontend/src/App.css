@@ -140,3 +140,8 @@ select { background: var(--line); color: inherit; border: 1px solid var(--line-s
 .newbuilding .x { position: absolute; top: 4px; right: 4px; padding: 0 var(--s2); }
 .newbuilding button.run { background: #f97316; color: var(--bg); font-weight: 600; }
 .newbuilding .err { color: var(--danger); }
+
+.results .stats.access td { padding-right: 6px; }
+.results .stats.access thead td { font-size: 11px; }
+.results .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.results .assist p { margin: 4px 0; font-size: 12px; }
