@@ -142,6 +142,13 @@ a { color: var(--primary-text); }
 .banner button { padding: 0 var(--s2); }
 .nav-open .banner { top: calc(var(--nav-h) + 36px); }
 .loadingcover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: var(--s2); color: var(--muted); pointer-events: none; }
+/* The fire alarm: a red bell and the word "Alarm" at the viewer's bottom right (under the rail and the cards, clear of the legend), from the alarm's time on. The bell blinks at 1 Hz. */
+.alarmbadge {
+  position: absolute; right: 16px; bottom: 12px; z-index: 2; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 8px; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--severe); border-radius: 999px; box-shadow: var(--shadow); color: var(--text); font-size: var(--fs-md); font-weight: 700; line-height: 20px;
+}
+.alarmbadge svg { flex: none; color: var(--severe); animation: alarm-blink 1s ease-in-out infinite; }
+@keyframes alarm-blink { 50% { opacity: 0.15; } }
 /* The column is as tall as the viewer, so the layers card (inside the rail) can use all the room under the legend; only its children take clicks. */
 .rightcol { position: absolute; top: 16px; right: 16px; bottom: 12px; z-index: 3; display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2); pointer-events: none; }
 .rightcol > *, .rail > * { pointer-events: auto; }
@@ -419,6 +426,10 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
   .nav-open .legendcard { top: calc(var(--nav-h) + 8px); }
   .railbtn { position: absolute; right: 8px; bottom: 8px; z-index: 3; }
   .railbtn + .railbtn { bottom: 56px; }
+  /* The two rail buttons take the bottom right here, so the alarm sits left of them, lifted above the pane captions in the compare view. */
+  .alarmbadge { right: 56px; bottom: 14px; gap: 4px; padding: 2px 8px 2px 6px; font-size: var(--fs-sm); line-height: 16px; }
+  .alarmbadge.split { bottom: 52px; }
+  .alarmbadge svg { width: 16px; height: 16px; }
   /* The building fills the screen's width, so a floor's pill sits just inside its corner rather than outside it, where the screen edge would cut it. */
   .floortag { transform: translate(-4px, 6px); padding: 1px 8px; font-size: var(--fs-xs); }
   .card, .scenariocard, .layerscard, .visibilitycard, .app:not(.sb-closed) .scenariocard {
@@ -433,6 +444,7 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
 /* Accessibility */
 :root[data-motion="reduce"] .spinner { animation-duration: 3s; }
 :root[data-motion="reduce"] .lc-thumb { transition: none; }
+:root[data-motion="reduce"] .alarmbadge svg { animation: none; }
 :root[data-contrast="high"] button, :root[data-contrast="high"] select, :root[data-contrast="high"] input { border: 2px solid #fff; }
 :root[data-contrast="high"] button:focus-visible, :root[data-contrast="high"] select:focus-visible, :root[data-contrast="high"] input:focus-visible, :root[data-contrast="high"] .file:focus-within {
   outline: 3px solid #ffd400; outline-offset: 2px;
@@ -450,6 +462,7 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
 :root[data-contrast="high"] .sw.dot { box-shadow: 0 0 0 1px #fff; }
 :root[data-contrast="high"] .sw.dot.ringed { box-shadow: inset 0 0 0 1.5px #000; }
 :root[data-contrast="high"] .floortag { background: #000; border: 2px solid #fff; color: #fff; box-shadow: none; }
+:root[data-contrast="high"] .alarmbadge { background: #000; border: 2px solid #fff; color: #fff; box-shadow: none; }
 :root[data-contrast="high"] .floortag.on { background: #0040c0; border-color: #ffd400; }
 :root[data-contrast="high"] .fs-item.on { border-color: #ffd400; color: #ffd400; }
 :root[data-contrast="high"] .about-card { background: #000; border: 2px solid #fff; }

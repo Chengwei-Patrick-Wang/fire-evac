@@ -416,6 +416,200 @@ try {
     })
     await page.waitForTimeout(500)
   })
+  // The fire alarm: a blinking red bell and "Alarm" at the viewer's bottom right from the alarm's time on. Hidden before it and again after a scrub back,
+  // announced once per run, steady under reduced motion, readable in high contrast, beside the legend and rail on a desktop and on a phone, one badge in the compare view.
+  await step('alarm', async () => {
+    const bad = (m) => problems.push(`alarm: ${m}`)
+    const baseUrl = server.resolvedUrls.local[0]
+    const mm = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
+    // The demo runs of a building were made with its batch's base scenario: its alarmTime is what the page should show.
+    const alarm = await page.evaluate(() => window.__app.getState().batch?.base?.alarmTime)
+    if (typeof alarm !== 'number') return void bad('the loaded building has no batch base alarmTime to compare with')
+    const at = (pg, t) =>
+      pg.evaluate((t) => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(t)
+      }, t)
+    const settle = (pg) => pg.waitForTimeout(300)
+    const boxes = (pg) =>
+      pg.evaluate(() => {
+        const out = {}
+        for (const [k, sel] of Object.entries({ badge: '.alarmbadge', main: 'main.center', legend: 'section.legendcard', rail: '.railbtn', dock: 'footer.dock', caps: '.pane-caption' }))
+          out[k] = [...document.querySelectorAll(sel)].filter((el) => el.getClientRects().length).map((el) => {
+            const r = el.getBoundingClientRect()
+            return { l: r.left, t: r.top, r: r.right, b: r.bottom }
+          })
+        out.win = { w: window.innerWidth, scroll: document.documentElement.scrollWidth }
+        return out
+      })
+    const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+    // The badge sits at the viewer's bottom right, above the dock, over none of the legend, the rail buttons or the compare view's captions.
+    const placed = async (pg, tag, phone) => {
+      const L = await boxes(pg)
+      const b = L.badge[0]
+      const m = L.main[0]
+      if (L.badge.length !== 1) return void bad(`${tag}: ${L.badge.length} badges, want 1`)
+      if (b.l < m.l - 0.5 || b.t < m.t - 0.5 || b.r > m.r + 0.5 || b.b > m.b + 0.5) bad(`${tag}: the badge is outside the viewer`)
+      if (m.r - b.r > (phone ? 64 : 24) || m.b - b.b > (phone ? 60 : 24)) bad(`${tag}: the badge is not at the viewer's bottom right (${Math.round(m.r - b.r)} px from the right, ${Math.round(m.b - b.b)} px from the bottom)`)
+      if (L.dock[0] && b.b > L.dock[0].t + 0.5) bad(`${tag}: the badge is not above the dock`)
+      for (const name of ['legend', 'rail', 'caps']) for (const o of L[name]) if (hit(b, o)) bad(`${tag}: the badge overlaps the ${name}`)
+      if (L.win.scroll > L.win.w + 1) bad(`${tag}: the page overflows sideways`)
+    }
+    const opacities = (pg) =>
+      pg.evaluate(async () => {
+        const el = document.querySelector('.alarmbadge svg')
+        const v = []
+        for (let i = 0; i < 24; i++) {
+          v.push(+getComputedStyle(el).opacity)
+          await new Promise((r) => setTimeout(r, 60))
+        }
+        return v
+      })
+    const badge = page.locator('.alarmbadge')
+    const status = page.locator('#alarm-status')
+
+    // Before the alarm: no badge, an empty status line. The status line is counted whenever it is given the announcement.
+    await page.evaluate(() => {
+      window.__alarmSaid = 0
+      const s = document.getElementById('alarm-status')
+      if (s) new MutationObserver(() => void (s.textContent.trim() && window.__alarmSaid++)).observe(s, { childList: true, characterData: true, subtree: true })
+    })
+    await page.evaluate(() => window.__app.setState({ split: false, card: null }))
+    await at(page, 0)
+    await settle(page)
+    if (await badge.count()) bad('the badge shows at t = 0')
+    if ((await status.textContent())?.trim()) bad('the status line is not empty at t = 0')
+    if ((await status.getAttribute('role')) !== 'status') bad('#alarm-status lacks role=status')
+    await at(page, alarm - 1)
+    await settle(page)
+    if (await badge.count()) bad(`the badge shows 1 s before the alarm (${alarm} s)`)
+
+    // At the alarm: the badge with its word, the announcement, the timeline's mark at the same time.
+    await at(page, alarm + 1)
+    await badge.waitFor({ timeout: 5000 }).catch(() => bad(`the badge does not show 1 s after the alarm (${alarm} s)`))
+    if ((await badge.innerText().catch(() => '')).trim() !== 'Alarm') bad(`the badge reads "${(await badge.innerText().catch(() => '')).trim()}", want "Alarm"`)
+    if ((await badge.locator('svg').count()) !== 1) bad('the badge has no bell icon')
+    await page
+      .waitForFunction(() => document.getElementById('alarm-status')?.textContent.trim() === 'Fire alarm sounding', null, { timeout: 3000 })
+      .catch(async () => bad(`the status line reads "${(await status.textContent())?.trim()}", want "Fire alarm sounding"`))
+    const mark = await page.locator('.timeline .mark[aria-label^="Alarm "]').first().getAttribute('aria-label')
+    if (mark !== `Alarm ${mm(alarm)}`) bad(`the timeline's alarm mark reads "${mark}", want "Alarm ${mm(alarm)}"`)
+    await placed(page, 'desktop', false)
+    await page.waitForTimeout(500)
+    await shot('alarm')
+
+    // The bell blinks about once a second and is steady under reduced motion.
+    const css = await page.locator('.alarmbadge svg').evaluate((el) => {
+      const c = getComputedStyle(el)
+      return { name: c.animationName, dur: c.animationDuration, count: c.animationIterationCount }
+    })
+    if (css.name !== 'alarm-blink' || css.dur !== '1s' || css.count !== 'infinite') bad(`the bell's animation is ${JSON.stringify(css)}, want alarm-blink, 1s, infinite`)
+    const blink = await opacities(page)
+    if (Math.min(...blink) > 0.5 || Math.max(...blink) < 0.9) bad(`the bell does not blink: opacity ranged ${Math.min(...blink).toFixed(2)} to ${Math.max(...blink).toFixed(2)} over 1.4 s`)
+    await page.evaluate(() => (document.documentElement.dataset.motion = 'reduce'))
+    const still = await opacities(page)
+    const stillName = await page.locator('.alarmbadge svg').evaluate((el) => getComputedStyle(el).animationName)
+    if (stillName !== 'none' || Math.max(...still) - Math.min(...still) > 0.01) bad(`under reduced motion the bell still animates (animation ${stillName}, opacity ${Math.min(...still).toFixed(2)} to ${Math.max(...still).toFixed(2)})`)
+    await page.evaluate(() => delete document.documentElement.dataset.motion)
+
+    // High contrast: black pill, white border and word, a light red bell.
+    await page.evaluate(() => (document.documentElement.dataset.contrast = 'high'))
+    const hc = await page.locator('.alarmbadge').evaluate((el) => {
+      const c = getComputedStyle(el)
+      return { bg: c.backgroundColor, border: c.borderTopColor, color: c.color, bell: getComputedStyle(el.querySelector('svg')).color }
+    })
+    if (hc.bg !== 'rgb(0, 0, 0)' || hc.border !== 'rgb(255, 255, 255)' || hc.color !== 'rgb(255, 255, 255)' || hc.bell !== 'rgb(255, 107, 107)') bad(`high contrast: the badge is ${JSON.stringify(hc)}, want a black pill with a white border and word and a rgb(255, 107, 107) bell`)
+    await placed(page, 'high contrast', false)
+    await shot('alarm-hc')
+    await page.evaluate(() => delete document.documentElement.dataset.contrast)
+    await axeOn(page, 'alarm', 'main.center')
+
+    // Scrubbing back hides it again, and coming back to it is not announced a second time.
+    await at(page, 0)
+    await settle(page)
+    if (await badge.count()) bad('the badge is still there after scrubbing back to t = 0')
+    await at(page, alarm + 5)
+    await settle(page)
+    if (!(await badge.count())) bad('the badge did not come back after scrubbing forward again')
+    const said = await page.evaluate(() => window.__alarmSaid)
+    if (said !== 1) bad(`the alarm was announced ${said} times in one run, want 1`)
+
+    // A live run carries its scenario: the "Alarm sounds after" setting wins over what the run's people did.
+    await page.evaluate(() => {
+      const a = window.__app.getState()
+      const k = a.activeRunKey
+      window.__alarmRun = a.runs[k]
+      const scenario = { version: 'scenario/v0', seed: 1, occupants: { total: 1, mix: {} }, fire: { type: 'kitchen' }, alarmTime: 50 }
+      window.__app.setState({ runs: { ...a.runs, [k]: { ...a.runs[k], scenario } } })
+    })
+    await at(page, 40)
+    await settle(page)
+    if (await badge.count()) bad('with a scenario alarmTime of 50 the badge shows at 40 s')
+    await at(page, 51)
+    await settle(page)
+    if (!(await badge.count())) bad('with a scenario alarmTime of 50 the badge is missing at 51 s')
+    const live = await page.locator('.timeline .mark[aria-label^="Alarm "]').first().getAttribute('aria-label')
+    if (live !== 'Alarm 0:50') bad(`with a scenario alarmTime of 50 the timeline's alarm mark reads "${live}", want "Alarm 0:50"`)
+    await page.evaluate(() => {
+      const a = window.__app.getState()
+      window.__app.setState({ runs: { ...a.runs, [a.activeRunKey]: window.__alarmRun } })
+    })
+    await at(page, 60)
+
+    // The compare view: one badge for the pair, over neither pane's caption.
+    const pf = await ctx.newPage()
+    watchPage(pf, 'alarm-split')
+    try {
+      await pf.goto(`${baseUrl}?qa`)
+      await pf.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await pf.evaluate(() => window.__app.getState().showBrainPair())
+      await pf.waitForFunction(() => window.__app.getState().split && window.__app.getState().pairBusy === null, null, { timeout: 60000 })
+      await at(pf, alarm + 1)
+      await settle(pf)
+      if ((await pf.locator('main.center canvas').count()) !== 2) bad('split: the compare view does not draw two canvases')
+      await placed(pf, 'split', false)
+      await at(pf, alarm - 1)
+      await settle(pf)
+      if (await pf.locator('.alarmbadge').count()) bad('split: the badge shows before the alarm')
+    } finally {
+      await pf.close()
+    }
+
+    // A phone: smaller, left of the two rail buttons, clear of the legend and the dock, in the compare view above the captions.
+    const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+    await pctx.addInitScript(() => {
+      try {
+        localStorage['fes.aboutSeen'] = '1'
+      } catch {
+        /* ignore */
+      }
+    })
+    const ph = await pctx.newPage()
+    watchPage(ph, 'alarm-phone')
+    try {
+      await ph.goto(`${baseUrl}?qa`)
+      await ph.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await at(ph, alarm - 1)
+      await settle(ph)
+      if (await ph.locator('.alarmbadge').count()) bad('phone: the badge shows before the alarm')
+      await at(ph, alarm + 1)
+      await settle(ph)
+      await placed(ph, 'phone', true)
+      const small = await ph.locator('.alarmbadge').evaluate((el) => ({ font: parseFloat(getComputedStyle(el).fontSize), bell: el.querySelector('svg').getBoundingClientRect().width }))
+      if (small.font > 12 || small.bell > 16.5) bad(`phone: the badge is ${small.font} px text with a ${small.bell} px bell, want 12 px or less and 16 px`)
+      await ph.screenshot({ path: join(out, 'alarm-phone.png') })
+      shots.push('alarm-phone')
+      await ph.evaluate(() => window.__app.getState().showBrainPair())
+      await ph.waitForFunction(() => window.__app.getState().split && window.__app.getState().pairBusy === null, null, { timeout: 60000 })
+      await at(ph, alarm + 1)
+      await settle(ph)
+      await placed(ph, 'phone split', true)
+      await ph.screenshot({ path: join(out, 'alarm-phone-split.png') })
+      shots.push('alarm-phone-split')
+    } finally {
+      await pctx.close()
+    }
+  })
   // The room-to-room spread on screen, in a fresh page and the stacked view. The fixture is A11's run/v0 with fire.rooms: it is read from disk
   // (contracts/run.spread.fixture.json) and opened through File > Open, so it never has to be copied into public/ (which would publish it).
   await step('fire-spread', async () => {

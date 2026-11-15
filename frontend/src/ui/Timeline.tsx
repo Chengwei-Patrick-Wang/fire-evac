@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import { useApp } from '../store/app'
 import { SPEEDS, useClock } from '../store/clock'
+import { alarmTimeOf } from '../model/alarm'
 
 const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
@@ -12,6 +13,7 @@ export default function Timeline() {
   const runs = useApp((s) => s.runs)
   const activeRunKey = useApp((s) => s.activeRunKey)
   const loading = useApp((s) => s.loading)
+  const batch = useApp((s) => s.batch)
   const playing = useClock((s) => s.playing)
   const speed = useClock((s) => s.speed)
   const duration = useClock((s) => s.duration)
@@ -57,26 +59,15 @@ export default function Timeline() {
   const marks = useMemo(() => {
     const out: { t: number; label: string; color: string }[] = []
     if (!lr) return out
-    const { run, index: ix, scenario } = lr
-    let alarm = scenario?.alarmTime
-    if (alarm === undefined && ix) {
-      const delay = new Map(run.agents.map((a) => [a.idx, a.startDelay]))
-      let best = Infinity
-      const seen = new Uint8Array(ix.nAgents)
-      for (let f = 0; f < ix.nFrames; f++)
-        for (let i = 0; i < ix.nAgents; i++)
-          if (!seen[i] && ix.st[f * ix.nAgents + i] === 1) {
-            seen[i] = 1
-            best = Math.min(best, ix.times[f] - (delay.get(i) ?? 0))
-          }
-      if (isFinite(best)) alarm = Math.max(0, best)
-    }
+    const { run } = lr
+    // The same time the viewer's alarm badge appears at (see model/alarm.ts).
+    const alarm = alarmTimeOf(lr, batch)
     if (alarm !== undefined) out.push({ t: alarm, label: 'Alarm', color: 'var(--caution)' })
     for (const e of run.events) if (e.type === 'door_blocked') out.push({ t: e.t, label: `Door blocked ${e.door ?? ''}`, color: 'var(--severe)' })
     const tr = run.events.find((e) => e.type === 'trapped')
     if (tr) out.push({ t: tr.t, label: 'First trapped', color: 'var(--severe)' })
     return out
-  }, [lr])
+  }, [lr, batch])
 
   return (
     <div className="timeline">
