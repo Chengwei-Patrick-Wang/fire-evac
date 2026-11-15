@@ -332,7 +332,7 @@ export const useApp = create<AppState>((set) => ({
           const id = 'ui-' + Date.now().toString(36)
           sc.id = id
           const runId = await startRun(sc)
-          // A Claude crowd waits on a model for its decisions, so it is waited for longer (six minutes against three).
+          // A Claude crowd waits on a model for its decisions, so it is waited for longer (fifteen minutes against three).
           const run = await pollRun(runId, (el) => set({ running: runStatus(brain, total, el) }), runWaitS(brain))
           const how = material === DEFAULT_MATERIAL ? '' : ` · ${materialName(material)}`
           useApp.getState().addRun({ key: id, label: runLabel(`Your run ${id.slice(3, 7)}${how}`, brain), run, doors: sc.doors ?? {}, scenario: sc })

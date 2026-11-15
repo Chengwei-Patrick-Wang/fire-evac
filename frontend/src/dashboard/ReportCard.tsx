@@ -39,7 +39,7 @@ export default function ReportCard() {
         useApp.setState({ report: { key: refKey, md: text } })
       }
     } catch {
-      if (me === seq.current) setErr('Report unavailable (needs the backend and Gemini)')
+      if (me === seq.current) setErr('Report unavailable (needs the backend and an AI key)')
     } finally {
       if (me === seq.current) setBusy(false)
     }

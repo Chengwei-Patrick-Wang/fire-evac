@@ -22,7 +22,7 @@ Python 3.12 and Node 20+.
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt  # JuPedSim pulls in PySide6 and VTK; this takes a while
-cp .env.example .env             # add GEMINI_API_KEY
+cp .env.example .env             # add GEMINI_API_KEY, or APP_ANTHROPIC_API_KEY and LLM_PROVIDER=claude
 python tools/build_examples.py   # regenerate contracts/*.example.json
 uvicorn backend.app.main:app --reload
 ```

@@ -9,6 +9,7 @@ check_batch, check_report and check_trace are one function per route file, so A4
 each rewrite only their own (A7's other checks sit beside check_report, run by check_llm).
 --live-llm runs only the LLM checks, plus one set of real model calls (GEMINI_API_KEY from .env).
 """
+import base64
 import io
 import json
 import os
@@ -843,6 +844,396 @@ def check_llm_client():
         llm._cooldown.clear()
 
 
+class _FakeClaude:
+    """Stands in for anthropic.Anthropic: records every request and answers from `script`, one step per call (a
+    message to return, or an exception to raise). `seen` holds each request's keyword arguments, with beta=True for
+    client.beta.messages.create."""
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.script: list = []
+        self.seen: list[dict] = []
+        outer = self
+
+        class Endpoint:
+            def __init__(self, beta: bool):
+                self.beta = beta
+
+            def create(self, **kwargs):
+                outer.seen.append({"beta": self.beta, **kwargs})
+                step = outer.script.pop(0)
+                if isinstance(step, BaseException):
+                    raise step
+                return step
+
+        self.messages = Endpoint(False)
+        self.beta = SimpleNamespace(messages=Endpoint(True))
+
+
+def _fake_message(text: str = '{"ok": true}', *, stop: str = "end_turn", tokens: tuple[int, int] = (1000, 500),
+                  model: str = "claude-opus-5-5", blocks: list | None = None, category: str | None = None):
+    from types import SimpleNamespace as NS
+
+    content = blocks if blocks is not None else [NS(type="text", text=text)]
+    return NS(content=content, stop_reason=stop, model=model,
+              usage=NS(input_tokens=tokens[0], output_tokens=tokens[1]),
+              stop_details=NS(category=category) if category else None)
+
+
+def _objects_strict(schema) -> bool:
+    """Every object in the schema has additionalProperties false and lists all its properties as required."""
+    if isinstance(schema, list):
+        return all(_objects_strict(v) for v in schema)
+    if not isinstance(schema, dict):
+        return True
+    if schema.get("type") == "object":
+        if schema.get("additionalProperties") is not False or set(schema.get("required") or []) != set(schema.get("properties") or {}):
+            return False
+    return all(_objects_strict(v) for v in schema.values())
+
+
+def check_llm_claude():
+    """The Claude path of the client on a stand-in for the anthropic client (no network, no key): the model and
+    effort of each role, structured output with strict schemas (no tool use, no thinking, sampling or prefill keys),
+    the server-side fallback on Opus calls only, the answer read from the first text block (after thinking, after a
+    fallback block), refusals, cut-off and empty answers and API errors giving None, the agent pause after a network
+    failure, spend as usage x price and the budget, and no key in any log line."""
+    import anthropic
+    import httpx2
+    from types import SimpleNamespace as NS
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    fake = _FakeClaude()
+    timeouts: list[float] = []
+    real_client = llm._claude_client
+    llm._claude_client = lambda key, timeout: (timeouts.append(timeout), fake)[1]
+    secret = "smoke-claude-secret-0123456789"
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+
+    def ask(step, prompt="ping", **kwargs):
+        fake.script[:] = step if isinstance(step, list) else [step]
+        before = len(fake.seen)
+        log = io.StringIO()
+        with redirect_stderr(log):
+            out = llm.complete(prompt, **kwargs)
+        return out, fake.seen[before:], log.getvalue()
+
+    forbidden = {"thinking", "temperature", "top_p", "top_k", "tool_choice", "tools"}
+    answer = {"headline": "h", "summary": "s", "fixes": []}
+    try:
+        with env(LLM_PROVIDER="claude", APP_ANTHROPIC_API_KEY=secret, CLAUDE_MODEL=None, CLAUDE_AGENT_MODEL=None,
+                 CLAUDE_BUDGET_USD=None):
+            llm.reset_stats()
+            # report: Opus at medium effort, structured output, the server-side fallback; 45 s is raised to its least
+            out, seen, log = ask(_fake_message(json.dumps(answer)), schema=features.REPORT_SCHEMA, timeout=45.0)
+            req = seen[0]
+            assert out == answer and log == "" and llm.last_model == "claude-opus-5-5", (out, log)
+            assert req["beta"] and req["betas"] == ["server-side-fallback-2026-07-01"] and req["fallbacks"] == "default", req
+            assert req["model"] == "claude-opus-5-5" and req["output_config"]["effort"] == "medium", req
+            fmt = req["output_config"]["format"]
+            assert fmt["type"] == "json_schema" and _objects_strict(fmt["schema"]), fmt
+            assert "summary" in fmt["schema"]["properties"] and fmt["schema"]["required"] == ["headline", "summary", "fixes"], fmt
+            assert "additionalProperties" not in features.REPORT_SCHEMA, "the shared schema was changed"
+            assert not forbidden & set(req), set(req) & forbidden  # forced tool use and sampling are 400s, thinking is always on
+            assert [m["role"] for m in req["messages"]] == ["user"], req["messages"]  # no prefill
+            assert req["messages"][0]["content"] == [{"type": "text", "text": "ping"}] and req["max_tokens"] >= 8000, req
+            assert timeouts[-1] == 90.0, timeouts
+            assert abs(llm.spend_usd() - (1000 * 4 + 500 * 20) / 1e6) < 1e-9, llm.spend_usd()  # Opus 5.5: 4 / 20 $ per M tokens
+
+            # tracer: Opus at high effort, the image before the text; the shared schema's "type" property survives
+            png = b"\x89PNG\r\n\x1a\nxyz"
+            out, seen, log = ask(_fake_message('{"rooms": []}'), image=png, image_mime="image/png", role="tracer",
+                                 schema=features.PROPOSE_SCHEMA, timeout=60.0)
+            req = seen[0]
+            blocks = req["messages"][0]["content"]
+            assert out == {"rooms": []} and req["beta"] and req["output_config"]["effort"] == "high", (out, req)
+            assert blocks[0] == {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                              "data": base64.b64encode(png).decode("ascii")}}, blocks[0]
+            assert blocks[1] == {"type": "text", "text": "ping"} and timeouts[-1] == 150.0, (blocks, timeouts)
+            room = req["output_config"]["format"]["schema"]["properties"]["rooms"]["items"]
+            assert _objects_strict(room) and "office" in room["properties"]["type"]["enum"], room
+
+            # agent: Haiku at low effort on the plain endpoint, no fallbacks; priced 0.10 / 0.50
+            spent = llm.spend_usd()
+            out, seen, log = ask(_fake_message('{"decisions": []}', model="claude-haiku-5-5", tokens=(3000, 800)),
+                                 role="agent", schema=features.DECISION_SCHEMA, timeout=30.0)
+            req = seen[0]
+            assert timeouts[-1] == 15.0, timeouts  # exactly, not "at least": 30 s asked for, 15 s given, so a stall is retried early
+            assert out == {"decisions": []} and not req["beta"] and "betas" not in req and "fallbacks" not in req, req
+            assert req["model"] == "claude-haiku-5-5" and req["output_config"]["effort"] == "low", req
+            assert not forbidden & set(req) and llm.last_model == "claude-haiku-5-5"
+            assert abs(llm.spend_usd() - spent - (3000 * 0.10 + 800 * 0.50) / 1e6) < 1e-9, llm.spend_usd() - spent
+
+            # the overrides, and an unknown role is a report
+            with env(CLAUDE_MODEL="claude-sonnet-5-5", CLAUDE_AGENT_MODEL="claude-haiku-9"):
+                assert ask(_fake_message(), schema={"type": "object"}, role="bogus")[1][0]["model"] == "claude-sonnet-5-5"
+                assert ask(_fake_message(), schema={"type": "object"}, role="agent")[1][0]["model"] == "claude-haiku-9"
+
+            # which text is the answer: the first text block after a thinking block; after a fallback block, the
+            # fallback model's; plain text without a schema joins them
+            think = NS(type="thinking", thinking="", signature="s")
+            good = '{"ok": true}'
+            assert ask(_fake_message(blocks=[think, NS(type="text", text=good)]), schema={"type": "object"})[0] == {"ok": True}
+            fb = NS(type="fallback")
+            assert ask(_fake_message(blocks=[NS(type="text", text="cut off {"), fb, NS(type="text", text=good)]),
+                       schema={"type": "object"})[0] == {"ok": True}
+            assert ask(_fake_message(blocks=[think, NS(type="text", text="a "), NS(type="text", text="b")]))[0] == "a b"
+
+            # no usable answer: None and one stderr line each
+            for message, needle in ((_fake_message("not json"), "no usable answer"), (_fake_message(""), "no usable answer"),
+                                    (_fake_message("3"), "no usable answer"),
+                                    (_fake_message(blocks=[], stop="refusal", category="cyber"), "refused (cyber)"),
+                                    (_fake_message('{"ok"', stop="max_tokens"), "max_tokens")):
+                out, _, log = ask(message, schema={"type": "object"})
+                assert out is None and needle in log and log.count("\n") == 1, (needle, out, log)
+
+            # API errors: None, one line, never the key; a network failure pauses the agent role only
+            def failure(kind: str):
+                if kind == "bad":
+                    return anthropic.BadRequestError(f"bad request for {secret}", response=httpx2.Response(400, request=request), body=None)
+                if kind == "server":
+                    return anthropic.InternalServerError("overloaded", response=httpx2.Response(529, request=request), body=None)
+                if kind == "limit":
+                    return anthropic.RateLimitError("slow down", response=httpx2.Response(429, request=request), body=None)
+                if kind == "timeout":
+                    return anthropic.APITimeoutError(request=request)
+                return anthropic.APIConnectionError(message="Connection error.", request=request)
+
+            out, _, log = ask(failure("bad"), role="agent", schema={"type": "object"})
+            assert out is None and secret not in log and "***" in log and "400" in log and "pause" not in log, log
+            assert ask(_fake_message(), role="agent", schema={"type": "object"})[0] == {"ok": True}, "a 400 paused the agent role"
+            for kind in ("server", "limit", "timeout", "connection"):
+                llm.reset_stats()
+                out, _, log = ask(failure(kind), role="agent", schema={"type": "object"})
+                assert out is None and "pause for 20 s" in log and log.count("\n") == 1, (kind, log)
+                out, seen, log = ask(_fake_message(), role="agent", schema={"type": "object"})  # paused: no call, no line
+                assert out is None and not seen and log == "", (kind, seen, log)
+                assert ask(_fake_message(), role="report", schema={"type": "object"})[0] == {"ok": True}  # the report role is not
+                llm.reset_stats()
+                assert ask(_fake_message(), role="agent", schema={"type": "object"})[0] == {"ok": True}
+            out, _, log = ask(failure("server"), role="report", schema={"type": "object"})  # report and tracer never pause
+            assert out is None and "pause" not in log, log
+            assert ask(_fake_message(), role="agent", schema={"type": "object"})[0] == {"ok": True}
+
+            # stats and spend
+            llm.reset_stats()
+            ask(_fake_message(tokens=(2000, 100)), schema={"type": "object"})
+            ask(_fake_message(model="claude-haiku-5-5", tokens=(1000000, 1000000)), role="agent", schema={"type": "object"})
+            ask(_fake_message("not json"), schema={"type": "object"})
+            st = llm.stats()
+            assert st["calls"] == 3 and st["answered"] == 2 and st["byRole"] == {"report": 2, "agent": 1}, st
+            assert st["inputTokens"] == 1003000 and st["outputTokens"] == 1000600, st
+            expected = (2000 * 4 + 100 * 20) / 1e6 + 0.10 + 0.50 + (1000 * 4 + 500 * 20) / 1e6
+            assert abs(llm.spend_usd() - expected) < 1e-9, (llm.spend_usd(), expected)
+            assert llm._price("claude-haiku-5-5-20261001") == (0.10, 0.50) and llm._price("claude-opus-5-5") == (4.0, 20.0)
+            assert llm._price("claude-made-up") == llm.UNKNOWN_PRICE
+
+            # the budget: the call that passes it still answers and says so once; every later call is None, with no request
+            llm.reset_stats()
+            with env(CLAUDE_BUDGET_USD="0.02"):
+                assert llm.budget_usd() == 0.02
+                assert ask(_fake_message(), schema={"type": "object"})[2] == ""  # $0.014: under
+                out, _, log = ask(_fake_message(), schema={"type": "object"})  # $0.028: over
+                assert out == {"ok": True} and log.count("\n") == 1 and "budget passed" in log and "$0.03" in log, log
+                for role in ("report", "tracer", "agent"):
+                    out, seen, log = ask(_fake_message(), schema={"type": "object"}, role=role)
+                    assert out is None and not seen and log == "", (role, seen, log)
+            for bad in ("", "x", "-3", "nan"):
+                with env(CLAUDE_BUDGET_USD=bad):
+                    assert llm.budget_usd() == llm.DEFAULT_BUDGET_USD == 25.0, bad
+            llm.reset_stats()
+            assert llm.spend_usd() == 0.0 and llm.stats()["calls"] == 0
+    finally:
+        llm._claude_client = real_client
+        llm.reset_stats()
+
+
+def check_report_summary(client):
+    """A hand-made model answer, no API call: the AI summary leads the card under "## AI summary (Claude)", ahead of the
+    report title; one with a number that is not in the facts, a door id, the word panic or too many words is dropped
+    alone (the headline and fixes of the same answer stand); a template card has none; the prompt asks for it."""
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    batch, _, building = _examples()
+    names = features._Names(building)
+    facts = features._facts(batch, building)
+    spots = facts["spots"]
+    first = batch["top"][0]
+    n = len(batch["runs"])
+    prompts: list = []
+    answers: list = []
+
+    def fake_complete(prompt, **kwargs):
+        prompts.append((prompt, kwargs))
+        return answers.pop(0) if answers else None
+
+    def card(**more):
+        answer = {"headline": f"{spots[0]['label']} is the worst spot across {n} simulated fires",
+                  "summary": f"Across {n} simulated fires most people got out, but queues formed at {spots[0]['label']}. "
+                             "The doorway there is too narrow for the crowd, so people waited in smoke. "
+                             "The best fix is a second, wider opening beside it.",
+                  "fixes": [{"id": first["id"], "fix": "Add a second door beside it so arrivals split."}]}
+        answer.update(more)
+        answers.append(answer)
+        return features.report_card(batch, building)
+
+    heading = "## AI summary (Claude)"
+    real = llm.complete
+    llm.complete = fake_complete
+    try:
+        with env(LLM_PROVIDER="claude"), redirect_stderr(io.StringIO()) as log:
+            md, ai = card()
+            assert ai and md.startswith(heading + "\n\n"), md[:200]
+            summary = md.split("\n\n")[1]
+            assert summary.startswith(f"Across {n} simulated fires") and summary.endswith("beside it."), summary
+            assert md.index(heading) < md.index("### Report card:") and md.count(heading) == 1, md[:300]
+            assert md.rstrip().endswith("*Written by Claude*") and "Add a second door beside it" in md, md[-300:]
+            assert not names.mentions_id(md), md
+            prompt, kwargs = prompts[-1]
+            assert kwargs["role"] == "report" and kwargs["schema"] == features.REPORT_SCHEMA, kwargs
+            assert "summary: 3 to 4" in prompt and "most promising fix" in prompt and "never as a tested" in prompt, prompt[:1500]
+            assert features.REPORT_SCHEMA["required"] == ["headline", "summary", "fixes"]
+
+            with env(LLM_PROVIDER="gemini"):
+                md, ai = card()
+                assert ai and md.startswith("## AI summary (Gemini)\n\n") and md.rstrip().endswith("*Written by Gemini*"), md[:100]
+
+            # each way a summary fails drops it alone: the headline and the fix of the same answer are kept
+            junk = {
+                "an invented number": f"Across {n} fires the worst door cut the queue by 93.7% for 4412 people.",
+                "a door id": f"The door {first['id']} is the choke point; widen it so the queue shrinks, for everyone.",
+                "panic": "People panic at the doors, so the best fix is a wider door.",
+                "too long": " ".join(["Queues form at the doors."] * 40),
+            }
+            for why, text in junk.items():
+                md, ai = card(summary=text)
+                assert ai and "AI summary" not in md and "Add a second door beside it" in md, (why, md[:300])
+                assert f"**{spots[0]['label']} is the worst spot" in md, (why, md[:300])  # the model's headline stands
+            assert "numbers not in the facts: 93.7, 4412" in log.getvalue() and "a door id" in log.getvalue(), log.getvalue()
+
+            # an answer with no summary at all (an older model, a stub) is a card without the section
+            answers.append({"headline": "A headline", "fixes": []})
+            md, ai = features.report_card(batch, building)
+            assert ai and "AI summary" not in md and "**A headline**" in md, md[:300]
+            answers.append({"headline": "", "summary": "", "fixes": []})  # nothing usable: the template
+            md, ai = features.report_card(batch, building)
+            assert not ai and "AI summary" not in md and md.rstrip().endswith("*Template summary (AI unavailable)*"), md[-200:]
+            md, ai = features.report_card(batch, building, allow_llm=False)
+            assert not ai and "AI summary" not in md and md.startswith("### Report card:"), md[:100]
+        with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+            llm.complete = real
+            assert "AI summary" not in features.report(batch, building)
+    finally:
+        llm.complete = real
+
+
+def check_decide_chunks():
+    """decide_batch splits a long list for the model: chunks of at most 20 (balanced, none under 5 unless the list is
+    shorter), up to 8 calls at once, answers merged by index into a list of the same length and order; a chunk that fails
+    or is late leaves its own entries None and the others stand; a decision for an observation of another chunk is ignored."""
+    import re
+    import threading
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    def make(n):
+        return [{"idx": i, "t": 1.0, "floor": "F1", "x": 1.0, "y": 1.0, "profile": "typical", "visibility": 30.0,
+                 "speed": 1.2, "current": None, "trigger": "start",
+                 "options": [{"id": "E1", "kind": "exit", "name": "Main", "dist": 10.0 + i, "queue": 0, "flow": 1.3, "tail": 0},
+                             {"id": "E2", "kind": "exit", "name": "Side", "dist": 30.0, "queue": 0, "flow": 1.3, "tail": 0}]}
+                for i in range(n)]
+
+    for n, count in ((0, 1), (1, 1), (5, 1), (6, 2), (11, 3), (45, 8), (160, 8), (200, 10), (201, 11)):
+        parts = features._chunks(list(range(n)))
+        assert len(parts) == count and [x for part in parts for x in part] == list(range(n)), (n, [len(p) for p in parts])
+        assert all(len(part) <= features.DECIDE_CHUNK for part in parts) and (n < 5 or all(len(part) >= 3 for part in parts)), n
+        assert max(map(len, parts)) - min(map(len, parts)) <= 1, n  # balanced
+
+    lock = threading.Lock()
+    live = {"now": 0, "max": 0, "calls": [], "hold": 0.0, "behave": {}, "gate": threading.Event()}
+
+    def fake_complete(prompt, **kwargs):
+        ids = [int(x) for x in re.findall(r'\{"i":(\d+),', prompt)]
+        with lock:
+            live["calls"].append((ids, kwargs))
+            live["now"] += 1
+            live["max"] = max(live["max"], live["now"])
+        try:
+            time.sleep(live["hold"])
+            behave = live["behave"].get(ids[0])
+            if behave == "raise":
+                raise RuntimeError("smoke: one call blew up")
+            if behave == "none":
+                return None
+            if behave == "late":
+                live["gate"].wait(10.0)  # a call that has not answered when decide_batch stops waiting; released below
+            decisions = [{"i": i, "action": "go", "target": "E1", "reason": f"nearest for {i}"} for i in ids]
+            if behave == "stray":  # also answers for an observation that is not in its chunk
+                decisions.append({"i": 0 if ids[0] != 0 else 199, "action": "go", "target": "E2", "reason": "not mine"})
+            return {"decisions": decisions}
+        finally:
+            with lock:
+                live["now"] -= 1
+
+    real, real_wait = llm.complete, features.DECIDE_WAIT
+    llm.complete = fake_complete
+    try:
+        with env(LLM_PROVIDER="claude"), redirect_stderr(io.StringIO()):
+            obs = make(45)
+            out = features.decide_batch(obs)
+            assert len(out) == 45 and all(d == {"target": "E1", "action": "go", "reason": f"nearest for {i}"} for i, d in enumerate(out)), out
+            assert len(live["calls"]) == 8 and sorted(i for ids, _ in live["calls"] for i in ids) == list(range(45))
+            assert all(len(ids) <= 20 and k["role"] == "agent" and k["schema"] == features.DECISION_SCHEMA
+                       for ids, k in live["calls"]), live["calls"]
+
+            live["calls"].clear()
+            live["hold"] = 0.05
+            out = features.decide_batch(make(200))  # 10 chunks of 20 on 8 workers
+            assert all(d and d["reason"] == f"nearest for {i}" for i, d in enumerate(out)) and len(out) == 200
+            assert len(live["calls"]) == 10 and 2 <= live["max"] <= features.DECIDE_WORKERS, live["max"]
+            live["calls"].clear()
+            assert features.decide_batch(make(3))[2]["reason"] == "nearest for 2" and len(live["calls"]) == 1
+
+            # one chunk raising, one answering None, one answering for another chunk's agent: the others are untouched
+            live["hold"] = 0.0
+            for how in ("raise", "none"):
+                live["calls"].clear()
+                live["behave"] = {features._chunks(list(range(45)))[1][0]: how}  # keyed by the chunk's first index
+                out = features.decide_batch(make(45))
+                gone = set(features._chunks(list(range(45)))[1])
+                assert [i for i, d in enumerate(out) if d is None] == sorted(gone), (how, out)
+                assert all(d["reason"] == f"nearest for {i}" for i, d in enumerate(out) if i not in gone)
+            live["behave"] = {features._chunks(list(range(45)))[1][0]: "stray"}
+            out = features.decide_batch(make(45))
+            assert all(d and d["target"] == "E1" and d["reason"] == f"nearest for {i}" for i, d in enumerate(out)), out
+
+            # a late chunk: its agents wait for the rules, the rest land at once
+            features.DECIDE_WAIT = 0.3
+            live["behave"] = {features._chunks(list(range(45)))[2][0]: "late"}
+            t0 = time.time()
+            out = features.decide_batch(make(45))
+            waited = time.time() - t0
+            live["gate"].set()  # the late call may answer now: nobody is listening
+            assert waited < 3.0, waited  # it did not wait for the late chunk
+            late = set(features._chunks(list(range(45)))[2])
+            assert [i for i, d in enumerate(out) if d is None] == sorted(late), out
+            live["behave"] = {}
+
+            # malformed observations keep their place: None, the others decided, one call for the lot
+            live["calls"].clear()
+            mixed = [make(1)[0], None, {"options": []}, make(3)[2]]
+            out = features.decide_batch(mixed)
+            assert len(out) == 4 and out[1] is None and out[2] is None and out[0] and out[3], out
+            assert len(live["calls"]) == 1 and live["calls"][0][0] == [0, 3], live["calls"]
+    finally:
+        llm.complete, features.DECIDE_WAIT = real, real_wait
+
+
 def check_llm_live():
     """Optional, behind --live-llm: the real model (GEMINI_API_KEY from .env): a JSON ping, the example
     batch's card written by the model, and decisions for the three sample agents."""
@@ -864,8 +1255,9 @@ def check_llm_live():
         assert any(decisions), decisions
         t3 = time.time()
     print(md)
+    cost = f", ${llm.spend_usd():.4f} spent" if name == "claude" else ""
     print(f"OK  live LLM ({name}, last model {llm.last_model}): ping {t1 - t0:.1f} s, report {t2 - t1:.1f} s, "
-          f"decide_batch {t3 - t2:.1f} s ({sum(d is not None for d in decisions)}/3 decided)")
+          f"decide_batch {t3 - t2:.1f} s ({sum(d is not None for d in decisions)}/3 decided){cost}")
 
 
 def check_llm(client):
@@ -875,10 +1267,14 @@ def check_llm(client):
     check_report_run(client)
     check_report_ai(client)
     doors = check_door_names()
+    check_report_summary(client)
     check_decide()
+    check_decide_chunks()
     check_llm_client()
-    print(f"OK  llm: report card (template, AI path stubbed, cache, private building), run card, "
-          f"door names (D's, {doors} doors), decide_batch, client retries and fallback, {time.time() - t0:.1f} s")
+    check_llm_claude()
+    print(f"OK  llm: report card (template, AI path stubbed, AI summary, cache, private building), run card, "
+          f"door names (D's, {doors} doors), decide_batch (chunks, parallel), Gemini retries and fallback, "
+          f"Claude client (roles, structured output, fallbacks, refusals, spend, budget), {time.time() - t0:.1f} s")
 
 
 def _png(width: int, height: int) -> bytes:
@@ -1102,6 +1498,20 @@ def check_run(client) -> str:
     (ROOT / "data" / "runs" / f"{wood_id}.json").unlink(missing_ok=True)  # the twin's file is test noise
     refused = wait_run(client, steel_id)
     assert refused.get("status") == "error" and "concrete, drywall, wood" in refused.get("error", ""), refused
+
+    # brain goes through POST /api/runs to the sim unchanged: an all-LLM run (24 people) flags every agent and logs a
+    # decision event for each choice. The provider is off for the worker (it inherits this process's environment), so
+    # no model is called and every decision is the rules' own, marked fallback.
+    with env(LLM_PROVIDER="off"):
+        llm_id = post_run(client, dict(scenario, id="smoke-brain-llm", brain="llm", maxTime=40, alarmTime=0,
+                                       premovement={"office": [0, 0], "classroom": [0, 0]},
+                                       occupants={"total": 24, "mix": {"typical": 1}}))
+        showcase = wait_run(client, llm_id)
+    (ROOT / "data" / "runs" / f"{llm_id}.json").unlink(missing_ok=True)
+    assert showcase.get("status") != "error", f"all-LLM run failed: {showcase.get('error')}\n{showcase.get('traceback', '')}"
+    decisions = [e for e in showcase["events"] if e["type"] == "llm"]
+    assert len(showcase["agents"]) == 24 and all(a.get("llm") for a in showcase["agents"]), "brain llm did not reach the sim"
+    assert decisions and all(e.get("fallback") for e in decisions), decisions[:2]
 
     # after a "restart" (no futures in memory) the run is read back from disk
     jobs._futures.clear()

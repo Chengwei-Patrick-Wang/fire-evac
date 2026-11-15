@@ -126,12 +126,12 @@ def check_llm_batch(building, scenario):
         fallback = run(building, showcase, NoFire(building, showcase))
     assert fallback["metrics"]["evacuated"] == 24
     assert all(e.get("fallback") for e in fallback["events"] if e["type"] == "llm")
-    oversized = dict(showcase, occupants={"total": 151, "mix": {"typical": 1}})
+    oversized = dict(showcase, occupants={"total": 201, "mix": {"typical": 1}})
     try:
         run(building, oversized, NoFire(building, oversized))
-        assert False, "151-agent showcase accepted"
+        assert False, "201-agent showcase accepted"
     except ValueError as exc:
-        assert "150" in str(exc)
+        assert "200" in str(exc)
     observations = calls[0]
     for provider in (lambda obs: [], lambda obs: [None] * len(obs),
                      lambda obs: [{"target": "invalid"}] * len(obs)):

@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..llm import client as llm_client
 from . import batch, jobs, report, trace
 from .store import (
     BUILDINGS_DIR,
@@ -33,6 +34,8 @@ WARNING_PREFIX = "WARNING (normalize):"  # what buildings.normalize prints to st
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # the model SDK takes seconds to import: do it now, in the background, not inside the first report card
+    threading.Thread(target=llm_client.warm_up, name="llm-warm-up", daemon=True).start()
     yield
     batch.shutdown()
     jobs.shutdown()
