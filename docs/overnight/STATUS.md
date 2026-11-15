@@ -1,5 +1,19 @@
 # Overnight status
 
+## Sat 23:30: Althan's fire-safe routing is merged
+
+**Merged:** codex/fire-safe-routing (Althan; af311c6, 74b04ac), combined with tonight's main through merge-routing.
+- **Building-wide routes:** for corridor and lobby fires, people can take a complete route around the fire, even up one stair, across the other floor and down another stair. Fires that cut a floor in two keep both parts as separate simulation regions. The fire's no-go zone is the flame footprint plus 0.35 m of body clearance; the 2.5 m keep-out is a preferred distance, not a wall. Opposing stair traffic shares capacity.
+- **Combined with main:** fire spread (D25), burning-room traps and door closures (C27, in every region), the hairline fix (legacy mode), and the Claude crowd (routes are filtered before rules and LLM decisions). The no-go zone is sized from the ignition room's own heat.
+- **Example corridor fire C1** (seed 1): legacy routing 132 out and 28 trapped; new routing 150 out and 10 trapped with fire spread on, 160 and 0 with spread off. With spread, the corridor's neighbours, including both stairwells and both exits, ignite at 180 s.
+- **Unchanged:** the kitchen fire R101 and the office R143 wood fire give events identical to the demo data.
+- **Calibration regenerated:** main's door-flow lines were stale. A 1.0 m door now passes 1.10 persons/s (was 1.17), still between the references 0.91 and 1.3. Corridor speed is unchanged.
+- **Credibility tab:** clearer titles and units, an explanation for each reference, and a "Methods and sources" section, on the Ember styling.
+
+**Not yet:** the demo recordings aren't regenerated (the lead's call: one rerun after the next batch of changes). Until then, the example lobby (L1) pair and the batches' corridor and lobby fires show the old routing. The public site is unchanged (Netlify builds are stopped).
+
+**Gate:** check_all ALL OK, all 7 packages, on main.
+
 ## Sat 22:00: everything is merged and live; Netlify builds stopped again
 
 **Merged since 21:05:**
