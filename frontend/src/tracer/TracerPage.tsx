@@ -18,7 +18,7 @@ import type { AiJob, Tool } from "./store";
 
 const API = ((import.meta.env.VITE_API_URL as string | undefined) ?? "").replace(/\/$/, "");
 const TIMEOUT_S = 60;
-const AI_TIMEOUT_S = 150; // the server gives the model chain up to 2 x 60 + 10 s
+const AI_TIMEOUT_S = 180; // Claude (Opus, high effort) takes about 35 s for a floor of 12 rooms; the server gives it up to 150 s
 const AI_MAX_SIDE = 1600; // px, the long side of the image the AI first pass sends
 const AI_SHOW_MS = 8000; // how long the canvas shows the AI pass's outcome
 const AI_UNAVAILABLE = "AI unavailable, draw by hand";
@@ -143,7 +143,7 @@ export default function TracerPage({ onOpenBuilding }: { onOpenBuilding?: (id: s
       useTrace.getState().setAiJob(job);
       setOutcomeUntil(Date.now() + AI_SHOW_MS);
     };
-    // spec 12: only public plans go to Gemini, never a UMass plan
+    // spec 12: only public plans go to the AI (Claude), never a UMass plan
     const words = [st.id, st.name, st.credits, img.name, ...st.floors.map((x) => x.name)];
     if (words.some((w) => UMASS.test(w))) {
       finish({ kind: "failed", floorId: f.id, message: "UMass plans never go to the AI: draw by hand.", detail: "This trace or its image mentions UMass." });
@@ -151,7 +151,7 @@ export default function TracerPage({ onOpenBuilding }: { onOpenBuilding?: (id: s
     }
     if (
       !st.isPublic &&
-      !window.confirm("The AI first pass sends this floor's image to Google Gemini. Send only public plans, never UMass plans.\n\nSend it?")
+      !window.confirm("The AI first pass sends this floor's image to Claude (Anthropic). Send only public plans, never UMass plans.\n\nSend it?")
     ) {
       return;
     }
@@ -290,7 +290,7 @@ export default function TracerPage({ onOpenBuilding }: { onOpenBuilding?: (id: s
         <button
           className={aiBusy ? "on tr-ai" : "tr-ai"}
           disabled={!!aiWhy || aiBusy}
-          title={aiWhy || "AI first pass: Gemini proposes this floor's rooms from its image, as a dashed draft (rooms only: you add the doors)"}
+          title={aiWhy || "AI first pass: Claude proposes this floor's rooms from its image, as a dashed draft (rooms only: you add the doors)"}
           onClick={(e) => {
             e.currentTarget.blur();
             void runAi();
@@ -306,8 +306,8 @@ export default function TracerPage({ onOpenBuilding }: { onOpenBuilding?: (id: s
           <div className="tr-ai-pill" role="status" aria-live="polite">
             <span className="tr-spin" aria-hidden="true" />
             <span>
-              {`AI first pass on ${aiJob.floorId}: waiting for Gemini, ${aiSeconds} s`}
-              <small>{aiSeconds < 25 ? "Usually 5–20 s. Keep tracing meanwhile." : "Slow today: other models in the chain may answer (up to 2 min)."}</small>
+              {`AI first pass on ${aiJob.floorId}: waiting for Claude, ${aiSeconds} s`}
+              <small>{aiSeconds < 60 ? "Usually 20–60 s. Keep tracing meanwhile." : "Slow today: a big floor can take up to 2½ min."}</small>
             </span>
             <button onClick={cancelAi}>Cancel</button>
           </div>

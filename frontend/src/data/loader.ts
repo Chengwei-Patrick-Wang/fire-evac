@@ -100,12 +100,20 @@ export async function loadDemoRun(entry: DemoRun): Promise<Run> {
   return assertVersion<Run>(await fetchJson(DEMO + entry.file, {}, 60000), 'run/v0')
 }
 
+/** How long a live run may take before the app gives up on it. A rule-based run takes seconds to a minute or two; an all-LLM
+ *  run (`brain: 'llm'`) waits for the model once per simulated second (about 1.5 s each): the 160-person example took
+ *  4.3 minutes (measured Sat), so it gets 20. */
+export const RUN_WAIT_S = 180
+export const LLM_RUN_WAIT_S = 1200
+const runWaits = new Map<string, number>()
+
 export async function startRun(scenario: Scenario): Promise<string> {
   const r = await fetchJson<{ runId: string }>(`${API}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(scenario),
   })
+  runWaits.set(r.runId, scenario.brain === 'llm' ? LLM_RUN_WAIT_S : RUN_WAIT_S)
   return r.runId
 }
 
@@ -114,14 +122,15 @@ function isPending(o: unknown): o is Pending {
   return !!o && typeof o === 'object' && !('version' in o)
 }
 
-export async function pollRun(runId: string, onTick?: (elapsedS: number) => void, maxS = 180): Promise<Run> {
+export async function pollRun(runId: string, onTick?: (elapsedS: number) => void, maxS?: number): Promise<Run> {
+  const limit = maxS ?? runWaits.get(runId) ?? RUN_WAIT_S
   const t0 = Date.now()
   for (;;) {
     const r = await fetchJson<Run | Pending>(`${API}/runs/${encodeURIComponent(runId)}`, {}, 60000)
     if (!isPending(r)) return assertVersion<Run>(r, 'run/v0')
     if (r.status === 'error') throw new ApiError(r.error ?? 'Run failed')
     const el = (Date.now() - t0) / 1000
-    if (el > maxS) throw new ApiError(`Run did not finish within ${maxS} s`)
+    if (el > limit) throw new ApiError(`Run did not finish within ${limit} s`)
     onTick?.(Math.round(el))
     await new Promise((res) => setTimeout(res, 1000))
   }
@@ -156,7 +165,7 @@ export async function fetchReport(ref: { runId: string } | { batchId: string }, 
     const r = await fetchJson<{ markdown: string }>(
       `${API}/report${refresh ? '?refresh=1' : ''}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
-      20000,
+      150000, // the model writes the card: Claude Opus took 28 to 37 s, and the first request after a start waits for its SDK to load
     )
     if (typeof r?.markdown !== 'string') throw new ApiError('Report unavailable')
     return r.markdown
