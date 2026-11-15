@@ -6,7 +6,7 @@
     {
       "label": "0.9 m door",
       "width": 0.9,
-      "simulated": 1.0026,
+      "simulated": 0.9671,
       "references": [
         {
           "name": "IMO 1.3 persons/(m·s) × width",
@@ -21,7 +21,7 @@
     {
       "label": "1.0 m door",
       "width": 1.0,
-      "simulated": 1.1741,
+      "simulated": 1.0966,
       "references": [
         {
           "name": "IMO 1.3 persons/(m·s) × width",
@@ -36,7 +36,7 @@
     {
       "label": "1.2 m door",
       "width": 1.2,
-      "simulated": 1.4682,
+      "simulated": 1.5392,
       "references": [
         {
           "name": "IMO 1.3 persons/(m·s) × width",
@@ -51,7 +51,7 @@
     {
       "label": "1.6 m door",
       "width": 1.6,
-      "simulated": 1.9562,
+      "simulated": 2.0632,
       "references": [
         {
           "name": "IMO 1.3 persons/(m·s) × width",
@@ -65,7 +65,7 @@
     }
   ],
   "limits": [
-    "0.8 m door: 57 of 200 passed by the run limit; last exit at 66.71 s. Narrow-opening deadlock is a known limit of this crowd model (0.4 m body diameter).",
+    "0.8 m door: 67 of 200 passed by the run limit; last exit at 78.42 s. Narrow-opening deadlock is a known limit of this crowd model (0.4 m body diameter).",
     "Corridor speed-density: simulated speeds differ by more than 20% from both references at 1.61 persons/m2 (31% below Weidmann (1993)), 2.09 persons/m2 (32% below Weidmann (1993)); the crowd model differs from the reference walking speeds at these densities.",
     "Walking speed in smoke: the published rule is a model input; this curve checks that the simulator applies it as published, not independent validation."
   ],

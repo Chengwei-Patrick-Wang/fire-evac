@@ -1,5 +1,154 @@
 # Overnight status
 
+## Sun 07:30: all overnight work merged; the final demo data is committed; the deploy waits for a Netlify sign-in
+
+**Merged overnight:**
+- D26: fire spreads up through floors.
+- The Claude crowd fixes: stair arrivals like the rules crowd, no calls for one-option decisions, plain checked reasons.
+- C28: people who see others evacuating start sooner and lean toward the exits others take.
+- B16: an example office copy with an extra stairwell and exit (example-office-plus).
+- E40 to E44: the simpler app, fire visuals, the blinking alarm, tabs that lead with the story, and a split view with settings per side and two buildings, with the building filling the viewer.
+- Small fixes: Run needs a placed fire, a flame legend icon, the slow checks.
+
+**Final demo data (3ce175d):** 23 runs, 4 batches, 17.0 MB. It covers every building, including example-office-plus. The rules-vs-Claude pair: 412 Claude decisions, none decided by the rules, 0 trapped in both. Four report cards written by Claude. check_all ALL OK on all 7 packages, and the deploy dry run's privacy scan is clean.
+
+**Waiting on the lead:**
+- **Deploy:** the Netlify session in the browser pane expired. Sign in to app.netlify.com, then deploy: Project configuration > Developer settings > Build settings > Configure > Active builds > Save; Deploys > Trigger deploy > Deploy project; once it says Published, set Stopped builds again.
+- **Drafts:** the Devpost and video drafts and a morning checklist are in docs/submission/ (local only).
+- **Lewis House** is in the laptop's dropdown only (private, data/private/).
+
+## Sun 01:50: two frontend branches waiting; demo rerun running
+
+- **Ready, held until the rerun finishes (around 03:00):**
+  - **ws-e (E40):** a simpler app. The What-if section, Share, Save PNG, Agent view, the Credibility tab, the Edit and Settings menus, the door-state legend rows and the demo tour are gone. The wood/drywall and rules/Claude comparisons now sit next to their settings, the analytics panel can expand, and the user's logo is the favicon.
+  - **ws-e2 (E41):** a flickering fire light, flame sprites and ceiling smoke (57-59 FPS on the clinic).
+- **Demo rerun with fire-safe routing,** in the main checkout since 01:00: example building done, clinic nearly done, office next. Both frontend builds write into frontend/public/demo, so they merge after the rerun.
+
+## Sat 23:30: Althan's fire-safe routing is merged
+
+**Merged:** codex/fire-safe-routing (Althan; af311c6, 74b04ac), combined with tonight's main through merge-routing.
+- **Building-wide routes:** for corridor and lobby fires, people can take a complete route around the fire, even up one stair, across the other floor and down another stair. Fires that cut a floor in two keep both parts as separate simulation regions. The fire's no-go zone is the flame footprint plus 0.35 m of body clearance; the 2.5 m keep-out is a preferred distance, not a wall. Opposing stair traffic shares capacity.
+- **Combined with main:** fire spread (D25), burning-room traps and door closures (C27, in every region), the hairline fix (legacy mode), and the Claude crowd (routes are filtered before rules and LLM decisions). The no-go zone is sized from the ignition room's own heat.
+- **Example corridor fire C1** (seed 1): legacy routing 132 out and 28 trapped; new routing 150 out and 10 trapped with fire spread on, 160 and 0 with spread off. With spread, the corridor's neighbours, including both stairwells and both exits, ignite at 180 s.
+- **Unchanged:** the kitchen fire R101 and the office R143 wood fire give events identical to the demo data.
+- **Calibration regenerated:** main's door-flow lines were stale. A 1.0 m door now passes 1.10 persons/s (was 1.17), still between the references 0.91 and 1.3. Corridor speed is unchanged.
+- **Credibility tab:** clearer titles and units, an explanation for each reference, and a "Methods and sources" section, on the Ember styling.
+
+**Not yet:** the demo recordings aren't regenerated (the lead's call: one rerun after the next batch of changes). Until then, the example lobby (L1) pair and the batches' corridor and lobby fires show the old routing. The public site is unchanged (Netlify builds are stopped).
+
+**Gate:** check_all ALL OK, all 7 packages, on main.
+
+## Sat 22:00: everything is merged and live; Netlify builds stopped again
+
+**Merged since 21:05:**
+- **E39:**
+  - The Crowd setting (rules, some people ask Claude, everyone asks Claude) and Claude's reasons in the person readout.
+  - The rules-vs-Claude comparison and the AI summary in the Report tab.
+  - The Fire and scenario card review: plain labels, fire size and speed instead of the fire type, click to place the fire, no door overrides. Comparison headlines now lead with the trapped count when it changes.
+- **A12, the Claude switch:**
+  - Opus 5.5 writes the report cards, with an AI summary whose fix is worded as an idea to check, and does the tracer first pass (12 of 12 rooms exact on the example plan).
+  - Haiku 5.5 drives the LLM crowd: 160 people take 4 to 5 minutes and about $0.03.
+  - JSON comes through structured outputs, there is a spend cap (CLAUDE_BUDGET_USD, default 25), and the all-LLM crowd cap is now 200.
+- **Final demo data:**
+  - The rules-vs-Claude pair on the example building: Claude made all 395 decisions; 90% out in 122.6 s against the rules' 120.7 s, 1 trapped in both.
+  - All three report cards rewritten by Claude.
+  - Claude API spend tonight is about $0.20 of the user's $101.
+
+**Netlify:** the one approved deploy went out at 21:56 (main@f5c5d07, built in 16 s). The live site shows the Fireproof UI, spreading fire, the wood-vs-drywall and rules-vs-Claude comparisons, and the Claude report cards. Builds are stopped again, so later pushes don't deploy.
+
+## Sat 21:05: new demo data merged; the app's AI is switching to Claude
+
+**Merged:**
+- **A11 part 2, the demo rerun:** every demo run now has fire spreading room to room, with C27's traps and the hairline fix.
+  - The office's worst fire, R203c, traps 13.7 people per fire, down from 29.0. R237b now traps nobody.
+  - New office pair, R143 with drywall vs wood: drywall gets 90% out in 134 s with 0 trapped; with wood 90% never get out, 33 are trapped, and 37 rooms burn instead of 21.
+  - Propped stair doors: about 69% more time in smoke, and evacuation is no slower.
+
+**Running on the lead's machine:**
+- **A12, the Claude switch:** the user moved the app's AI from Gemini to the Claude API, paid from their own credits. Opus 5.5 writes the report cards, which gain an AI summary, and does the tracer first pass. Haiku 5.5 drives the "LLM crowd". A spend cap is built in.
+- **E39:**
+  - a Crowd setting (rules, some people ask Claude, everyone asks Claude);
+  - Claude's reasons in the person readout;
+  - a rules-vs-Claude comparison and the AI summary in the Report tab;
+  - the Fire and scenario card review: plain labels, fire size and speed instead of the fire type, click to place the fire, no door overrides.
+
+**Netlify:** builds stay stopped. One deploy goes out after the Claude work lands, with the user's OK already given.
+
+## Sat 19:45: E38 merged; Netlify builds stopped
+
+- **E38 is merged** (on screen, burning rooms tint orange to red, fire markers appear, and closed doors turn red; the material setting works in live mode), so every UI task in the Ember plan is on main.
+- **Netlify builds are stopped** to save the team's free credits (the lead's call). The public site keeps the 7:33 PM deploy: the full Fireproof UI with the old demo data. Pushes to main no longer update it; the lead publishes the final version by hand.
+- **Netlify's free plan deploys only commits by one Git contributor on a private repo.** Commits from other accounts (such as web uploads) fail to deploy.
+- **The A11 demo rerun is running:** example building done, clinic in progress, office last. Data expected around 9 PM.
+
+## Sat 18:50: E37, C27 and most of A11 part 2 merged; the demo rerun is running
+
+**Merged:**
+- **E37:** the app is now called **Fireproof**. It has the walls-and-glass building with light slabs and orange stair cores, and four floor views: stacked, single, side by side and ghost. Also: a fire and smoke visibility card, people colored by status or type, readable exit names, and the FPS counter shown only with `?perf`.
+- **C27, with C23's hairline fix:** a room that catches fire closes its doors and traps anyone still inside, and runs list each room's ignition time.
+  - Office R143 over 400 s: wood burns 37 rooms and traps 23 people in burning rooms; drywall burns 21 and traps none there.
+  - The hairline fix removed people wrongly stuck in sub-body strips beside keep-outs: demo R237b goes from 12 trapped to 0, and R203c from 31 to 16.
+- **A11 part 2, steps 6 to 9:** the wood-vs-drywall pair in the precompute, fire-spread sentences in the report cards, and backend checks for `fire.material`. The examples were regenerated with `fire.rooms`.
+
+**Running on the lead's machine:**
+- **E38:** the fire spreading on screen and the material dropdown.
+- **The A11 demo rerun:** all three buildings, started 18:50, about 2 hours. Its data reaches main only after E38.
+
+**Known issue, for C later:** after the hairline fix, three clinic rooms (R1B12, R2C11, R2D12) get no fire keep-out, which brings the clinic's no-cut count from 7 to 10. None is a demo room.
+
+## Sat 17:50: D25, E36 and C23 merged; the project is called Fireproof
+
+**Name:** the project is **Fireproof** (the lead's call). It replaces "Ember", "FirePass" and "Chokepoint". E37 puts it in the app header, About box, tracer bar and page title. **Aidan:** please retitle `FirePass.pptx`.
+
+**Merged:**
+- **D25:** fire spreads room to room at an illustrative speed per material. New runs now spread by default, and doors of burning rooms close.
+- **E36:** the Ember light theme and shell: collapsible top nav, left analytics sidebar, floor strip, timeline and legend card. The tracer moved to File > "Trace a floor plan". The public site shows it now.
+- **C23:** a fire in every room of the office and clinic (311 cases: 295 fine, 16 with stuck people). Keep-out gaps under 0.4 m are skipped. Repros for the rest are in the C plan.
+
+**Running on the lead's machine:**
+- **C27:** first closes the hairline strips beside fire keep-outs, where people got stuck and counted as trapped (R201: 26 → 0; R237b: 12 → 0). Then rooms that catch fire close their doors and trap the people still inside.
+- **E37:** the grey walls-and-glass building, four floor views, the fire and smoke visibility card and agent type colors. Exit bars get readable names, and the FPS counter only shows with `?perf`.
+
+**Next:** the A11 part 2 demo rerun starts as soon as C27 is merged. Its data reaches main only after E38. Target: new demo data live around 9:45 PM.
+
+## Sat 17:20: no merges; Aidan's deck is on main
+
+**On main:**
+- **Aidan uploaded `FirePass.pptx` (6 slides) and `Architecture.png` to the repo root** through GitHub's web page. They're accurate to the app. The deck names the project "FirePass", while the Ember redesign (E36) puts "Ember" in the header, so the team needs to pick one name for the app, Devpost, slides and video.
+
+**Running on the lead's machine:** D25 (fire spread), E36 (Ember shell) and C23 (every-room sweep). No branch has new commits yet.
+
+**Tracer check (17:10, lead's laptop):** load trace, Export to 3D, and a run in the traced building all work. The Gemini first pass proposed 12 rooms that line up with the example plan in about 30 s. Doors and stair groups stay manual. The public site has no backend, so the AI pass and Export are off there.
+
+## Sat 16:50: A11 part 1 merged; D25, E36 and C23 running
+
+**Merged:**
+- **A11 part 1:** new optional fields: scenario `fire.material` (concrete, drywall or wood; default drywall), and run `fire.rooms` (`{room, floor, ignite}`) plus `fire.material`. Also a sample spreading-fire run, `contracts/run.spread.fixture.json` (wood, 15 rooms), and the shared frontend types in `frontend/src/data/types.ts`.
+
+**Running on the lead's machine:**
+- **D25** (ws-d): fire spreads room to room at a speed set by the material.
+- **E36** (ws-e): the Ember theme and shell layout.
+- **C23** (ws-c): the every-room fire sweep. It wraps up by 18:30, then C27 (spread coupling) starts once D25 is merged.
+
+**Notes:**
+- **E:** build the fire visuals against `contracts/run.spread.fixture.json`. Keep the file: A11 part 2 doesn't delete it.
+- **No new tasks are being written:** the team moved to other work at 14:30, and the Ember plan has enough work queued for the lead's machine.
+
+## Sat 15:50: D23, E34, E35 merged; the Ember redesign is approved
+
+**Merged:**
+- **D23:** readable names for unnamed interior doors, such as "Door between CORRIDOR and SCIF OPEN OFFICE".
+- **E34:** trade-off badges on measured fixes, and readable labels in the fix list, door picker and tour.
+- **E35:** in live mode, a failed or timed-out run loads the nearest precomputed fire, with a note.
+
+**Approved design** (`docs/superpowers/specs/2026-11-14-ember-ui-fire-spread-design.md`, based on `docs/design/ember-ui.md`):
+- **UI:** the Ember UI, with a light theme, collapsible top nav, left analytics, bottom floor strip and timeline, and a grey walls-only building.
+- **Floor views:** stacked, single, side by side and ghost.
+- **Visibility and colors:** fire and smoke visibility controls; agents colored by status or type.
+- **Simulated fire spread,** room to room, at concrete/drywall/wood speeds, labeled illustrative.
+
+The lead's machine is writing the plan now. It runs D25 (spread model), C27 (sim coupling), A11 (formats and the demo rerun) and E36 to E38 (UI) tonight. The precompute reruns around 9 to 11 PM, and the freeze is at 2 AM.
+
 ## Sat 15:20: D22 merged; C23 to C26 queued
 
 - **Merged:** ws-d **D22**. A measured fix that costs something now reads as a trade-off and names the fires behind the cost. For example: "Trade-off: Keep Exit Main entrance clear (vs blocked): 90% out 58 s sooner…, but 1.3 more trapped per fire (47 of 47 in fires in Lobby (L1), which this exit opens onto)." Five demo fixes become trade-offs; they show on the site after the precompute rerun.

@@ -1,31 +1,37 @@
 import { creditParts, loadBuildingIndex } from './model/buildingIndex'
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Eye, Layers3 } from 'lucide-react'
 import './App.css'
-import { useApp } from './store/app'
+import { DEFAULT_EXPLODE, splitKeys, useApp } from './store/app'
 import { useClock } from './store/clock'
 import type { LoadedRun } from './store/app'
-import TopBar from './ui/TopBar'
+import TopNav from './ui/TopNav'
+import TracerBar from './ui/TracerBar'
+import AnalyticsSidebar from './ui/AnalyticsSidebar'
+import FloorStrip from './ui/FloorStrip'
+import Timeline from './ui/Timeline'
+import AlarmBadge from './ui/AlarmBadge'
+import LegendCard from './ui/LegendCard'
+import FloatingCard from './ui/FloatingCard'
+import LayersCard from './ui/LayersCard'
+import VisibilityCard from './ui/VisibilityCard'
 import Scene from './scene/Scene'
 import SplitView from './scene/SplitView'
-import Toolbar3D from './ui/Toolbar3D'
-import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
-import Scrubber from './ui/Scrubber'
 import ReplaySummary from './ui/ReplaySummary'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
-import AgentLegend from './ui/AgentLegend'
 import ErrorBoundary from './ui/ErrorBoundary'
 import NewBuildingCard from './ui/NewBuildingCard'
-import TourCaption from './tour/TourCaption'
-import { useTour, useTourKeys } from './tour/tour'
-import ShareCard from './ui/ShareCard'
+import { useCompareKey } from './ui/PairCompare'
 import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
-import { findPrecomputedVariant } from './model/whatif'
+import { materialPartner } from './model/fireSpread'
+import { brainPartner, runLabel } from './model/brain'
 import { loadHeadlines, readPack } from './model/headlines'
-import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
+import { cameraPose, decodeLink, linkCtl, loadIndexIds, panePoses, useLinkSync } from './model/link'
+import { framePoints } from './scene/geometry'
 import type { LinkState } from './model/link'
-import type { DemoRun, DoorState } from './data/types'
+import type { DemoRun } from './data/types'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
@@ -40,9 +46,8 @@ import {
 } from './data/loader'
 
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
-  Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour, __pose: cameraPose })
+  Object.assign(window, { __app: useApp, __clock: useClock, __pose: cameraPose, __panePoses: panePoses, __geo: { framePoints } })
 
-const ResultsPanel = lazy(() => import('./ui/ResultsPanel'))
 const PrintReport = lazy(() => import('./ui/PrintReport'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
 
@@ -66,7 +71,7 @@ async function selectBuilding(id: string) {
     const first = runs.find((r) => r.whatIf === null)
     if (first) {
       const run = await loadDemoRun(first)
-      useApp.getState().addRun({ key: first.id, label: first.label, run, doors: first.doors ?? {} })
+      useApp.getState().addRun({ key: first.id, label: runLabel(first.label, first.brain), run, doors: first.doors ?? {} })
     }
     useApp.getState().setNotice(null)
   } catch (e) {
@@ -76,14 +81,14 @@ async function selectBuilding(id: string) {
   }
 }
 
-async function ensureRun(entry: DemoRun, whatIf?: { baselineKey: string; door: string; state: DoorState }) {
+async function ensureRun(entry: DemoRun, whatIf?: LoadedRun['whatIf']) {
   const st = useApp.getState()
   if (st.runs[entry.id]) {
     if (st.activeRunKey !== entry.id) st.switchRun(entry.id)
     return
   }
   const run = await loadDemoRun(entry)
-  useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
+  useApp.getState().addRun({ key: entry.id, label: runLabel(entry.label, entry.brain), run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
 }
 
 export async function restoreLink(link: LinkState) {
@@ -94,14 +99,23 @@ export async function restoreLink(link: LinkState) {
     const entry = link.r ? entries.find((e) => e.id === link.r) : undefined
     if (entry) {
       if (st0.activeRunKey !== entry.id || !st0.runs[entry.id]) {
-        if (entry.whatIf === null) await ensureRun(entry)
-        else {
-          const base = entries.find((e) => e.buildingId === entry.buildingId && e.fire.room === entry.fire.room && e.whatIf === null)
-          if (base) {
-            await ensureRun(base)
-            const hit = findPrecomputedVariant([entry], { buildingId: link.b, doors: base.doors ?? {} })
-            await ensureRun(entry, { baselineKey: base.id, door: hit?.door ?? '?', state: hit?.state ?? 'propped' })
+        if (entry.whatIf === 'material') {
+          // A material run (the wood one) opens against its drywall partner; the link says whether the two are side by side.
+          const partner = materialPartner(entries, entry)
+          if (partner) {
+            await ensureRun(partner)
+            await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', material: entry.material ?? 'wood' })
           } else await ensureRun(entry)
+        } else if (entry.whatIf === 'brain') {
+          // A Claude crowd run opens against its rules partner, the same fire.
+          const partner = brainPartner(entries, entry)
+          if (partner) {
+            await ensureRun(partner)
+            await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', brain: entry.brain ?? 'llm' })
+          } else await ensureRun(entry)
+        } else {
+          // A plain run opens as it is. So does an old link to a door what-if (the app has none now): the comparison it asks for is ignored.
+          await ensureRun(entry)
         }
       }
     } else if (link.ff !== undefined && link.fx !== undefined && link.fy !== undefined) {
@@ -116,17 +130,31 @@ export async function restoreLink(link: LinkState) {
     }
     const patch: Partial<ReturnType<typeof useApp.getState>> = {}
     const cur = useApp.getState()
-    if (link.tab) patch.resultsTab = link.tab
+    if (link.tab) {
+      patch.resultsTab = link.tab
+      // A link's tab is there to be looked at, so show the sidebar that holds it. (A phone's default Overview link leaves the replay uncovered.)
+      if (link.tab !== 'results' || !window.matchMedia('(max-width: 900px)').matches) patch.sidebarOpen = true
+    }
     if (link.m) patch.riskMetric = link.m
     if (link.l) {
       const l = { ...cur.layers }
       for (const k of Object.keys(l) as (keyof typeof l)[]) l[k] = link.l.includes(k)
       patch.layers = l
     }
-    if (link.x !== undefined) patch.explode = link.x
-    if (link.f && cur.building?.floors.some((f) => f.id === link.f)) patch.visibleFloors = [link.f]
-    if (link.split !== undefined) patch.split = link.split
+    // A link writes the floor gap only when it isn't the default, so a link without one means the default.
+    patch.explode = link.x ?? DEFAULT_EXPLODE
+    // (A link to a door what-if asks for it side by side with its baseline: that comparison is gone, so its split is ignored too.)
+    if (link.split !== undefined && entry?.whatIf !== 'propped') patch.split = link.split
     useApp.setState(patch)
+    // The floor view: v=side is side by side, v=ghost is ghost on f, f alone is one floor, and none is stacked. A link that carries a camera
+    // pose keeps it (the view change doesn't re-frame the camera); one without lets the camera frame the view.
+    const floor = link.f && cur.building?.floors.some((f) => f.id === link.f) ? link.f : undefined
+    const fit = !link.cam
+    const setView = useApp.getState().setViewMode
+    if (link.v === 'side') setView('side', undefined, fit)
+    else if (link.v === 'ghost') setView('ghost', floor, fit)
+    else if (floor) setView('single', floor, fit)
+    else setView('stacked', undefined, fit)
     if (link.t !== undefined) {
       useClock.getState().seek(link.t)
       useClock.setState({ playing: false })
@@ -137,8 +165,6 @@ export async function restoreLink(link: LinkState) {
     linkCtl.restoring = false
   }
 }
-
-let startLink: LinkState | null = null
 
 async function startup() {
   const app = useApp.getState()
@@ -152,13 +178,9 @@ async function startup() {
       await selectBuilding(SAMPLE_BUILDING.id)
       return
     }
-    let link: LinkState | null = null
-    if (!params.has('demo')) {
-      await loadIndexIds()
-      link = decodeLink(location.hash)
-      if (link) linkCtl.restoring = true
-    }
-    startLink = link
+    await loadIndexIds()
+    const link: LinkState | null = decodeLink(location.hash)
+    if (link) linkCtl.restoring = true
     let list = await listBuildings().catch((e) => {
       useApp.getState().setNotice(msg(e))
       return []
@@ -297,10 +319,32 @@ function Credits() {
   )
 }
 
+/** Screen-reader announcements for the two drawers: navigation and analytics. */
+function ShellStatus() {
+  const navOpen = useApp((s) => s.navOpen)
+  const sidebarOpen = useApp((s) => s.sidebarOpen)
+  const prev = useRef({ navOpen, sidebarOpen })
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    const p = prev.current
+    prev.current = { navOpen, sidebarOpen }
+    const m: string[] = []
+    if (p.navOpen !== navOpen) m.push(navOpen ? 'Navigation expanded' : 'Navigation collapsed')
+    if (p.sidebarOpen !== sidebarOpen) m.push(sidebarOpen ? 'Analytics shown' : 'Analytics hidden')
+    if (m.length) setMsg(m.join('. '))
+  }, [navOpen, sidebarOpen])
+  return (
+    <p id="shell-status" className="sr-only" role="status">
+      {msg}
+    </p>
+  )
+}
+
 export default function App() {
-  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView } = useApp()
-  const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
-  const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
+  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView, navOpen, sidebarOpen, sidebarWide, card, splitLeft, splitRight, editSide } = useApp()
+  const keys = splitKeys({ runs, runOrder, activeRunKey, splitLeft, splitRight })
+  const splitOn = split && !!keys.left && !!keys.right && !!runs[keys.left] && !!runs[keys.right] && keys.left !== keys.right
+  const side = splitOn ? editSide ?? 'L' : undefined
   const onOpenBuilding = useCallback(async (id: string) => {
     try {
       if (getMode() !== 'live') useApp.getState().setMode(await detectMode())
@@ -317,16 +361,7 @@ export default function App() {
       useApp.getState().setNotice(msg(e))
     }
   }, [])
-  const [phone, setPhone] = useState(() => window.matchMedia('(max-width: 900px)').matches)
-  const [openPanel, setOpenPanel] = useState<'left' | 'right' | null>(null)
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 900px)')
-    const on = () => setPhone(mq.matches)
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-
-  useTourKeys()
+  useCompareKey()
   useLinkSync()
   useEffect(() => {
     const on = async () => {
@@ -354,16 +389,14 @@ export default function App() {
   }, [view])
   useEffect(() => {
     void startup().then(() => {
-      if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
-      else if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
-      if (startLink && startLink.tab && startLink.tab !== 'results' && window.matchMedia('(max-width: 900px)').matches) setOpenPanel('right')
+      if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
     })
   }, [])
 
   if (view === 'tracer')
     return (
       <div className="app tracing" key="tracing">
-        <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
+        <TracerBar />
         <main className="center">
           <Suspense fallback={<div className="pad">Loading tracer…</div>}>
             <TracerPage onOpenBuilding={(id) => void onOpenBuilding(id)} />
@@ -374,64 +407,82 @@ export default function App() {
     )
 
   return (
-    <div className="app" key="replay">
+    <div className={'app' + (sidebarOpen ? '' : ' sb-closed') + (sidebarOpen && sidebarWide ? ' sb-wide' : '') + (navOpen ? ' nav-open' : '')} key="replay">
       <button className="skip" onClick={() => document.getElementById('play')?.focus()}>Skip to replay controls</button>
-      <TopBar onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
-      <aside className={'left' + (phone && openPanel !== 'left' ? ' collapsed' : '')}>
-        <h3>Scenario</h3>
-        <ScenarioPanel />
-      </aside>
-      {phone && (
-        <div className="toggles">
-          {(['left', 'right'] as const).map((k) => (
-            <button key={k} className={openPanel === k ? 'on' : ''} onClick={() => setOpenPanel(openPanel === k ? null : k)}>
-              {k === 'left' ? 'Scenario' : 'Results'}
-            </button>
-          ))}
-        </div>
-      )}
+      <TopNav onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
+      <AnalyticsSidebar />
       <main className="center">
-        <>
-            <ErrorBoundary label="3D view">
-              {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
-            </ErrorBoundary>
-            <Toolbar3D />
-            {notice && (
-              <div className="banner" role="status">
-                <span>{notice}</span>
-                <button aria-label="Dismiss" onClick={() => useApp.getState().setNotice(null)}>×</button>
-              </div>
+        <ErrorBoundary label="3D view">
+          {splitOn ? <SplitView leftKey={keys.left as string} rightKey={keys.right as string} /> : <Scene />}
+        </ErrorBoundary>
+        {notice && (
+          <div className="banner" role="status">
+            <span>{notice}</span>
+            <button aria-label="Dismiss" onClick={() => useApp.getState().setNotice(null)}>×</button>
+          </div>
+        )}
+        {loading && !activeRunKey && (
+          <div className="loadingcover">
+            <span className="spinner" /> {loading}
+          </div>
+        )}
+        <div className="rightcol">
+          <LegendCard />
+          <div className="rail">
+            <button
+              type="button"
+              className="railbtn"
+              aria-label="Layers"
+              title="Layers"
+              aria-expanded={card === 'layers'}
+              onClick={() => useApp.getState().setCard(card === 'layers' ? null : 'layers')}
+            >
+              <Layers3 size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            {card === 'layers' && (
+              <FloatingCard id="layers" title="Layers" className="layerscard">
+                <LayersCard />
+              </FloatingCard>
             )}
-            {loading && !activeRunKey && (
-              <div className="loadingcover">
-                <span className="spinner" /> {loading}
-              </div>
+            <button
+              type="button"
+              className="railbtn"
+              aria-label="Fire and smoke visibility"
+              title="Fire and smoke visibility"
+              aria-expanded={card === 'visibility'}
+              onClick={() => useApp.getState().setCard(card === 'visibility' ? null : 'visibility')}
+            >
+              <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            {card === 'visibility' && (
+              <FloatingCard id="visibility" title="Fire and smoke visibility" className="visibilitycard">
+                <VisibilityCard />
+              </FloatingCard>
             )}
-            <AgentLegend />
-            <AgentReadout />
-            <NewBuildingCard />
-            <TourCaption />
-            <ReplaySummary />
-          </>
+          </div>
+        </div>
+        {card === 'scenario' && (
+          <FloatingCard key={side ?? 'one'} id="scenario" title={side ? `${side === 'L' ? 'Left' : 'Right'} side: fire and scenario` : 'Fire and scenario'} className={'scenariocard' + (side === 'R' ? ' side-r' : '')}>
+            <ScenarioPanel side={side} />
+          </FloatingCard>
+        )}
+        <NewBuildingCard />
+        <ReplaySummary />
+        <AlarmBadge split={splitOn} />
       </main>
-      <aside className={'right' + (phone && openPanel !== 'right' ? ' collapsed' : '')}>
-        <Suspense fallback={<div className="pad dim">Loading…</div>}>
-          <ErrorBoundary label="Results">
-            <ResultsPanel />
-          </ErrorBoundary>
-        </Suspense>
-      </aside>
-      <footer className="bottom"><Scrubber /></footer>
+      <footer className="dock">
+        <FloorStrip />
+        <Timeline />
+        <Credits />
+      </footer>
       <ClockDriver />
       <AboutOverlay />
-      <ShareCard />
       {printView && (
         <Suspense fallback={null}>
           <PrintReport />
         </Suspense>
       )}
-      <Credits />
-
+      <ShellStatus />
     </div>
   )
 }

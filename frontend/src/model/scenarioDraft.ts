@@ -1,8 +1,6 @@
 import type { Building, DemoRun, Scenario, Vec2 } from '../data/types'
 import { pointInPolygon } from '../scene/geometry'
 
-export const FIRE_TYPES = ['kitchen', 'bedroom', 'battery', 'trash', 'liquid']
-
 export function makeDraft(building: Building, base?: Scenario | null): Scenario {
   const d: Scenario = base
     ? (JSON.parse(JSON.stringify(base)) as Scenario)
@@ -20,6 +18,12 @@ export function makeDraft(building: Building, base?: Scenario | null): Scenario 
   d.doors ??= {}
   return d
 }
+
+/** What a Run button says while the scenario has no fire yet (the backend refuses a run with no fire floor and room). */
+export const PLACE_FIRE_FIRST = 'Click a room to place the fire first'
+
+/** True once the scenario's fire sits in a room: a click on a room, or the room list, writes the fire's floor, room and spot. */
+export const firePlaced = (s: Pick<Scenario, 'fire'> | null | undefined): boolean => !!s?.fire.floor && !!s.fire.room
 
 /** The room containing floor-local point (x, y), or null for stairs, outside or no room. */
 export function roomAt(building: Building, floorId: string, x: number, y: number) {
@@ -50,6 +54,11 @@ export function nearestPrecomputedRun(
   }
   return best && { entry: best.entry, distance: best.distance }
 }
+
+/** A profile's share as the whole percent the scenario card shows (the scenario keeps fractions from 0 to 1). */
+export const toPercent = (share: number | undefined): number => Math.round(Math.max(0, share ?? 0) * 100)
+/** The share (0 to 1) of a percent typed into the card: a whole percent, from 0 to 100. */
+export const fromPercent = (percent: number): number => Math.min(100, Math.max(0, Math.round(percent))) / 100
 
 /** Mix normalized to sum 1; falls back to all typical. */
 export function normalizeMix(mix: Scenario['occupants']['mix']) {

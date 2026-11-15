@@ -10,6 +10,7 @@ import shapely
 
 from fire.grid import CLOSED_DOOR_M, get_graph
 from fire.presets import fire_params, hrr_kw
+from fire.spread import MATERIALS, ignition_schedule, material_name, room_hrr_kw
 
 V_BASE_MS = 0.25
 V_PER_MW = 0.5
@@ -26,7 +27,8 @@ TABLE_S = 1800
 
 
 class FireModel:
-    def __init__(self, building: dict, scenario: dict):
+    def __init__(self, building: dict, scenario: dict, spread: bool = True):
+        """`spread=False` keeps the fire in its ignition room (the smoke-only model); a bad `fire.material` still raises."""
         self.building = building
         self.scenario = scenario
         scale = scenario.get("smokeScale", {})
@@ -44,6 +46,7 @@ class FireModel:
         fire = scenario["fire"]
         self.start = float(fire.get("start", 0))
         self.params = fire_params(fire, scenario.get("sprinklers", False))
+        self.material = material_name(fire)
         self.graph = get_graph(building)
         floor_index = self.graph.floor_index.get(fire["floor"])
         if floor_index is None:
@@ -57,6 +60,19 @@ class FireModel:
             polygon = room["polygon"]
         source = self.graph.node_at(fire["floor"], fire["x"], fire["y"], polygon)
         self.source_xy = self.graph.floors[floor_index].xy[source - self.graph.offset[floor_index]].copy()
+        # D25: the first entry is the ignition room, which keeps today's heat curve, doors and keep-out. Every other
+        # room adds heat from its ignition time on and closes its doors (exterior doors too).
+        schedule = ignition_schedule(building, scenario)
+        self._schedule = schedule if spread else schedule[:1]
+        spreading = self._schedule[1:]
+        doors = {}
+        for floor in building["floors"]:
+            for door in floor.get("doors", []):
+                for joined in door.get("connects") or []:
+                    doors.setdefault((floor["id"], joined), []).append(door["id"])
+        self._spread_doors = [(e["ignite"], doors.get((e["floor"], e["room"]), [])) for e in spreading]
+        self._spread_ignites = [e["ignite"] for e in spreading]
+        self._spread_flashover = MATERIALS[self.material]["flashover"]
         states = {door["id"]: door.get("state", "open")
                   for floor in building["floors"] for door in floor.get("doors", [])}
         states.update(scenario.get("doors", {}))
@@ -65,7 +81,10 @@ class FireModel:
         self.dist = self.graph.path_distance(source, penalties)
         times = np.arange(0, TABLE_S + 0.25, 0.25)
         q = np.array([hrr_kw(self.params, t) for t in times])
-        speed = np.clip(V_BASE_MS + V_PER_MW * q / Q_REF_KW, V_BASE_MS, V_MAX_MS) * factors["speed"]
+        for ignite in sorted(self._spread_ignites):  # sorted, so the sum never depends on the building's room order
+            ratio = np.clip((times - (ignite - self.start)) / self._spread_flashover, 0.0, 1.0)
+            q = q + self.params["peakKw"] * (ratio * ratio)
+        speed = np.clip(V_BASE_MS + V_PER_MW * q / Q_REF_KW, V_BASE_MS, V_MAX_MS)
         reach = np.r_[0.0, np.cumsum((speed[:-1] + speed[1:]) * 0.125)]
         self.arrival = np.interp(self.dist, reach, times, right=np.inf)
         self._attenuation = np.exp(-self.dist / DECAY_M)
@@ -77,20 +96,29 @@ class FireModel:
         self._update(0.0, 0.0)
 
     def hrr(self, t: float) -> float:
-        return float(hrr_kw(self.params, t - self.start))
+        """Heat release rate in kW: the ignition room's own curve plus every room that has since caught fire."""
+        q = float(hrr_kw(self.params, t - self.start))
+        if not self._spread_ignites:
+            return q
+        return math.fsum([q] + [room_hrr_kw(self.params["peakKw"], self._spread_flashover, t - ignite)
+                                for ignite in self._spread_ignites if ignite <= t])
 
     def _update(self, t: float, dt: float) -> None:
         q = self.hrr(t)
+        own = float(hrr_kw(self.params, t - self.start))  # the flame footprint is the ignition room's alone
         age = np.maximum(0.0, t - self.start - self.arrival)
         self._density = np.clip(100 * min(1.0, q / Q_REF_KW) * self.params["smokeFactor"]
                                 * self._attenuation * (-np.expm1(-age / RISE_S)) * self.density_scale, 0, 100)
         self._hold = np.where(self._density >= UNTENABLE_D, self._hold + dt, 0.0)
-        self._footprint = (q > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(q / Q_REF_KW))
+        self._footprint = (own > 0) & (self.dist <= FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(own / Q_REF_KW))
         self._smoke_untenable = self._hold >= UNTENABLE_HOLD_S
         self._untenable = self._smoke_untenable | self._footprint
         self._blocked = {key for offset, floor in zip(self.graph.offset, self.graph.floors)
                          for key, nodes in floor.door_nodes.items()
                          if self._untenable[offset + nodes].any()}
+        for ignite, doors in self._spread_doors:
+            if ignite <= t:
+                self._blocked.update(doors)
 
     def step(self, t: float) -> None:
         t = float(t)
@@ -124,7 +152,17 @@ class FireModel:
         return bool(self._untenable[node]) if node >= 0 else False
 
     def blocked_doors(self) -> set[str]:
+        """Doors an untenable cell sits in, plus every door of a room that has caught fire (not the ignition room's)."""
         return self._blocked.copy()
+
+    def burning_rooms(self, t: float) -> set[tuple[str, str]]:
+        """(floor id, room id) of every room on fire at time t, the ignition room included."""
+        return {(e["floor"], e["room"]) for e in self._schedule if e["ignite"] <= t}
+
+    def ignition_times(self) -> list[dict]:
+        """[{"room", "floor", "ignite"}] for the rooms that ignite by maxTime, the ignition room first, then by time.
+        Fresh copies: the caller may change them."""
+        return [dict(e) for e in self._schedule]
 
     def snapshot(self, floor_id: str) -> dict | None:
         index = self.graph.floor_index.get(floor_id)

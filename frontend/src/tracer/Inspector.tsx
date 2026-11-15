@@ -228,7 +228,7 @@ function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
           <button
             className="tr-right"
             disabled={!!ai.why || busy}
-            title={ai.why || "Send this floor's image to Gemini; its rooms come back as a dashed draft (rooms only: you add the doors)"}
+            title={ai.why || "Send this floor's image to Claude; its rooms come back as a dashed draft (rooms only: you add the doors)"}
             onClick={ai.onRun}
           >
             {drafts > 0 ? "Propose again" : "Propose rooms"}
@@ -238,7 +238,7 @@ function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
       {busy && here ? (
         <p className="tr-small">
           <span className="tr-spin" aria-hidden="true" />
-          {` Waiting for Gemini: ${ai.seconds} s (usually 5–20 s, at most about 2 min)`}
+          {` Waiting for Claude: ${ai.seconds} s (usually 20–60 s, at most about 2½ min)`}
         </p>
       ) : outcome ? (
         <>
@@ -249,7 +249,7 @@ function AiPanel({ floor, ai }: { floor: TraceFloor; ai: AiControls }) {
         <p className="tr-note">
           {ai.why
             ? `${ai.why}.`
-            : "Gemini proposes this floor's rooms from its image: a dashed draft until you edit or accept each room. Doors and stair groups stay yours to add. Public plans only."}
+            : "Claude proposes this floor's rooms from its image: a dashed draft until you edit or accept each room. Doors and stair groups stay yours to add. Public plans only."}
         </p>
       )}
       {drafts > 0 && (

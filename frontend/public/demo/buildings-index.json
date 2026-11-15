@@ -48,6 +48,52 @@
    ]
   },
   {
+   "id": "example-office-plus",
+   "name": "Example office + extra stair (synthetic, 2 floors)",
+   "source": "synthetic",
+   "credits": "Synthetic example building made by the team; license: free to use, no attribution needed.",
+   "shortCredit": "Synthetic example building made by the team",
+   "file": "example-office-plus.json",
+   "scenario": "example-office-plus.scenario.json",
+   "floors": 2,
+   "rooms": 26,
+   "doors": 27,
+   "exits": 3,
+   "stairGroups": [
+    "SA",
+    "SB",
+    "SC"
+   ],
+   "walkableArea": 1073.9,
+   "vertices": 224,
+   "size": [
+    42.0,
+    20.2
+   ],
+   "perFloor": [
+    {
+     "id": "F1",
+     "level": 0,
+     "rooms": 13,
+     "doors": 15,
+     "exits": 3,
+     "stairs": 3,
+     "walkableArea": 547.5,
+     "vertices": 124
+    },
+    {
+     "id": "F2",
+     "level": 1,
+     "rooms": 13,
+     "doors": 12,
+     "exits": 0,
+     "stairs": 3,
+     "walkableArea": 526.4,
+     "vertices": 100
+    }
+   ]
+  },
+  {
    "id": "office",
    "name": "NIBS Office",
    "source": "ifc",

@@ -3,7 +3,9 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
 import { useClock } from '../store/clock'
-import { toWorld, floorY } from '../scene/geometry'
+import { useA11y } from '../ui/a11y'
+import { floorAlpha, floorPlace } from '../scene/geometry'
+import type { Place } from '../scene/geometry'
 import { nearestIndex } from './runIndex'
 import type { RunIndex } from './runIndex'
 import type { Building } from '../data/types'
@@ -23,9 +25,11 @@ export default function Trails({ ix, floors }: { ix: RunIndex; floors: FloorT[] 
   }, [ix])
   useFrame(() => {
     const t = useClock.getState().t
-    const { explode, visibleFloors } = useApp.getState()
+    const { explode, visibleFloors, viewMode, focusFloor, building } = useApp.getState()
     const fi = nearestIndex(ix.times, t)
-    const sig = `${fi}|${explode}|${visibleFloors?.join(',')}`
+    // Slate on the light canvas, white on black in high contrast.
+    const rgb = useA11y.getState().contrast ? [1, 1, 1] : [0.2, 0.25, 0.33]
+    const sig = `${fi}|${explode}|${visibleFloors?.join(',')}|${viewMode}|${focusFloor}|${rgb[0]}`
     if (fi < 0 || sig === last.current) return
     last.current = sig
     const n = ix.nAgents
@@ -35,21 +39,21 @@ export default function Trails({ ix, floors }: { ix: RunIndex; floors: FloorT[] 
     const col: number[] = []
     const span = Math.max(1e-6, ix.times[fi] - ix.times[f0])
     const na = Math.min(n, TRAIL_MAX_AGENTS)
+    // Where each run floor sits now; trails are left off the faint floors of the ghost view.
+    const places: (Place | null)[] = floors.map((f) => (f && (!visibleFloors || visibleFloors.includes(f.id)) && floorAlpha(viewMode, focusFloor, f.id) === 1 ? floorPlace(building, f, viewMode, explode) : null))
     for (let i = 0; i < na; i++) {
       if (t > ix.exitT[i]) continue
       for (let g = f0; g < fi; g++) {
         const a = g * n + i
         const b = a + n
         if (ix.fl[a] < 0 || ix.fl[a] !== ix.fl[b] || ix.st[a] < 0 || ix.st[b] < 0) continue
-        const f = floors[ix.fl[a]]
-        if (!f || (visibleFloors && !visibleFloors.includes(f.id))) continue
-        const y = floorY(f, explode) + 0.1
-        const w0 = toWorld(ix.x[a], ix.y[a], y)
-        const w1 = toWorld(ix.x[b], ix.y[b], y)
-        pos.push(w0[0], w0[1], w0[2], w1[0], w1[1], w1[2])
+        const pl = places[ix.fl[a]]
+        if (!pl) continue
+        const y = pl.y + 0.1
+        pos.push(ix.x[a] + pl.dx, y, -ix.y[a], ix.x[b] + pl.dx, y, -ix.y[b])
         const al0 = (ix.times[g] - ix.times[f0]) / span
         const al1 = (ix.times[g + 1] - ix.times[f0]) / span
-        col.push(1, 1, 1, al0 * 0.8, 1, 1, 1, al1 * 0.8)
+        col.push(rgb[0], rgb[1], rgb[2], al0 * 0.8, rgb[0], rgb[1], rgb[2], al1 * 0.8)
       }
     }
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))

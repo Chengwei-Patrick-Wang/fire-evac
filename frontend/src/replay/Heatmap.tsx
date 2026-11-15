@@ -2,8 +2,10 @@ import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
 import { b64ToBytes } from '../model/decode'
-import { floorY, gridPlacement, toWorld } from '../scene/geometry'
+import { floorAlpha, gridPlacement, toPlaced } from '../scene/geometry'
+import { usePlace } from '../scene/usePlace'
 import type { Heatmap as HeatmapT } from '../data/types'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 // inferno-like stops
 const STOPS: [number, number, number][] = [
@@ -24,9 +26,11 @@ const LUT = (() => {
 })()
 
 function HeatPlane({ hm }: { hm: HeatmapT }) {
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const visible = useApp((s) => s.visibleFloors)
-  const explode = useApp((s) => s.explode)
+  const viewMode = useApp((s) => s.viewMode)
+  const focusFloor = useApp((s) => s.focusFloor)
+  const place = usePlace()
   const floor = building?.floors.find((f) => f.id === hm.floor)
   const tex = useMemo(() => {
     const bytes = b64ToBytes(hm.d)
@@ -46,9 +50,9 @@ function HeatPlane({ hm }: { hm: HeatmapT }) {
   if (!tex || !floor || (visible && !visible.includes(floor.id))) return null
   const { center, size } = gridPlacement(hm)
   return (
-    <mesh position={toWorld(center[0], center[1], floorY(floor, explode) + 0.06)} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh position={toPlaced(place(floor), center[0], center[1], 0.06)} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[size[0], size[1]]} />
-      <meshBasicMaterial map={tex} transparent depthWrite={false} side={THREE.DoubleSide} />
+      <meshBasicMaterial map={tex} transparent opacity={floorAlpha(viewMode, focusFloor, floor.id)} depthWrite={false} side={THREE.DoubleSide} />
     </mesh>
   )
 }

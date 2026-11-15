@@ -5,7 +5,7 @@ import io
 import math
 
 from buildings.normalize import plan_to_building
-from fire.batch import door_label, run_many
+from fire.batch import NO_OPENING, NOT_WIDENABLE, door_label, run_many
 from fire.presets import sprinklers_matter
 from fire.whatif import _key, _why as whatif_why, compare, room_deltas, stair_doors, trapped_note
 
@@ -30,11 +30,12 @@ def widen_door(building: dict, door_id: str, extra=0.5) -> dict:
     if found is None:
         raise ValueError(f"unknown door {door_id}")
     floor, door = found
+    label = door_label(building, floor["id"], door_id)[1]  # D23: the errors below name the door, not its id
     connects, pieces = set(door["connects"]), len(floor["walkable"])
     dx, dy = (door["b"][i] - door["a"][i] for i in (0, 1))
     length = math.hypot(dx, dy)
     if length == 0:
-        raise ValueError(f"door {door_id} has no opening")
+        raise ValueError(NO_OPENING.format(label=label))
     u = (dx / length, dy / length)
     door["a"] = [v - extra / 2 * u[i] for i, v in enumerate(door["a"])]
     door["b"] = [v + extra / 2 * u[i] for i, v in enumerate(door["b"])]
@@ -47,7 +48,7 @@ def widen_door(building: dict, door_id: str, extra=0.5) -> dict:
     rebuilt = next(f for f in result["floors"] if f["id"] == floor["id"])
     opening = next((d for d in rebuilt["doors"] if d["id"] == door_id), None)
     if opening is None or set(opening["connects"]) != connects or len(rebuilt["walkable"]) != pieces:
-        raise ValueError(f"widening {door_id} changes room connections or walkable pieces")
+        raise ValueError(NOT_WIDENABLE.format(label=label))
     return result
 
 

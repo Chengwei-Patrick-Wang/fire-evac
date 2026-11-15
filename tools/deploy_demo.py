@@ -14,8 +14,8 @@ What it does, in order:
 
 Deploying needs the Netlify CLI to be logged in: set NETLIFY_AUTH_TOKEN, or run `npx netlify-cli login` once; and
 a site: --site SITE_ID (or NETLIFY_SITE_ID), or `npx netlify-cli link` once. Without --deploy none of that is needed.
---site-url https://NAME.netlify.app puts the site's address into this local build (the About overlay's QR code);
-a build made by Netlify itself takes it from $URL when VITE_SITE_URL is empty (see netlify.toml).
+--site-url https://NAME.netlify.app sets VITE_SITE_URL for this local build; the app no longer reads it (the About
+overlay's QR code was removed), and a build made by Netlify itself takes $URL when it is empty (see netlify.toml).
 Continuous deploys need none of this: the Netlify site linked to the GitHub repo rebuilds on every push to main.
 """
 from __future__ import annotations
@@ -94,7 +94,7 @@ def main(argv=None) -> int:
     p.add_argument("--deploy", action="store_true", help="really publish: a Netlify draft deploy (a preview URL)")
     p.add_argument("--prod", action="store_true", help="with --deploy: publish to the live site instead of a draft")
     p.add_argument("--site", metavar="SITE_ID", help="Netlify site id or name (else NETLIFY_SITE_ID, else the linked site)")
-    p.add_argument("--site-url", metavar="URL", help="the site's https URL, baked into this build for the QR code")
+    p.add_argument("--site-url", metavar="URL", help="the site's https URL, passed to the build as VITE_SITE_URL (the app no longer reads it)")
     p.add_argument("--skip-build", action="store_true", help="use the existing frontend/dist")
     args = p.parse_args(argv)
     if args.prod and not args.deploy:

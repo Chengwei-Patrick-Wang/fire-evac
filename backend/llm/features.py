@@ -10,33 +10,55 @@ tracer's first pass (A8).
 
 Report card. Every number is built here, in code, from the batch/v0 or run/v0 (and the building, for
 names). The model sees only the weak spots, the headline numbers and door and room names, and
-writes just the headline and one fix per spot: {headline, fixes: [{id, fix}]}. A headline with a
+writes just the headline, a summary and one fix per spot: {headline, summary, fixes: [{id, fix}]}. A headline with a
 number that is not in those facts (or the word "panic") gives way to the template headline; a fix
 for an unknown id is ignored, a missing or bad one is the per-kind template fix, and a long one is
-cut to 25 words. With the model off, down or slow the whole card is the template. Spots are
+cut to 25 words. The summary (3 to 4 sentences: what happened, where people got stuck and why, the best fix) is
+checked as the headline is (every number in the facts, no door id, no "panic", at most 120 words) and dropped alone
+when it fails; when it stands the card opens with it, under "## AI summary (Claude)" ("(Gemini)" for Gemini),
+and a template card has none. With the model off, down or slow the whole card is the template. Spots are
 batch.top[:3], or for a run the 3 doors with the most person-seconds of waiting. Smoke exposure
 (D10: run metrics.exposure, batch runs[].smokeSeconds and dosed; D11: batch whatIf[]) leads when
 present, evacuation time second: propping the stair doors moved t90 by +0.2 s on average but smoke
 exposure by +22% (measured Sat 3 AM). Long waits are framed as gaps in the building, never as
 traits of people (spec 12), and the card ends with the limits line and the writer line.
 
+Fire spread (A11). The numbers end with one sentence on the illustrative room-to-room spread (fire/spread.py). A batch
+gets it from the schedule at the base's material (fire.material, drywall when absent): the mean number of other rooms
+on fire by maxTime per fire, and the most for one fire room, named. A run gets it from its own fire.rooms and
+fire.material (C27's sim writes both) when both are there, and without them keeps the card it always had.
+
 Names. A spot is named in words, never by its door id: an IFC code like D$77wwb means nothing to a
-judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR (R121) and
-OPEN OFFICE (R143)" (an unnamed interior door is named by the two rooms it joins), "Fires starting
-in OPEN OFFICE (R203c)"; a room id after its name is fine, the 3D view labels rooms that way. D's
-`why` lines and what-if labels print door ids for unnamed doors ("Door D$77xwP (CORRIDOR to SCIF
-OPEN OFFICE)"): _Names.readable swaps those for the same label, so the JSON keeps its ids and the
-card never shows one. A headline or fix from the model that carries a door id is dropped like a
-bad number. One heading is built in _render, so the template and the model's card share it.
+judge. The bold heading is _Names.label: "Exit Stair S1 (west)", "Door between CORRIDOR and OPEN
+OFFICE" (an unnamed interior door is named by the two rooms it joins, with their room ids only where
+two doors would read the same), "Fires starting in OPEN OFFICE (R203c)"; a room id after its name is
+fine, the 3D view labels rooms that way. A door, an exit or a stair door gets its name from
+fire.batch.door_label (D23), the one rule for door names, so this heading, D's `why` lines, the
+headline pack and the report card read alike. _Names words a door from its rooms only where D's
+name shows the door's id (an exit with no name: D says "Exit DIlsnHU", the card "Exit from MENS RR
+(R135)"). `why` lines and what-if labels saved before D23 print door ids for unnamed doors ("Door
+D$77xwP (CORRIDOR to SCIF OPEN OFFICE)"): _Names.readable swaps those for the same label, so the
+JSON keeps its ids and the card never shows one. A headline or fix from the model that carries a
+door id is dropped like a bad number. One heading is built in _render, so the template and the
+model's card share it.
 
 Decisions. `obs` is sim/brain.py's: {idx, t, floor, x, y, profile, visibility, speed, current,
-trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?}]}. A decision is
+trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?, nearby?}]}. A decision is
 {target: one of the obs's option ids, action: "go" | "reroute" | "wait", reason: str}, or None,
-which means "use the rules". decide_batch makes one model call for the whole list (same length
-and order back); decide(obs) is decide_batch([obs])[0]. Actions are normalized to the obs: "go"
+which means "use the rules". decide_batch asks the model in chunks of at most 20 observations
+(balanced, and no fewer than 5 unless the list is shorter: a call takes about a second whatever its size, plus the
+time to write its answer), up to 8 calls at once in threads, and merges the answers by index (same length and order
+back); a chunk that fails or has not answered after DECIDE_WAIT (25 s) leaves its agents on the rules and the other
+chunks stand. decide(obs) is decide_batch([obs])[0]. Actions are normalized to the obs: "go"
 when there is no current target, "wait" when the target is the current one, else "reroute". Each
-call uses thinking "minimal" (1-5 s on gemini-3.5-flash against 5-13 s at its default) and the
-client's timeout, retry and fallback rules; anything that fails is None.
+call uses thinking "minimal" on Gemini (1-5 s on gemini-3.5-flash against 5-13 s at its default), role "agent" on Claude
+(claude-haiku-5-5 at effort low: 1.5-2 s for 5 observations, 4-5 s for 20, measured Sat), and the
+client's timeout, retry and fallback rules; anything that fails is None. An obs with exactly one usable option is not
+sent: it is decided in code (go to it, or keep it) with the reason "Only one way out from here" (65% of the calls of the
+first all-Claude run on a corridor fire). Every reason is made plain in code (_clean_reason): a field name (estS, queueWaitS,
+distM, visibilityM) becomes plain words ("estimated time"); one about age, walking pace, ability, other traits or panic, or
+one that argues with itself ("?", "No,"), is replaced by a reason built from the option numbers ("Shortest estimated
+time", "Shorter queue, a bit farther"); and it is cut to 12 words.
 
 First pass. propose_plan(image, hints) sends a PNG, JPEG or WebP floor plan with hints
 {metersPerPixel, width, height, name?, level?} for the image as sent, and asks for rooms only
@@ -47,8 +69,9 @@ doors: []} in floor meters, y up, from the image's bottom-left corner: (px * s, 
 It snaps every vertex to 0.25 m and drops polygons with fewer than 3 points, a point that is not
 two numbers, a vertex outside the image, no single clear shape after shapely.make_valid (a
 bow-tie), or under 1 m2; an unknown type becomes other; at most 60 rooms. Timeout 60 s per model
-(vision calls took 5-20 s, once 57 s). The call walks the client's chain with Gemini 2.x moved to
-the end (GEMINI_MODEL stays first): on the test floor (contracts/plan.example.json F1 drawn at
+(vision calls took 5-20 s, once 57 s; Claude's tracer role has its own longer least, see client.py). The call walks the
+client's Gemini chain with Gemini 2.x moved to the end (GEMINI_MODEL stays first), or with LLM_PROVIDER=claude asks
+claude-opus-5-5 at effort high (role "tracer"): on the test floor (contracts/plan.example.json F1 drawn at
 30 px/m) gemini-3.6-flash gave all 12 rooms at IoU 1.00 in 7 s, gemini-2.5-flash the right 12
 rooms but squeezed toward the image center, mean IoU 0.39, in 40 s (measured Sat 4 AM).
 propose_plan is None when the model gives nothing usable.
@@ -65,6 +88,7 @@ import re
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 
 from . import client
@@ -102,6 +126,7 @@ REPORT_SCHEMA = {
     "type": "object",
     "properties": {
         "headline": {"type": "string"},
+        "summary": {"type": "string"},
         "fixes": {
             "type": "array",
             "items": {
@@ -111,8 +136,11 @@ REPORT_SCHEMA = {
             },
         },
     },
-    "required": ["headline", "fixes"],
+    "required": ["headline", "summary", "fixes"],
 }
+SUMMARY_WORDS = 120  # the prompt asks for 3 to 4 sentences; a summary that runs past this is dropped
+SUMMARY_HEADING = "## AI summary"  # "(Claude)" or "(Gemini)" follows, from the provider that wrote it
+WRITER_NAMES = {"gemini": "Gemini", "claude": "Claude"}
 
 _NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
 _LENGTH_UNIT = re.compile(r"\s?(?:m|cm|mm|ft|in|meters?|metres?|feet|foot|inch(?:es)?)\b", re.I)
@@ -159,6 +187,7 @@ class _Names:
 
     def __init__(self, building):
         b = building if isinstance(building, dict) else {}
+        self.building = b  # fire.batch.door_label reads it for a door's name
         self.name = str(b.get("name") or b.get("id") or "this building")
         self.rooms: dict[tuple[str, str], dict] = {}
         self.doors: dict[tuple[str, str], dict] = {}
@@ -248,10 +277,33 @@ class _Names:
             return "stair"
         return "door"
 
+    def _door_label(self, kind: str, floor: str, did: str) -> str | None:
+        """The name fire.batch.door_label gives this door (D23), the one rule for door names, or None where it will
+        not do: the door is not in the building, D files it under another kind, its name shows a door id (an exit
+        with no name reads 'Exit DIlsnHU'), or D's code cannot be had or fails on a malformed building."""
+        if (floor, did) not in self.doors:
+            return None
+        try:
+            from fire.batch import door_label  # lazy: it brings numpy and shapely in, which the card does not need
+
+            found, text = door_label(self.building, floor, did)
+        except Exception:  # noqa: BLE001 - the card never raises: it words the door from its rooms instead
+            return None
+        return text if found == kind and text and not self.mentions_id(text) else None
+
     def label(self, kind: str, floor: str, sid: str) -> tuple[str, str]:
         """A weak spot in words: (the bold name, where it is), both without a door id.
-        ('Exit Stair S1 (west)', 'from STAIR (RS101) to outside'), ('Door between Lobby (L1) and Corridor 1 (C1)', '').
-        The names match fire.batch.door_label's wherever that has no id, so a `why` line and its heading agree."""
+        ('Exit Stair S1 (west)', 'from STAIR (RS101) to outside'), ('Door between Lobby and Corridor 1', '').
+        A door, an exit or a stair door is named as fire.batch.door_label names it, so a `why` line, a heading and the
+        headline pack agree; `_worded` stands in where that name shows the door's id or cannot be had."""
+        name, detail = self._worded(kind, floor, sid)
+        if kind in ("door", "stair", "exit"):
+            name = self._door_label(kind, floor, sid) or name
+        return name, detail
+
+    def _worded(self, kind: str, floor: str, sid: str) -> tuple[str, str]:
+        """A spot worded from the rooms it joins, as `label` needs it: the name of a room or a corridor, the detail of an
+        exit or a stair door, and the stand-in name of a door that fire.batch.door_label does not name usably."""
         if kind == "room":
             return f"Fires starting in {self.room_label(floor, sid)}", ""
         if kind == "corridor":
@@ -272,14 +324,19 @@ class _Names:
             stair = next((c for c in inside if self._is_stair_room(floor, c)), None)
             label = f"Stair {self._stair_group(floor, stair)} door" if stair else "Stair door"
             return label, f"between {rooms[0]} and {rooms[1]}" if len(rooms) >= 2 else ""
+        # A plain door that D's name does not cover (a door with no known room, a malformed building, no fire/ package):
+        # D's words, but with the room ids always shown, and never the door's own id.
         if len(rooms) >= 2:
             return f"Door between {rooms[0]} and {rooms[1]}", ""
-        return (f"Door of {rooms[0]}" if rooms else "Door"), ""
+        return (f"Door from {rooms[0]}" if rooms else "Door"), ""
 
     def title(self, kind: str, floor: str, sid: str) -> str:
-        """A weak spot's short name, for the template headline: 'the door between Lobby (L1) and Corridor 1 (C1) on F1'."""
+        """A weak spot's short name, for the template headline: 'the door between Lobby and Corridor 1 on F1'."""
         on = f" on {floor}" if floor else ""
         label = self.label(kind, floor, sid)[0]
+        twin = re.search(r", \d+ of \d+$", label)  # D numbers doors that join the same two rooms: '..., 1 of 2'
+        if twin:  # the floor goes before the number: 'the door between A (R1) and B (R2) on F1, 1 of 2'
+            label, on = label[:twin.start()], on + twin.group()
         if kind in ("room", "corridor"):  # a room name keeps its capitals: 'Corridor 2 (C2) on F2'
             return (label[:1].lower() + label[1:] if kind == "room" else label) + on
         return f"the {label[:1].lower()}{label[1:]}{on}"
@@ -374,6 +431,66 @@ def _whatifs(batch: dict, runs: list[dict], names: _Names) -> list[dict]:
     return out
 
 
+def _spread_batch(base: dict, runs: list[dict], names: _Names, max_time: float | None) -> str | None:
+    """A11: how far an illustrative fire spreads, room to room, in this batch: for each fire (run) the other rooms that
+    catch fire by maxTime in fire.spread's schedule for its ignition room, at the base's material (drywall when it names
+    none). The mean counts every fire, so a room with three seeds counts three times; the first room in run order wins a
+    tie for "at most". None when fire.spread cannot be imported, the material is not one it knows, or no room resolves:
+    the card never fails over this sentence."""
+    try:
+        from fire.spread import ignition_schedule, material_name  # lazy: it brings shapely in, which the card does not need
+    except ImportError:
+        return None
+    try:
+        home = base.get("fire") if isinstance(base.get("fire"), dict) else {}
+        fire = {k: v for k, v in home.items() if k not in ("x", "y")}  # the room names the fire; a stale point must not
+        material = material_name(fire)
+        limit = 600.0 if max_time is None else max_time  # fire.spread's own default for a scenario without maxTime
+        others: dict[tuple[str, str], int | None] = {}  # ignition room -> the other rooms on fire by maxTime
+        fires: list[tuple[int, tuple[str, str]]] = []
+        for r in runs:
+            ignition = r.get("ignition")
+            if not isinstance(ignition, dict):
+                continue
+            key = (str(ignition.get("floor")), str(ignition.get("room")))
+            if key not in others:
+                schedule = ignition_schedule(names.building, {**base, "fire": {**fire, "floor": key[0], "room": key[1]}})
+                others[key] = (sum(1 for e in schedule if (e["floor"], e["room"]) != key and e["ignite"] <= limit)
+                               if schedule else None)  # no schedule: the room is not in the building
+            if others[key] is not None:
+                fires.append((others[key], key))
+        if not fires:
+            return None
+        most, where = fires[0]
+        for count, key in fires[1:]:
+            if count > most:
+                most, where = count, key
+        mean = sum(count for count, _ in fires) / len(fires)
+        return (f"Fire spread at illustrative {material} speeds: {mean:.1f} other rooms per fire on average by "
+                f"{_s(limit)}, at most {_plural(most, 'room')} (fire in {names.room_label(*where)})")
+    except Exception:  # noqa: BLE001 - a bad material, building or run: the card goes without the sentence
+        return None
+
+
+_MATERIAL_WORD = re.compile(r"[a-z][a-z-]{0,19}")  # a material name read from a file: one plain lowercase word
+
+
+def _spread_run(fire: dict) -> str | None:
+    """A11: the run's own fire.rooms ({room, floor, ignite}, the first the ignition room) and fire.material, as C27's sim
+    writes them; None when either is missing, so a run made before the spread model keeps the card it always had."""
+    material, rooms = fire.get("material"), fire.get("rooms")
+    if not (isinstance(material, str) and _MATERIAL_WORD.fullmatch(material) and isinstance(rooms, list)):
+        return None
+    ignites = [_num(r.get("ignite")) for r in rooms if isinstance(r, dict) and r.get("room") is not None]
+    ignites = [t for t in ignites if t is not None]
+    if not ignites:
+        return None
+    head = f"Fire spread at illustrative {material} speeds: "
+    if len(ignites) == 1:
+        return head + "the fire stayed in its room"
+    return head + f"{_plural(len(ignites) - 1, 'other room')} by {_s(max(ignites))}"
+
+
 def _batch_facts(batch: dict, names: _Names) -> dict:
     runs = [r for r in batch.get("runs") or [] if isinstance(r, dict)]
     n = len(runs)
@@ -415,6 +532,9 @@ def _batch_facts(batch: dict, names: _Names) -> dict:
         sentences.append(text)
         trapped = sum(1 for r in runs if (_num(r.get("trapped")) or 0) > 0)
         sentences.append(f"People trapped in {trapped} of {n} fires" if trapped else "No one trapped in any fire")
+        spread = _spread_batch(base, runs, names, max_time)
+        if spread:
+            sentences.append(spread)
 
     spots = []
     for item in (batch.get("top") or [])[:SPOTS]:
@@ -496,6 +616,9 @@ def _run_facts(run: dict, names: _Names) -> dict:
     sentences.append("Evacuation: " + "; ".join(out))
     if trapped is not None:
         sentences.append(f"Trapped: {trapped:,.0f}" if trapped else "No one trapped")
+    spread = _spread_run(fire)
+    if spread:
+        sentences.append(spread)
 
     doors = [d for d in m.get("doors") or []
              if isinstance(d, dict) and d.get("id") is not None and (_num(d.get("waitPersonSeconds")) or 0) > 0]
@@ -571,6 +694,25 @@ def _good_headline(text: str, known: set[float], names: _Names | None = None) ->
             and all(_known(v, known) for v in _numbers(text)))
 
 
+def _summary_problem(text: str, known: set[float], names: _Names | None = None) -> str | None:
+    """Why a summary cannot be used, or None. The headline's check for a longer text: every number is in the facts,
+    no door id, never "panic", and not longer than SUMMARY_WORDS."""
+    if not text:
+        return "empty"
+    if len(text.split()) > SUMMARY_WORDS:
+        return f"over {SUMMARY_WORDS} words"
+    if "panic" in text.lower():
+        return "the word panic"
+    if names and names.mentions_id(text):
+        return "a door id"
+    unknown = [v for v in _numbers(text) if not _known(v, known)]
+    return f"numbers not in the facts: {', '.join(f'{v:g}' for v in unknown)}" if unknown else None
+
+
+def _good_summary(text: str, known: set[float], names: _Names | None = None) -> bool:
+    return _summary_problem(text, known, names) is None
+
+
 def _good_fix(text: str, known: set[float], names: _Names | None = None) -> bool:
     """No invented statistics: each number is in the facts, a length (1.2 m), or a small count. No door id either."""
     if not text or "panic" in text.lower() or (names and names.mentions_id(text)):
@@ -614,13 +756,19 @@ def _prompt(facts: dict) -> tuple[str, str]:
     else:
         focus = f"{first_spot}."
     prompt = (
-        f'You write two parts of a report card for a fire evacuation simulation of the building "{facts["building"]}". '
+        f'You write three parts of a report card for a fire evacuation simulation of the building "{facts["building"]}". '
         "The facts below come from the simulation and are already shown to the reader next to your text.\n\n"
         "Write:\n"
         f"1. headline: one sentence of at most 25 words. {focus} "
         "Use only numbers that appear in the facts, copied exactly; no number is fine too. Keep each "
         "number with what it describes: a building-wide number is not about one spot.\n"
-        f"2. fixes: one per spot id, at most {FIX_WORDS} words each: a concrete change to the building "
+        "2. summary: 3 to 4 plain sentences (at most 90 words) for a reader who has not seen the numbers: what "
+        "happened in this simulation, where people got stuck and why (what about that spot's width, position or "
+        "the rooms it joins makes it slow), and the single most promising fix, worded as an idea to check (for "
+        "example \"a likely fix is ...\"), never as a tested or proven result: these fixes were not simulated. Same "
+        "number rule as the headline: only numbers from the facts, copied exactly, or none; name each spot by its "
+        "name.\n"
+        f"3. fixes: one per spot id, at most {FIX_WORDS} words each: a concrete change to the building "
         "at that spot, for example a wider or double door, a second door or stair route, signs that "
         "steer people to a less-used exit or stair, a layout change, or faster alarm and detection "
         "coverage. Fit each fix to its own spot instead of repeating one idea. No statistics and no "
@@ -637,12 +785,15 @@ def _prompt(facts: dict) -> tuple[str, str]:
     return prompt, text
 
 
-def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
-    """The model's headline (or None) and fixes by spot id, each checked; ({} and None) on failure."""
+def _ask(facts: dict) -> tuple[str | None, dict[str, str], str | None]:
+    """The model's headline (or None), its fixes by spot id and its summary (or None), each checked; (None, {}, None)
+    on failure. A summary with a number that is not in the facts, a door id, "panic" or too many words is dropped
+    alone: the headline and the fixes it came with stand."""
     prompt, text = _prompt(facts)
-    answer = client.complete(prompt, schema=REPORT_SCHEMA, timeout=REPORT_TIMEOUT, thinking=REPORT_THINKING)
+    answer = client.complete(prompt, schema=REPORT_SCHEMA, timeout=REPORT_TIMEOUT, thinking=REPORT_THINKING,
+                             role="report")
     if not isinstance(answer, dict):
-        return None, {}
+        return None, {}, None
     known = set(_numbers(text))
     names = facts.get("names")  # a door id in the model's text is as bad as an invented number
     headline = _clean(answer.get("headline"))
@@ -659,11 +810,20 @@ def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
         fix = _cut(_clean(item.get("fix")), FIX_WORDS)
         if sid in ids and sid not in fixes and _good_fix(fix, known, names):
             fixes[sid] = fix
-    return headline or None, fixes
+    summary = _clean(answer.get("summary"))
+    problem = _summary_problem(summary, known, names) if summary else None
+    if problem:
+        print(f"LLM report: summary dropped ({problem}): {summary[:120]!r}", file=sys.stderr)
+        summary = ""
+    return headline or None, fixes, summary or None
 
 
-def _render(facts: dict, headline: str, fixes: dict[str, str], writer: str) -> str:
-    lines = [f"### Report card: {facts['building']}", "", f"**{headline}**", ""]
+def _render(facts: dict, headline: str, fixes: dict[str, str], writer: str, summary: str | None = None) -> str:
+    lines: list[str] = []
+    if summary:  # the model's own paragraph leads the card; a template card has none
+        by = WRITER_NAMES.get(client.provider())
+        lines += [f"{SUMMARY_HEADING} ({by})" if by else SUMMARY_HEADING, "", summary, ""]
+    lines += [f"### Report card: {facts['building']}", "", f"**{headline}**", ""]
     if facts["placeholder"]:
         lines += ["*Placeholder data: these numbers are not from a simulation.*", ""]
     lines += [facts["numbers"], ""]
@@ -695,18 +855,18 @@ def report_card(batch_or_run: dict, building: dict, allow_llm: bool = True) -> t
             text = ("### Report card\n\nThis result has neither batch nor run numbers to report.\n\n"
                     f"---\n\n*{LIMITS}*\n\n*{TEMPLATE_WRITER}*\n")
             return text, False
-        headline, fixes = None, {}
+        headline, fixes, summary = None, {}, None
         if allow_llm:
             try:
-                headline, fixes = _ask(facts)
+                headline, fixes, summary = _ask(facts)
             except Exception as e:  # a bug in the checks above: keep the template
                 print(f"LLM report: model answer unusable ({type(e).__name__}: {e})", file=sys.stderr)
-        ai = bool(headline or fixes)
+        ai = bool(headline or fixes or summary)
         if ai:
             writer = WRITTEN_BY.get(client.provider(), "Written by AI")
         else:
             writer = TEMPLATE_WRITER if allow_llm else PRIVATE_WRITER
-        return _render(facts, headline or facts["headline"], fixes, writer), ai
+        return _render(facts, headline or facts["headline"], fixes, writer, summary), ai
     except Exception as e:
         print(f"LLM report: template fallback ({type(e).__name__}: {e})", file=sys.stderr)
         return (f"### Report card\n\nThe report could not be built for this result.\n\n---\n\n*{LIMITS}*\n\n"
@@ -720,9 +880,39 @@ def report(batch_or_run: dict, building: dict, allow_llm: bool = True) -> str:
 
 # ------------------------------------------------------------------ decisions
 
-DECIDE_TIMEOUT = 30.0  # s per model call; sim.brain.LLMBrain stops waiting sooner (4 s, C8: 12 s)
-DECIDE_THINKING = "minimal"
+DECIDE_TIMEOUT = 30.0  # s per model call (the client's own timeout, retries aside)
+DECIDE_THINKING = "minimal"  # Gemini; Claude's effort for the agent role is low (client.CLAUDE_ROLES)
+DECIDE_CHUNK = 20  # observations per model call, at most: decide_batch splits a longer list
+DECIDE_MIN_CHUNK = 5  # ... and does not split into calls of fewer than this many (a call costs about a second whatever its size)
+DECIDE_WORKERS = 8  # model calls in flight at once, at most
+DECIDE_WAIT = 25.0  # s decide_batch waits for all its calls; what landed by then is used, the rest is None (the rules).
+#                     sim.brain.LLM_WAIT_S, the sim's own wait for decide_batch, is longer than this
 REASON_CHARS = 160
+REASON_WORDS = 12  # a reason is cut to this many words
+ONLY_OPTION_REASON = "Only one way out from here"  # an obs with one usable option is decided here, not by the model
+# The model's field names, in plain words; "estS" is the one it leaks (6% of the reasons of the first all-Claude run).
+_FIELD_WORDS = (
+    (re.compile(r"\bqueue_?wait_?s\b", re.I), "queue wait"),
+    (re.compile(r"\bvisibility_?m\b", re.I), "visibility"),
+    (re.compile(r"\bdist_?m\b", re.I), "distance"),
+    (re.compile(r"\best_?s\b", re.I), "estimated time"),
+)
+# A reason is about the route, never about the person (spec 12): age, walking pace, ability or other traits, panic.
+_PERSONAL = re.compile(
+    r"\b(?:ages?|aged|aging|ageing|elderly|older|oldest|old|seniors?|young\w*|adults?|child\w*|kids?|teen\w*|"
+    r"man|men|woman|women|male|female|boys?|girls?|he|she|him|his|hers?|they|them|their|"
+    r"visitors?|guests?|strangers?|tourists?|newcomers?|unfamiliar|familiar\w*|typical|profile|"
+    r"pace|paced|speeds?|walkers?|walks?\s+slow\w*|slow\s+walking|slow\w*\s+(?:walk\w*|movers?|persons?|people|occupants?)|"
+    r"abilit\w+|able-bodied|capab\w+|mobility|disab\w*|wheelchairs?|impair\w*|handicap\w*|frail\w*|tired|"
+    r"assist\w*|helps?|helped|helping|"
+    r"calm|cautious|confident|brave|"
+    r"panic\w*|scared|afraid|fear\w*|terrif\w*|frighten\w*|nervous\w*|anxi\w*|hysteri\w*|freak\w*|stress\w*|worr\w*)\b",
+    re.I)
+# A reason that argues with itself ("... lower than E1? No, E1 is lower") is dropped, not shown.
+_SELF_CONTRADICTION = re.compile(r"\?|\bno,|\b(?:actually|wait,|hmm+|oops|correction|mistake|sorry)\b", re.I)
+_DANGLING = frozenset(("a", "an", "the", "and", "or", "but", "so", "with", "by", "for", "of", "to", "than", "as", "is",
+                       "are", "has", "have", "in", "on", "at", "over", "versus", "vs", "despite", "though",
+                       "although", "while", "from", "into", "about"))
 DECISION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -768,6 +958,9 @@ def _compact(i: int, obs) -> dict | None:
                "queue": round(queue), "queueWaitS": round(wait, 1), "estS": round(est, 1)}
         if o.get("assist"):
             opt["assist"] = True
+        nearby = _num(o.get("nearby"))  # C28: people in view walking to this option (sim.run); left out when none
+        if nearby and nearby > 0:
+            opt["nearby"] = round(nearby)
         options.append(opt)
     if not options:
         return None
@@ -786,15 +979,75 @@ def _decide_prompt(compact: list[dict]) -> str:
         "queue at their target, tick = routine check); visibilityM = how far they can see (30 = clear "
         "air); speed in m/s; current = their current target id or null; per option: distM walking "
         "distance, queue = people waiting there, queueWaitS = expected wait, estS = estimated seconds "
-        "to get through (walk + wait), assist = they need help on the stairs there.\n"
+        "to get through (walk + wait), assist = they need help on the stairs there, nearby (only when "
+        "present) = how many people in view are walking to that option.\n"
         "Choose as a sensible person would: usually the lowest estS; keep the current target unless "
         "another is clearly faster (about 20%) or the current one is smoky or blocked; in thick smoke "
-        "prefer nearer options.\n"
+        "prefer nearer options. When estimated times are close, following the people nearby is "
+        "reasonable, but never toward a blocked or smoky route.\n"
         "Reply with one decision per observation: i; action (go when current is null, reroute to "
         "switch, wait to keep the current target); target (an option id of that observation); reason "
-        "(at most 12 words, about the route: distance, queue, smoke; never about panic).\n"
+        "(at most 12 plain words about distance, queue, smoke or people heading there, stated once: no questions, no corrections). "
+        "Never use field names in a reason (estS, queueWaitS, distM, visibilityM): say estimated time, queue "
+        "wait, distance, visibility. Never mention age, walking pace, ability or any other trait of the "
+        "person, or panic.\n"
         "Observations:\n" + "\n".join(json.dumps(c, separators=(",", ":"), ensure_ascii=False) for c in compact)
     )
+
+
+def _cut_words(text: str, limit: int) -> str:
+    """text cut to at most `limit` words: at the end of a clause (, ; : .) when one falls within the words kept, and
+    never ending on a dangling word ("... 24.3 by over")."""
+    words = text.split()
+    if len(words) <= limit:
+        return text
+    head = words[:limit]
+    for k in range(len(head) - 2, 2, -1):
+        if head[k].endswith((",", ";", ":", ".")):
+            head = head[:k + 1]
+            break
+    while len(head) > 1 and head[-1].strip(",;:.") in _DANGLING:  # case counts: the "A" of "Stair A" is a name
+        head.pop()
+    return " ".join(head).rstrip(",;:- ")
+
+
+def _plain_reason(compact: dict, target: str, current: str | None) -> str:
+    """A reason from the option numbers alone, for a model reason that had to be dropped: plain words about
+    estimated time, queue and distance, never about the person."""
+    options = compact["options"]
+    if len(options) == 1:
+        return ONLY_OPTION_REASON
+    chosen = next((o for o in options if o["id"] == target), None)
+    best = min(options, key=lambda o: o["estS"])
+    if chosen is None or chosen["estS"] <= best["estS"] + 1e-9:
+        return "Shortest estimated time"
+    nearer, farther = chosen["distM"] < best["distM"] - 1e-9, chosen["distM"] > best["distM"] + 1e-9
+    shorter_queue = chosen["queueWaitS"] < best["queueWaitS"] - 1e-9
+    longer_queue = chosen["queueWaitS"] > best["queueWaitS"] + 1e-9
+    if shorter_queue and farther:
+        return "Shorter queue, a bit farther"
+    if nearer and longer_queue:
+        return "Closer, though the queue is longer"
+    if nearer:
+        return "Closer way out"
+    if shorter_queue:
+        return "Shorter queue"
+    return "Keeps the current way out" if target == current else "Estimated times are close"
+
+
+def _clean_reason(text, compact: dict, target: str, current: str | None) -> str:
+    """The model's reason made fit to show. Field names become plain words (estS: "estimated time"); a reason about
+    the person (age, walking pace, ability, panic) or one that argues with itself ("?", "No,") is dropped for the plain
+    reason from the option numbers; the rest is cut to REASON_WORDS words."""
+    original = " ".join(str(text or "").split())
+    reason = original
+    for pattern, plain in _FIELD_WORDS:
+        reason = pattern.sub(plain, reason)
+    if reason != original and original[:1].isupper():
+        reason = reason[:1].upper() + reason[1:]
+    if not reason or _PERSONAL.search(reason) or _SELF_CONTRADICTION.search(reason):
+        return _plain_reason(compact, target, current)
+    return _cut_words(reason, REASON_WORDS)[:REASON_CHARS] or _plain_reason(compact, target, current)
 
 
 def _decision(item, compact: dict, obs: dict) -> dict | None:
@@ -814,13 +1067,56 @@ def _decision(item, compact: dict, obs: dict) -> dict | None:
         action = "wait"
     else:
         action = "reroute"
-    reason = " ".join(str(item.get("reason") or "").split())[:REASON_CHARS] or "model gave no reason"
-    return {"target": target, "action": action, "reason": reason}
+    return {"target": target, "action": action, "reason": _clean_reason(item.get("reason"), compact, target, current)}
+
+
+def _chunks(items: list) -> list[list]:
+    """The list in order as evenly sized chunks, one per worker where that keeps each between DECIDE_MIN_CHUNK and
+    DECIDE_CHUNK items: a call's time is mostly the answer it writes, so 11 observations go as 3 calls at once (about
+    2 s) and not as one (about 4 s), and 160 as 8 calls of 20. Never more than DECIDE_CHUNK in a chunk."""
+    n = len(items)
+    size = min(DECIDE_CHUNK, max(DECIDE_MIN_CHUNK, -(-n // DECIDE_WORKERS)))
+    count = max(1, -(-n // size))
+    base, extra = divmod(n, count)
+    out, start = [], 0
+    for k in range(count):
+        end = start + base + (1 if k < extra else 0)
+        out.append(items[start:end])
+        start = end
+    return out
+
+
+def _ask_chunk(chunk: list[dict]) -> dict | None:
+    """One model call for up to DECIDE_CHUNK compact observations: the parsed answer, or None. Never raises."""
+    try:
+        answer = client.complete(_decide_prompt(chunk), schema=DECISION_SCHEMA, timeout=DECIDE_TIMEOUT,
+                                 thinking=DECIDE_THINKING, role="agent")
+    except Exception as e:
+        print(f"LLM decide: a call failed ({type(e).__name__}: {e})", file=sys.stderr)
+        return None
+    return answer if isinstance(answer, dict) else None
+
+
+def _ask_chunks(chunks: list[list[dict]]) -> list[dict | None]:
+    """The model's answers to the chunks, in their order, asked at once in threads, DECIDE_WORKERS at a time. An answer
+    that has not landed DECIDE_WAIT s after the start is None (its thread is left to finish on its own: Python cannot stop
+    it, and the client's timeout will). A single chunk goes through a thread too, so the wait bounds it the same way."""
+    pool = ThreadPoolExecutor(max_workers=min(DECIDE_WORKERS, len(chunks)))
+    try:
+        futures = [pool.submit(_ask_chunk, chunk) for chunk in chunks]
+        wait(futures, timeout=DECIDE_WAIT)
+        return [f.result() if f.done() and not f.cancelled() and f.exception() is None else None for f in futures]
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def decide_batch(observations: list[dict]) -> list[dict | None]:
-    """One model call for every obs in the list; returns a list of the same length and order, each
-    a decision {target, action, reason} or None (use the rules). Never raises."""
+    """Decisions for every obs in the list; returns a list of the same length and order, each a decision
+    {target, action, reason} or None (use the rules). An obs with exactly one usable option is decided here, without
+    the model (go to it, or keep it: "Only one way out from here"). The others go to the model in chunks of at most
+    DECIDE_CHUNK (see _chunks), up to DECIDE_WORKERS calls at once, and the answers are merged by index; a chunk that
+    fails or is late (DECIDE_WAIT) leaves its entries None and the others stand. Every reason is made plain by
+    _clean_reason. Never raises."""
     global _off_noted
     try:
         observations = list(observations)
@@ -836,21 +1132,32 @@ def decide_batch(observations: list[dict]) -> list[dict | None]:
                 print("LLM: LLM_PROVIDER=off; agent decisions use the rules", file=sys.stderr)
             return out
         compact = [_compact(i, o) for i, o in enumerate(observations)]
-        asked = [c for c in compact if c is not None]
+        asked = []
+        for c in compact:
+            if c is None:
+                continue
+            if len({o["id"] for o in c["options"]}) == 1:
+                # One way out: there is nothing to choose, so the model is not asked (65% of the calls of the first
+                # all-Claude run on a corridor fire were like this). Go to it, or keep it: _decision tells which.
+                out[c["i"]] = _decision({"target": c["options"][0]["id"], "reason": ONLY_OPTION_REASON}, c,
+                                        observations[c["i"]])
+            else:
+                asked.append(c)
         if not asked:
             return out
-        answer = client.complete(_decide_prompt(asked), schema=DECISION_SCHEMA,
-                                 timeout=DECIDE_TIMEOUT, thinking=DECIDE_THINKING)
-        if not isinstance(answer, dict):
-            return out
-        for item in answer.get("decisions") or []:
-            if not isinstance(item, dict):
+        chunks = _chunks(asked)
+        for chunk, answer in zip(chunks, _ask_chunks(chunks)):
+            if answer is None:
                 continue
-            i = item.get("i")
-            if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(out):
-                continue
-            if out[i] is None and compact[i] is not None:
-                out[i] = _decision(item, compact[i], observations[i])
+            ours = {c["i"] for c in chunk}  # a decision for an observation of another chunk is not this answer's to give
+            for item in answer.get("decisions") or []:
+                if not isinstance(item, dict):
+                    continue
+                i = item.get("i")
+                if isinstance(i, bool) or not isinstance(i, int) or i not in ours:
+                    continue
+                if out[i] is None:
+                    out[i] = _decision(item, compact[i], observations[i])
         return out
     except Exception as e:
         print(f"LLM decide: no decisions ({type(e).__name__}: {e})", file=sys.stderr)
@@ -1079,7 +1386,7 @@ def propose_plan(image: bytes, hints: dict) -> dict | None:
         t0 = time.time()
         answer = client.complete(_propose_prompt(width, height, name), image=bytes(image), image_mime=mime,
                                  schema=PROPOSE_SCHEMA, timeout=PROPOSE_TIMEOUT, thinking=PROPOSE_THINKING,
-                                 models=_vision_chain())
+                                 models=_vision_chain(), role="tracer")
         if not isinstance(answer, dict):
             return None
         floor, dropped = _sanitize(answer, hints)

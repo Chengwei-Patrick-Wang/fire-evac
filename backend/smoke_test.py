@@ -9,6 +9,7 @@ check_batch, check_report and check_trace are one function per route file, so A4
 each rewrite only their own (A7's other checks sit beside check_report, run by check_llm).
 --live-llm runs only the LLM checks, plus one set of real model calls (GEMINI_API_KEY from .env).
 """
+import base64
 import io
 import json
 import os
@@ -398,6 +399,62 @@ def check_report_run(client):
         sprinklers = next(ln for ln in md3.splitlines() if "Sprinklers on" in ln)
         assert "90% out 0.5 s sooner on average (slower in 0 of" in sprinklers, sprinklers
 
+        # A11, fire spread. A batch's card gets the sentence from fire.spread's schedule at the base's material (drywall
+        # when it names none): the other rooms on fire by maxTime, per fire on average and at most (the first room in run
+        # order wins a tie). A run's card gets it from its own fire.rooms and fire.material (C27), and without them it
+        # is the card it always was.
+        def hand_batch(*rooms, material="wood"):  # the example's fires in these rooms only, in this order
+            hand = json.loads(json.dumps(batch))
+            hand["runs"] = [rr for room in rooms for rr in hand["runs"] if rr["ignition"]["room"] == room]
+            if material is None:
+                hand["base"]["fire"].pop("material", None)
+            else:
+                hand["base"]["fire"]["material"] = material
+            return hand
+
+        # D26: with wood the rooms over R101 and L1 catch fire through the floor (300 s), so 15 each, not 14
+        wood = ("Fire spread at illustrative wood speeds: 15.0 other rooms per fire on average by 400 s, "
+                "at most 15 rooms (fire in Kitchen (R101))")
+        md_wood = features.report(hand_batch("R101", "L1"), building)
+        assert f". {wood}." in md_wood and md_wood.index("90% out:") < md_wood.index(wood), md_wood
+        lobby = names.room_label("F1", "L1")
+        assert f"(fire in {lobby})" in features.report(hand_batch("L1", "R101"), building)  # a tie: the first one wins
+        md_mixed = features.report(hand_batch("R101", "L1", "SA1"), building)  # the stair reaches all 23 other rooms
+        assert ("Fire spread at illustrative wood speeds: 17.7 other rooms per fire on average by 400 s, "  # was 17.0
+                f"at most 23 rooms (fire in {names.room_label('F1', 'SA1')})") in md_mixed, md_mixed
+        md_default = features.report(hand_batch("R101", "L1", material=None), building)  # no fire.material: drywall
+        assert ("Fire spread at illustrative drywall speeds: 11.0 other rooms per fire on average by 400 s, "
+                "at most 11 rooms (fire in Kitchen (R101))") in md_default, md_default
+        md_steel = features.report(hand_batch("R101", material="steel"), building)  # unknown: no sentence, a card still
+        assert "Fire spread" not in md_steel and "Template summary" in md_steel, md_steel
+        had, spread_module = "fire.spread" in sys.modules, sys.modules.get("fire.spread")
+        sys.modules["fire.spread"] = None  # the import fails
+        try:
+            assert "Fire spread" not in features.report(hand_batch("R101", "L1"), building)
+        finally:
+            if had:
+                sys.modules["fire.spread"] = spread_module
+            else:
+                sys.modules.pop("fire.spread", None)
+
+        def hand_run(material, *ignites):  # a run made by C27's sim: fire.rooms (the first is the ignition room), material
+            rooms = [{"room": f"X{i}", "floor": "F1", "ignite": float(t)} for i, t in enumerate(ignites)]
+            return dict(run, fire=dict(run["fire"], material=material, rooms=rooms))
+
+        spread = "Fire spread at illustrative drywall speeds: 2 other rooms by 360 s"
+        md_run = features.report(hand_run("drywall", 0, 180, 360), building)
+        assert md_run.count(f". {spread}.") == 1 and md_run.index("Evacuation:") < md_run.index(spread), md_run
+        plain = dict(run, fire={k: v for k, v in run["fire"].items() if k not in ("rooms", "material")})
+        md_plain = features.report(plain, building)
+        assert "Fire spread" not in md_plain and md_run.replace(f". {spread}.", ".", 1) == md_plain, md_plain
+        assert "Fire spread at illustrative wood speeds: 1 other room by 90 s." in features.report(hand_run("wood", 0, 90), building)
+        assert ("Fire spread at illustrative wood speeds: the fire stayed in its room."
+                in features.report(hand_run("wood", 0), building))
+        for fire_bad in ({"rooms": [{"room": "R101", "floor": "F1", "ignite": 0}]}, {"material": "wood"},
+                         {"material": "wood", "rooms": "R101"}, {"material": "wood", "rooms": [None, 3, {"room": "A"}]},
+                         {"material": "**", "rooms": [{"room": "R101", "floor": "F1", "ignite": 0}]}):
+            assert "Fire spread" not in features.report(dict(plain, fire=dict(plain["fire"], **fire_bad)), building), fire_bad
+
         # a live run, asked for by its scenario id (what the frontend sends today)
         fake = {"version": "run/v0", "id": "smoke-report-run", "buildingId": "example-office",
                 "scenarioId": "smoke-report-scenario", "seed": 1, "frameInterval": 0.5, "floors": ["F1", "F2"],
@@ -528,6 +585,94 @@ def check_report_ai(client):
             p.unlink(missing_ok=True)
 
 
+def check_door_names():
+    """D23, one source of truth for door names: the card calls a door, an exit or a stair door what
+    fire.batch.door_label calls it (the example building and the two public ones, every door), words it from its
+    rooms only where D's name would show the door's id (an exit with no name), swaps the id forms that batches
+    saved before D23 carry, and numbers twin doors; checked on a made-up floor too, one branch of the rule each."""
+    from backend.llm import features
+    from fire.batch import door_label
+
+    def load(path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    shown = 0
+    for path in (ROOT / "contracts" / "building.example.json", ROOT / "data" / "buildings" / "office.json",
+                 ROOT / "data" / "buildings" / "clinic.json"):
+        if not path.is_file():
+            continue
+        b = load(path)
+        names = features._Names(b)
+        for f in b["floors"]:
+            for d in f["doors"]:
+                kind, text = door_label(b, f["id"], d["id"])
+                assert names.door_kind(f["id"], d["id"]) == kind, (path.name, d["id"])
+                label = names.label(kind, f["id"], d["id"])[0]
+                assert not names.mentions_id(label), (path.name, label)  # an IFC code means nothing to a judge
+                if names.mentions_id(text):  # D's `Exit DIlsnHU`, an exit with no name: the card words it from its rooms
+                    assert label != text, (path.name, text)
+                else:
+                    assert label == text, (path.name, text, label)  # D's name, word for word
+                shown += 1
+    example = features._Names(load(ROOT / "contracts" / "building.example.json"))
+    assert example.label("door", "F1", "DL1")[0] == "Door between Lobby and Corridor 1"  # no room ids: no twin
+    assert example.title("door", "F1", "DL1") == "the door between Lobby and Corridor 1 on F1"
+    assert example.readable("Door DL1 (Lobby to Corridor 1): 23 people queued", "F1") == \
+        "Door between Lobby and Corridor 1: 23 people queued"
+
+    def room(rid, name=None, kind="office", **more):
+        return {"id": rid, "type": kind, **({"name": name} if name else {}), **more}
+
+    def door(did, *connects, x=0.0):
+        return {"id": did, "connects": list(connects), "a": [x, 0.0], "b": [x + 1.0, 0.0], "width": 1.0}
+
+    floor = {"id": "F1",
+             "rooms": [room("A1", "Lab"), room("A2", "Lab"), room("B1", "Store"), room("B2", "Shop"),
+                       room("C1", "Hall", "corridor"), room("S1", "Stair", "stair", group="SA")],
+             "doors": [door("D1", "B1", "C1"), door("X1", "A1", "C1"), door("X2", "A1", "C1", x=5.0),
+                       door("X3", "A2", "C1", x=9.0), door("D2", "B2"), door("D3"),
+                       door("E1", "C1", "outside"), door("E2", "B1", "outside"), door("E3", "B2", "outside"),
+                       door("DS1", "C1", "S1")],
+             "exits": [{"id": "E1", "name": "Main entrance", "door": "E1"},
+                       {"id": "E3", "name": "M_Single-Flush:0915 x 2134mm:184259", "door": "E3"}],
+             "stairs": [{"id": "S1", "group": "SA", "room": "S1"}]}
+    building = {"id": "t", "name": "T", "floors": [floor]}
+    names = features._Names(building)
+    label = {d["id"]: names.label(names.door_kind("F1", d["id"]), "F1", d["id"])[0] for d in floor["doors"]}
+    assert label == {
+        "D1": "Door between Store and Hall",  # no other door joins these two names: no room ids
+        "X1": "Door between Lab (A1) and Hall (C1), 1 of 2",  # two doors join the same rooms, told apart by position
+        "X2": "Door between Lab (A1) and Hall (C1), 2 of 2",
+        "X3": "Door between Lab (A2) and Hall (C1)",  # another room of the same name: room ids, no number
+        "D2": "Door from Shop",  # D's word for a door of one known room (the card used to say "Door of")
+        "D3": "Door",  # joins no known room: D says `Door D3`, the card never shows the id
+        "E1": "Exit Main entrance",
+        "E2": "Exit from Store (B1)",  # D says `Exit E2`: the exit has no name
+        "E3": "Exit from Shop (B2)",  # an IFC door family string is no name (D drops it too)
+        "DS1": "Stair SA door"}, label
+    assert names.title("door", "F1", "X1") == "the door between Lab (A1) and Hall (C1) on F1, 1 of 2"
+    assert names.readable("Door D1 (Store to Hall): 5 queued; Exit E2 blocked; DS1 busy", "F1") == \
+        "Door between Store and Hall: 5 queued; Exit from Store (B1) blocked; Stair SA door busy"
+    batch = {"version": "batch/v0", "id": "t-batch", "buildingId": "t", "runs": [], "top": [
+        {"kind": "door", "id": "X1", "floor": "F1", "why": "Door X1 (Lab to Hall): 9 people queued at peak; 40 person-seconds."},
+        {"kind": "exit", "id": "E2", "floor": "F1", "why": "Exit E2: 4 people queued at peak; 12 person-seconds."},
+        {"kind": "door", "id": "D1", "floor": "F1", "why": "Door between Store and Hall: 3 people queued; 8 person-seconds."}]}
+    with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+        md = features.report(batch, building)
+        assert "1. **Door between Lab (A1) and Hall (C1), 1 of 2** · F1\n   - Door between Lab (A1) and Hall (C1), 1 of 2: 9 people" in md, md
+        assert "2. **Exit from Store (B1)** · F1\n   - Exit from Store (B1): 4 people" in md, md
+        assert "3. **Door between Store and Hall** · F1\n   - Door between Store and Hall: 3 people" in md, md
+        assert "the door between Lab (A1) and Hall (C1) on F1, 1 of 2" in md and not names.mentions_id(md), md
+
+        # D's code failing on a malformed building (a floor with no id) never fails the card: the rooms word the door
+        broken = {"id": "t", "name": "T", "floors": [{"rooms": [], "doors": []}, floor]}
+        worded = features._Names(broken)
+        assert worded.label("door", "F1", "D1")[0] == "Door between Store (B1) and Hall (C1)"
+        assert worded.label("door", "F1", "D2")[0] == "Door from Shop (B2)"
+        assert "Door between Store (B1) and Hall (C1)" in features.report(dict(batch, top=batch["top"][2:]), broken)
+    return shown
+
+
 def check_decide():
     """decide / decide_batch for the sim (C7, C8), on sim/brain.py's obs shape: offline every entry is
     None; a stubbed model's decisions are checked against each obs (a known target, an action that
@@ -564,12 +709,21 @@ def check_decide():
                 {"i": 9, "action": "go", "target": "E1", "reason": "no such observation"},
             ]}
             out = features.decide_batch(obs)
+            # obs[2] has one option (E2; its current target E1 is gone): decided in code, never sent, whatever the answer says
+            only = {"target": "E2", "action": "reroute", "reason": features.ONLY_OPTION_REASON}
             assert out == [{"target": "E2", "action": "go", "reason": "E1 has a queue"},
                            {"target": "SB", "action": "reroute", "reason": "Stair A is smoky and queued"},
-                           None], out
+                           only], out
             prompt, kwargs = calls[-1]
             assert len(calls) == 1 and kwargs["schema"] == features.DECISION_SCHEMA and kwargs["thinking"] == "minimal"
-            assert kwargs["timeout"] >= 30 and all(f'"id":"{o["id"]}"' in prompt for x in obs for o in x["options"]), prompt
+            assert kwargs["timeout"] >= 30 and all(f'"id":"{o["id"]}"' in prompt for x in obs[:2] for o in x["options"]), prompt
+            assert '"i":2,' not in prompt and '"i":0,' in prompt and '"i":1,' in prompt, prompt
+            asked = len(calls)
+            assert features.decide(obs[2]) == only and llm_pkg.decide(obs[2]) == only and len(calls) == asked
+
+            # a target that is not an option of its observation is dropped (None, the rules)
+            answer["value"] = {"decisions": [{"i": 0, "action": "go", "target": "E9", "reason": "E9 is not an option here"}]}
+            assert features.decide_batch(obs) == [None, None, only]
 
             answer["value"] = {"decisions": [{"i": 0, "action": "wait", "target": "SB", "reason": "keep going"}]}
             assert features.decide(obs[1]) == {"target": "SA", "action": "wait", "reason": "keep going"}
@@ -581,15 +735,146 @@ def check_decide():
 
             for value in (None, {"decisions": "junk"}, {"no": "decisions"}, "text"):
                 answer["value"] = value
-                assert features.decide_batch(obs) == [None, None, None], value
+                assert features.decide_batch(obs) == [None, None, only], value  # the one-option obs needs no answer
             answer["raise"] = RuntimeError("smoke: the model call blew up")
-            assert features.decide_batch(obs) == [None, None, None] and features.decide(obs[0]) is None
+            assert features.decide_batch(obs) == [None, None, only] and features.decide(obs[0]) is None
             answer.pop("raise")
             asked = len(calls)
             assert features.decide_batch([None, {}, {"options": []}, {"options": [{"name": "no id"}]}]) == [None] * 4
             assert len(calls) == asked, "malformed observations reached the model"
     finally:
         llm.complete = real
+
+
+def check_decide_reasons():
+    """What decide_batch does with a decision's reason and with an obs that has one option (offline: hand-made reasons
+    in a stubbed model's answer, no API call). A field name (estS, queueWaitS, distM, visibilityM) becomes plain words;
+    a reason about age, walking pace, ability, other traits or panic, or one that argues with itself ("?", "No,"), or an
+    empty one, is replaced by a plain reason built from the option numbers; a long one is cut to 12 words; a plain one
+    stands as written. An obs with exactly one usable option is decided in code and never sent: go to it, or keep it,
+    "Only one way out from here"; the list keeps its length and order."""
+    import re
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    def option(oid, dist, queue=0, tail=0.0, kind="exit"):
+        return {"id": oid, "kind": kind, "name": oid + " name", "dist": dist, "queue": queue, "flow": 1.0, "tail": tail}
+
+    def make(options, current=None, trigger="start"):
+        return {"idx": 1, "t": 40.0, "floor": "F1", "x": 1.0, "y": 1.0, "profile": "typical", "visibility": 30.0,
+                "speed": 1.2, "current": current, "trigger": trigger, "options": options}
+
+    two = make([option("E1", 12.0, queue=2), option("E2", 30.0)])  # estS 12.0 and 25.0: E1 is the shortest
+    fields = re.compile(r"\b(est_?s|queue_?wait_?s|dist_?m|visibility_?m)\b", re.I)
+    plain = "Shortest estimated time"  # what two[E1] gets when its reason is dropped
+    cases = [  # (the model's reason, what the decision carries)
+        ("E1 has a queue", "E1 has a queue"),  # plain: as written
+        ("keep going", "keep going"),
+        ("E1 estS 14.0 beats E2 25.0", "E1 estimated time 14.0 beats E2 25.0"),
+        ("EstS 14.0 is lower at E1", "Estimated time 14.0 is lower at E1"),
+        ("lower queueWaitS and distM at E1; visibilityM is fine", "lower queue wait and distance at E1; visibility is fine"),
+        ("E1 est_s 14 vs E2 est_s 25", "E1 estimated time 14 vs E2 estimated time 25"),
+        ("East stair exit has much shorter walk and estS, 10.0s versus 17.0s.",  # 13 words: cut at the clause
+         "East stair exit has much shorter walk and estimated time"),
+        ("one two three four five six seven eight nine ten eleven twelve thirteen", "one two three four five six seven eight nine ten eleven twelve"),
+        ("Main entrance estS 14.0 beats East stair exit 24.3 by over 20%.",  # 13 words: cut, and not left on "by over"
+         "Main entrance estimated time 14.0 beats East stair exit 24.3"),
+        ("Thick smoke and long queue at Stair A; Stair B has a shorter queue and clearer path",  # 15 words: the name stays
+         "Thick smoke and long queue at Stair A"),
+        ("Only option available; 19.4m walk, but stair queue and smoke slow progress.",  # route words only: stands (12 words)
+         "Only option available; 19.4m walk, but stair queue and smoke slow progress."),
+        ("Short walking distance, clear air", "Short walking distance, clear air"),
+        ("Older person with a slow walking pace, so the near exit", plain),
+        ("Elderly occupant needs the closest exit", plain),
+        ("Main entrance is nearer and has lower estimated time for older occupant.", plain),
+        ("His age makes the stairs hard", plain),
+        ("Keep current stair despite slower walking speed", plain),
+        ("Slow walker, so E1", plain),
+        ("Her pace is low", plain),
+        ("Visitor does not know the building", plain),
+        ("Stair assist needed, long queue accepted", plain),
+        ("Mobility limits mean the nearer exit", plain),
+        ("Avoid panic, take E1", plain),
+        ("Scared of the smoke, go to E1", plain),
+        ("East stair exit estS 19.1 is lower than main entrance at 16.6? No, E1 is lower", plain),
+        ("E2 is lower? E1 is quicker at 14.0", plain),
+        ("No, E1 is lower", plain),
+        ("Hmm, actually E1 is better", plain),
+        ("", plain),
+        (None, plain),
+    ]
+
+    def ask(observations, reasons):
+        answer = {"decisions": [{"i": i, "action": "go", "target": "E1", "reason": r} for i, r in enumerate(reasons)]}
+        calls = []
+
+        def fake_complete(prompt, **kwargs):
+            calls.append(prompt)
+            return answer
+
+        real = llm.complete
+        llm.complete = fake_complete
+        try:
+            with env(LLM_PROVIDER="claude"), redirect_stderr(io.StringIO()):
+                return features.decide_batch(observations), calls
+        finally:
+            llm.complete = real
+
+    out, calls = ask([two] * len(cases), [reason for reason, _ in cases])
+    assert len(out) == len(cases) and len(calls) == len(features._chunks(list(range(len(cases))))), (len(out), len(calls))
+    for (reason, want), decision in zip(cases, out):
+        assert decision == {"target": "E1", "action": "go", "reason": want}, (reason, decision)
+        got = decision["reason"]
+        assert not fields.search(got) and not features._PERSONAL.search(got) and not features._SELF_CONTRADICTION.search(got), got
+        assert 0 < len(got.split()) <= features.REASON_WORDS, got
+
+    # the reason built from the option numbers: what the chosen option has over the one with the shortest estimated time
+    def plain_reason(options, target, current=None):
+        compact = features._compact(0, make(options, current))
+        return features._plain_reason(compact, target, current)
+
+    best = option("E1", 12.0, queue=6)  # estS 16.0
+    table = [
+        (plain_reason([option("E1", 12.0), option("E2", 30.0)], "E1"), "Shortest estimated time"),
+        (plain_reason([best, option("E2", 24.0)], "E2"), "Shorter queue, a bit farther"),  # estS 20.0, no queue
+        (plain_reason([option("E1", 14.0), option("E2", 6.0, queue=20)], "E2"), "Closer, though the queue is longer"),
+        (plain_reason([option("E1", 14.0), option("E2", 6.0, tail=20.0)], "E2"), "Closer way out"),
+        (plain_reason([option("E1", 10.0, queue=4), option("E2", 10.0, tail=20.0)], "E2"), "Shorter queue"),
+        (plain_reason([option("E1", 10.0), option("E2", 10.0, tail=5.0)], "E2", "E2"), "Keeps the current way out"),
+        (plain_reason([option("E1", 10.0), option("E2", 10.0, tail=5.0)], "E2", "E1"), "Estimated times are close"),
+        (plain_reason([option("E1", 10.0)], "E1"), features.ONLY_OPTION_REASON),
+    ]
+    for got, want in table:
+        assert got == want, (got, want)
+        assert not features._PERSONAL.search(got) and not features._SELF_CONTRADICTION.search(got) and len(got.split()) <= 12
+
+    # one option: decided in code, in place, with no call; the others still go to the model
+    keep = make([option("E2", 9.0, queue=4)], current="E2", trigger="tick")
+    go = make([option("E1", 12.0)])
+    moved = make([option("E2", 9.0)], current="E1", trigger="blocked")
+    twin = make([option("E3", 5.0), option("E3", 5.0)])  # the same option twice is still one way out
+    nothing = {"options": [{"name": "no id"}]}
+    only = features.ONLY_OPTION_REASON
+    out, calls = ask([go, two, keep, None, moved, nothing, twin], [None, "E1 is closer", None, None, None, None, None])
+    assert out == [{"target": "E1", "action": "go", "reason": only},
+                   {"target": "E1", "action": "go", "reason": "E1 is closer"},
+                   {"target": "E2", "action": "wait", "reason": only},
+                   None,
+                   {"target": "E2", "action": "reroute", "reason": only},
+                   None,
+                   {"target": "E3", "action": "go", "reason": only}], out
+    assert len(calls) == 1 and '"i":1,' in calls[0], calls
+    for k in (0, 2, 3, 4, 5, 6):
+        assert f'"i":{k},' not in calls[0], (k, calls[0])
+    out, calls = ask([go, keep, moved], [None] * 3)
+    assert [d["reason"] for d in out] == [only] * 3 and calls == [], (out, calls)  # all one-option: no call at all
+    prompt = features._decide_prompt([features._compact(0, two)])
+    assert "at most 12 plain words" in prompt and "Never use field names" in prompt and "Never mention age" in prompt, prompt
+    for name in ("estS", "queueWaitS", "distM", "visibilityM"):
+        assert name in prompt  # the fields are named for the model, and the reason may not use them
+    with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+        assert features.decide_batch([go, two, keep]) == [None, None, None]  # off means off: the rules decide
 
 
 def check_llm_client():
@@ -700,6 +985,396 @@ def check_llm_client():
         llm._cooldown.clear()
 
 
+class _FakeClaude:
+    """Stands in for anthropic.Anthropic: records every request and answers from `script`, one step per call (a
+    message to return, or an exception to raise). `seen` holds each request's keyword arguments, with beta=True for
+    client.beta.messages.create."""
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.script: list = []
+        self.seen: list[dict] = []
+        outer = self
+
+        class Endpoint:
+            def __init__(self, beta: bool):
+                self.beta = beta
+
+            def create(self, **kwargs):
+                outer.seen.append({"beta": self.beta, **kwargs})
+                step = outer.script.pop(0)
+                if isinstance(step, BaseException):
+                    raise step
+                return step
+
+        self.messages = Endpoint(False)
+        self.beta = SimpleNamespace(messages=Endpoint(True))
+
+
+def _fake_message(text: str = '{"ok": true}', *, stop: str = "end_turn", tokens: tuple[int, int] = (1000, 500),
+                  model: str = "claude-opus-5-5", blocks: list | None = None, category: str | None = None):
+    from types import SimpleNamespace as NS
+
+    content = blocks if blocks is not None else [NS(type="text", text=text)]
+    return NS(content=content, stop_reason=stop, model=model,
+              usage=NS(input_tokens=tokens[0], output_tokens=tokens[1]),
+              stop_details=NS(category=category) if category else None)
+
+
+def _objects_strict(schema) -> bool:
+    """Every object in the schema has additionalProperties false and lists all its properties as required."""
+    if isinstance(schema, list):
+        return all(_objects_strict(v) for v in schema)
+    if not isinstance(schema, dict):
+        return True
+    if schema.get("type") == "object":
+        if schema.get("additionalProperties") is not False or set(schema.get("required") or []) != set(schema.get("properties") or {}):
+            return False
+    return all(_objects_strict(v) for v in schema.values())
+
+
+def check_llm_claude():
+    """The Claude path of the client on a stand-in for the anthropic client (no network, no key): the model and
+    effort of each role, structured output with strict schemas (no tool use, no thinking, sampling or prefill keys),
+    the server-side fallback on Opus calls only, the answer read from the first text block (after thinking, after a
+    fallback block), refusals, cut-off and empty answers and API errors giving None, the agent pause after a network
+    failure, spend as usage x price and the budget, and no key in any log line."""
+    import anthropic
+    import httpx2
+    from types import SimpleNamespace as NS
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    fake = _FakeClaude()
+    timeouts: list[float] = []
+    real_client = llm._claude_client
+    llm._claude_client = lambda key, timeout: (timeouts.append(timeout), fake)[1]
+    secret = "smoke-claude-secret-0123456789"
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+
+    def ask(step, prompt="ping", **kwargs):
+        fake.script[:] = step if isinstance(step, list) else [step]
+        before = len(fake.seen)
+        log = io.StringIO()
+        with redirect_stderr(log):
+            out = llm.complete(prompt, **kwargs)
+        return out, fake.seen[before:], log.getvalue()
+
+    forbidden = {"thinking", "temperature", "top_p", "top_k", "tool_choice", "tools"}
+    answer = {"headline": "h", "summary": "s", "fixes": []}
+    try:
+        with env(LLM_PROVIDER="claude", APP_ANTHROPIC_API_KEY=secret, CLAUDE_MODEL=None, CLAUDE_AGENT_MODEL=None,
+                 CLAUDE_BUDGET_USD=None):
+            llm.reset_stats()
+            # report: Opus at medium effort, structured output, the server-side fallback; 45 s is raised to its least
+            out, seen, log = ask(_fake_message(json.dumps(answer)), schema=features.REPORT_SCHEMA, timeout=45.0)
+            req = seen[0]
+            assert out == answer and log == "" and llm.last_model == "claude-opus-5-5", (out, log)
+            assert req["beta"] and req["betas"] == ["server-side-fallback-2026-07-01"] and req["fallbacks"] == "default", req
+            assert req["model"] == "claude-opus-5-5" and req["output_config"]["effort"] == "medium", req
+            fmt = req["output_config"]["format"]
+            assert fmt["type"] == "json_schema" and _objects_strict(fmt["schema"]), fmt
+            assert "summary" in fmt["schema"]["properties"] and fmt["schema"]["required"] == ["headline", "summary", "fixes"], fmt
+            assert "additionalProperties" not in features.REPORT_SCHEMA, "the shared schema was changed"
+            assert not forbidden & set(req), set(req) & forbidden  # forced tool use and sampling are 400s, thinking is always on
+            assert [m["role"] for m in req["messages"]] == ["user"], req["messages"]  # no prefill
+            assert req["messages"][0]["content"] == [{"type": "text", "text": "ping"}] and req["max_tokens"] >= 8000, req
+            assert timeouts[-1] == 90.0, timeouts
+            assert abs(llm.spend_usd() - (1000 * 4 + 500 * 20) / 1e6) < 1e-9, llm.spend_usd()  # Opus 5.5: 4 / 20 $ per M tokens
+
+            # tracer: Opus at high effort, the image before the text; the shared schema's "type" property survives
+            png = b"\x89PNG\r\n\x1a\nxyz"
+            out, seen, log = ask(_fake_message('{"rooms": []}'), image=png, image_mime="image/png", role="tracer",
+                                 schema=features.PROPOSE_SCHEMA, timeout=60.0)
+            req = seen[0]
+            blocks = req["messages"][0]["content"]
+            assert out == {"rooms": []} and req["beta"] and req["output_config"]["effort"] == "high", (out, req)
+            assert blocks[0] == {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                              "data": base64.b64encode(png).decode("ascii")}}, blocks[0]
+            assert blocks[1] == {"type": "text", "text": "ping"} and timeouts[-1] == 150.0, (blocks, timeouts)
+            room = req["output_config"]["format"]["schema"]["properties"]["rooms"]["items"]
+            assert _objects_strict(room) and "office" in room["properties"]["type"]["enum"], room
+
+            # agent: Haiku at low effort on the plain endpoint, no fallbacks; priced 0.10 / 0.50
+            spent = llm.spend_usd()
+            out, seen, log = ask(_fake_message('{"decisions": []}', model="claude-haiku-5-5", tokens=(3000, 800)),
+                                 role="agent", schema=features.DECISION_SCHEMA, timeout=30.0)
+            req = seen[0]
+            assert timeouts[-1] == 15.0, timeouts  # exactly, not "at least": 30 s asked for, 15 s given, so a stall is retried early
+            assert out == {"decisions": []} and not req["beta"] and "betas" not in req and "fallbacks" not in req, req
+            assert req["model"] == "claude-haiku-5-5" and req["output_config"]["effort"] == "low", req
+            assert not forbidden & set(req) and llm.last_model == "claude-haiku-5-5"
+            assert abs(llm.spend_usd() - spent - (3000 * 0.10 + 800 * 0.50) / 1e6) < 1e-9, llm.spend_usd() - spent
+
+            # the overrides, and an unknown role is a report
+            with env(CLAUDE_MODEL="claude-sonnet-5-5", CLAUDE_AGENT_MODEL="claude-haiku-9"):
+                assert ask(_fake_message(), schema={"type": "object"}, role="bogus")[1][0]["model"] == "claude-sonnet-5-5"
+                assert ask(_fake_message(), schema={"type": "object"}, role="agent")[1][0]["model"] == "claude-haiku-9"
+
+            # which text is the answer: the first text block after a thinking block; after a fallback block, the
+            # fallback model's; plain text without a schema joins them
+            think = NS(type="thinking", thinking="", signature="s")
+            good = '{"ok": true}'
+            assert ask(_fake_message(blocks=[think, NS(type="text", text=good)]), schema={"type": "object"})[0] == {"ok": True}
+            fb = NS(type="fallback")
+            assert ask(_fake_message(blocks=[NS(type="text", text="cut off {"), fb, NS(type="text", text=good)]),
+                       schema={"type": "object"})[0] == {"ok": True}
+            assert ask(_fake_message(blocks=[think, NS(type="text", text="a "), NS(type="text", text="b")]))[0] == "a b"
+
+            # no usable answer: None and one stderr line each
+            for message, needle in ((_fake_message("not json"), "no usable answer"), (_fake_message(""), "no usable answer"),
+                                    (_fake_message("3"), "no usable answer"),
+                                    (_fake_message(blocks=[], stop="refusal", category="cyber"), "refused (cyber)"),
+                                    (_fake_message('{"ok"', stop="max_tokens"), "max_tokens")):
+                out, _, log = ask(message, schema={"type": "object"})
+                assert out is None and needle in log and log.count("\n") == 1, (needle, out, log)
+
+            # API errors: None, one line, never the key; a network failure pauses the agent role only
+            def failure(kind: str):
+                if kind == "bad":
+                    return anthropic.BadRequestError(f"bad request for {secret}", response=httpx2.Response(400, request=request), body=None)
+                if kind == "server":
+                    return anthropic.InternalServerError("overloaded", response=httpx2.Response(529, request=request), body=None)
+                if kind == "limit":
+                    return anthropic.RateLimitError("slow down", response=httpx2.Response(429, request=request), body=None)
+                if kind == "timeout":
+                    return anthropic.APITimeoutError(request=request)
+                return anthropic.APIConnectionError(message="Connection error.", request=request)
+
+            out, _, log = ask(failure("bad"), role="agent", schema={"type": "object"})
+            assert out is None and secret not in log and "***" in log and "400" in log and "pause" not in log, log
+            assert ask(_fake_message(), role="agent", schema={"type": "object"})[0] == {"ok": True}, "a 400 paused the agent role"
+            for kind in ("server", "limit", "timeout", "connection"):
+                llm.reset_stats()
+                out, _, log = ask(failure(kind), role="agent", schema={"type": "object"})
+                assert out is None and "pause for 20 s" in log and log.count("\n") == 1, (kind, log)
+                out, seen, log = ask(_fake_message(), role="agent", schema={"type": "object"})  # paused: no call, no line
+                assert out is None and not seen and log == "", (kind, seen, log)
+                assert ask(_fake_message(), role="report", schema={"type": "object"})[0] == {"ok": True}  # the report role is not
+                llm.reset_stats()
+                assert ask(_fake_message(), role="agent", schema={"type": "object"})[0] == {"ok": True}
+            out, _, log = ask(failure("server"), role="report", schema={"type": "object"})  # report and tracer never pause
+            assert out is None and "pause" not in log, log
+            assert ask(_fake_message(), role="agent", schema={"type": "object"})[0] == {"ok": True}
+
+            # stats and spend
+            llm.reset_stats()
+            ask(_fake_message(tokens=(2000, 100)), schema={"type": "object"})
+            ask(_fake_message(model="claude-haiku-5-5", tokens=(1000000, 1000000)), role="agent", schema={"type": "object"})
+            ask(_fake_message("not json"), schema={"type": "object"})
+            st = llm.stats()
+            assert st["calls"] == 3 and st["answered"] == 2 and st["byRole"] == {"report": 2, "agent": 1}, st
+            assert st["inputTokens"] == 1003000 and st["outputTokens"] == 1000600, st
+            expected = (2000 * 4 + 100 * 20) / 1e6 + 0.10 + 0.50 + (1000 * 4 + 500 * 20) / 1e6
+            assert abs(llm.spend_usd() - expected) < 1e-9, (llm.spend_usd(), expected)
+            assert llm._price("claude-haiku-5-5-20261001") == (0.10, 0.50) and llm._price("claude-opus-5-5") == (4.0, 20.0)
+            assert llm._price("claude-made-up") == llm.UNKNOWN_PRICE
+
+            # the budget: the call that passes it still answers and says so once; every later call is None, with no request
+            llm.reset_stats()
+            with env(CLAUDE_BUDGET_USD="0.02"):
+                assert llm.budget_usd() == 0.02
+                assert ask(_fake_message(), schema={"type": "object"})[2] == ""  # $0.014: under
+                out, _, log = ask(_fake_message(), schema={"type": "object"})  # $0.028: over
+                assert out == {"ok": True} and log.count("\n") == 1 and "budget passed" in log and "$0.03" in log, log
+                for role in ("report", "tracer", "agent"):
+                    out, seen, log = ask(_fake_message(), schema={"type": "object"}, role=role)
+                    assert out is None and not seen and log == "", (role, seen, log)
+            for bad in ("", "x", "-3", "nan"):
+                with env(CLAUDE_BUDGET_USD=bad):
+                    assert llm.budget_usd() == llm.DEFAULT_BUDGET_USD == 25.0, bad
+            llm.reset_stats()
+            assert llm.spend_usd() == 0.0 and llm.stats()["calls"] == 0
+    finally:
+        llm._claude_client = real_client
+        llm.reset_stats()
+
+
+def check_report_summary(client):
+    """A hand-made model answer, no API call: the AI summary leads the card under "## AI summary (Claude)", ahead of the
+    report title; one with a number that is not in the facts, a door id, the word panic or too many words is dropped
+    alone (the headline and fixes of the same answer stand); a template card has none; the prompt asks for it."""
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    batch, _, building = _examples()
+    names = features._Names(building)
+    facts = features._facts(batch, building)
+    spots = facts["spots"]
+    first = batch["top"][0]
+    n = len(batch["runs"])
+    prompts: list = []
+    answers: list = []
+
+    def fake_complete(prompt, **kwargs):
+        prompts.append((prompt, kwargs))
+        return answers.pop(0) if answers else None
+
+    def card(**more):
+        answer = {"headline": f"{spots[0]['label']} is the worst spot across {n} simulated fires",
+                  "summary": f"Across {n} simulated fires most people got out, but queues formed at {spots[0]['label']}. "
+                             "The doorway there is too narrow for the crowd, so people waited in smoke. "
+                             "The best fix is a second, wider opening beside it.",
+                  "fixes": [{"id": first["id"], "fix": "Add a second door beside it so arrivals split."}]}
+        answer.update(more)
+        answers.append(answer)
+        return features.report_card(batch, building)
+
+    heading = "## AI summary (Claude)"
+    real = llm.complete
+    llm.complete = fake_complete
+    try:
+        with env(LLM_PROVIDER="claude"), redirect_stderr(io.StringIO()) as log:
+            md, ai = card()
+            assert ai and md.startswith(heading + "\n\n"), md[:200]
+            summary = md.split("\n\n")[1]
+            assert summary.startswith(f"Across {n} simulated fires") and summary.endswith("beside it."), summary
+            assert md.index(heading) < md.index("### Report card:") and md.count(heading) == 1, md[:300]
+            assert md.rstrip().endswith("*Written by Claude*") and "Add a second door beside it" in md, md[-300:]
+            assert not names.mentions_id(md), md
+            prompt, kwargs = prompts[-1]
+            assert kwargs["role"] == "report" and kwargs["schema"] == features.REPORT_SCHEMA, kwargs
+            assert "summary: 3 to 4" in prompt and "most promising fix" in prompt and "never as a tested" in prompt, prompt[:1500]
+            assert features.REPORT_SCHEMA["required"] == ["headline", "summary", "fixes"]
+
+            with env(LLM_PROVIDER="gemini"):
+                md, ai = card()
+                assert ai and md.startswith("## AI summary (Gemini)\n\n") and md.rstrip().endswith("*Written by Gemini*"), md[:100]
+
+            # each way a summary fails drops it alone: the headline and the fix of the same answer are kept
+            junk = {
+                "an invented number": f"Across {n} fires the worst door cut the queue by 93.7% for 4412 people.",
+                "a door id": f"The door {first['id']} is the choke point; widen it so the queue shrinks, for everyone.",
+                "panic": "People panic at the doors, so the best fix is a wider door.",
+                "too long": " ".join(["Queues form at the doors."] * 40),
+            }
+            for why, text in junk.items():
+                md, ai = card(summary=text)
+                assert ai and "AI summary" not in md and "Add a second door beside it" in md, (why, md[:300])
+                assert f"**{spots[0]['label']} is the worst spot" in md, (why, md[:300])  # the model's headline stands
+            assert "numbers not in the facts: 93.7, 4412" in log.getvalue() and "a door id" in log.getvalue(), log.getvalue()
+
+            # an answer with no summary at all (an older model, a stub) is a card without the section
+            answers.append({"headline": "A headline", "fixes": []})
+            md, ai = features.report_card(batch, building)
+            assert ai and "AI summary" not in md and "**A headline**" in md, md[:300]
+            answers.append({"headline": "", "summary": "", "fixes": []})  # nothing usable: the template
+            md, ai = features.report_card(batch, building)
+            assert not ai and "AI summary" not in md and md.rstrip().endswith("*Template summary (AI unavailable)*"), md[-200:]
+            md, ai = features.report_card(batch, building, allow_llm=False)
+            assert not ai and "AI summary" not in md and md.startswith("### Report card:"), md[:100]
+        with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+            llm.complete = real
+            assert "AI summary" not in features.report(batch, building)
+    finally:
+        llm.complete = real
+
+
+def check_decide_chunks():
+    """decide_batch splits a long list for the model: chunks of at most 20 (balanced, none under 5 unless the list is
+    shorter), up to 8 calls at once, answers merged by index into a list of the same length and order; a chunk that fails
+    or is late leaves its own entries None and the others stand; a decision for an observation of another chunk is ignored."""
+    import re
+    import threading
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    def make(n):
+        return [{"idx": i, "t": 1.0, "floor": "F1", "x": 1.0, "y": 1.0, "profile": "typical", "visibility": 30.0,
+                 "speed": 1.2, "current": None, "trigger": "start",
+                 "options": [{"id": "E1", "kind": "exit", "name": "Main", "dist": 10.0 + i, "queue": 0, "flow": 1.3, "tail": 0},
+                             {"id": "E2", "kind": "exit", "name": "Side", "dist": 30.0, "queue": 0, "flow": 1.3, "tail": 0}]}
+                for i in range(n)]
+
+    for n, count in ((0, 1), (1, 1), (5, 1), (6, 2), (11, 3), (45, 8), (160, 8), (200, 10), (201, 11)):
+        parts = features._chunks(list(range(n)))
+        assert len(parts) == count and [x for part in parts for x in part] == list(range(n)), (n, [len(p) for p in parts])
+        assert all(len(part) <= features.DECIDE_CHUNK for part in parts) and (n < 5 or all(len(part) >= 3 for part in parts)), n
+        assert max(map(len, parts)) - min(map(len, parts)) <= 1, n  # balanced
+
+    lock = threading.Lock()
+    live = {"now": 0, "max": 0, "calls": [], "hold": 0.0, "behave": {}, "gate": threading.Event()}
+
+    def fake_complete(prompt, **kwargs):
+        ids = [int(x) for x in re.findall(r'\{"i":(\d+),', prompt)]
+        with lock:
+            live["calls"].append((ids, kwargs))
+            live["now"] += 1
+            live["max"] = max(live["max"], live["now"])
+        try:
+            time.sleep(live["hold"])
+            behave = live["behave"].get(ids[0])
+            if behave == "raise":
+                raise RuntimeError("smoke: one call blew up")
+            if behave == "none":
+                return None
+            if behave == "late":
+                live["gate"].wait(10.0)  # a call that has not answered when decide_batch stops waiting; released below
+            decisions = [{"i": i, "action": "go", "target": "E1", "reason": f"nearest for {i}"} for i in ids]
+            if behave == "stray":  # also answers for an observation that is not in its chunk
+                decisions.append({"i": 0 if ids[0] != 0 else 199, "action": "go", "target": "E2", "reason": "not mine"})
+            return {"decisions": decisions}
+        finally:
+            with lock:
+                live["now"] -= 1
+
+    real, real_wait = llm.complete, features.DECIDE_WAIT
+    llm.complete = fake_complete
+    try:
+        with env(LLM_PROVIDER="claude"), redirect_stderr(io.StringIO()):
+            obs = make(45)
+            out = features.decide_batch(obs)
+            assert len(out) == 45 and all(d == {"target": "E1", "action": "go", "reason": f"nearest for {i}"} for i, d in enumerate(out)), out
+            assert len(live["calls"]) == 8 and sorted(i for ids, _ in live["calls"] for i in ids) == list(range(45))
+            assert all(len(ids) <= 20 and k["role"] == "agent" and k["schema"] == features.DECISION_SCHEMA
+                       for ids, k in live["calls"]), live["calls"]
+
+            live["calls"].clear()
+            live["hold"] = 0.05
+            out = features.decide_batch(make(200))  # 10 chunks of 20 on 8 workers
+            assert all(d and d["reason"] == f"nearest for {i}" for i, d in enumerate(out)) and len(out) == 200
+            assert len(live["calls"]) == 10 and 2 <= live["max"] <= features.DECIDE_WORKERS, live["max"]
+            live["calls"].clear()
+            assert features.decide_batch(make(3))[2]["reason"] == "nearest for 2" and len(live["calls"]) == 1
+
+            # one chunk raising, one answering None, one answering for another chunk's agent: the others are untouched
+            live["hold"] = 0.0
+            for how in ("raise", "none"):
+                live["calls"].clear()
+                live["behave"] = {features._chunks(list(range(45)))[1][0]: how}  # keyed by the chunk's first index
+                out = features.decide_batch(make(45))
+                gone = set(features._chunks(list(range(45)))[1])
+                assert [i for i, d in enumerate(out) if d is None] == sorted(gone), (how, out)
+                assert all(d["reason"] == f"nearest for {i}" for i, d in enumerate(out) if i not in gone)
+            live["behave"] = {features._chunks(list(range(45)))[1][0]: "stray"}
+            out = features.decide_batch(make(45))
+            assert all(d and d["target"] == "E1" and d["reason"] == f"nearest for {i}" for i, d in enumerate(out)), out
+
+            # a late chunk: its agents wait for the rules, the rest land at once
+            features.DECIDE_WAIT = 0.3
+            live["behave"] = {features._chunks(list(range(45)))[2][0]: "late"}
+            t0 = time.time()
+            out = features.decide_batch(make(45))
+            waited = time.time() - t0
+            live["gate"].set()  # the late call may answer now: nobody is listening
+            assert waited < 3.0, waited  # it did not wait for the late chunk
+            late = set(features._chunks(list(range(45)))[2])
+            assert [i for i, d in enumerate(out) if d is None] == sorted(late), out
+            live["behave"] = {}
+
+            # malformed observations keep their place: None, the others decided, one call for the lot
+            live["calls"].clear()
+            mixed = [make(1)[0], None, {"options": []}, make(3)[2]]
+            out = features.decide_batch(mixed)
+            assert len(out) == 4 and out[1] is None and out[2] is None and out[0] and out[3], out
+            assert len(live["calls"]) == 1 and live["calls"][0][0] == [0, 3], live["calls"]
+    finally:
+        llm.complete, features.DECIDE_WAIT = real, real_wait
+
+
 def check_llm_live():
     """Optional, behind --live-llm: the real model (GEMINI_API_KEY from .env): a JSON ping, the example
     batch's card written by the model, and decisions for the three sample agents."""
@@ -721,8 +1396,9 @@ def check_llm_live():
         assert any(decisions), decisions
         t3 = time.time()
     print(md)
+    cost = f", ${llm.spend_usd():.4f} spent" if name == "claude" else ""
     print(f"OK  live LLM ({name}, last model {llm.last_model}): ping {t1 - t0:.1f} s, report {t2 - t1:.1f} s, "
-          f"decide_batch {t3 - t2:.1f} s ({sum(d is not None for d in decisions)}/3 decided)")
+          f"decide_batch {t3 - t2:.1f} s ({sum(d is not None for d in decisions)}/3 decided){cost}")
 
 
 def check_llm(client):
@@ -731,10 +1407,16 @@ def check_llm(client):
     check_report(client)
     check_report_run(client)
     check_report_ai(client)
+    doors = check_door_names()
+    check_report_summary(client)
     check_decide()
+    check_decide_reasons()
+    check_decide_chunks()
     check_llm_client()
-    print(f"OK  llm: report card (template, AI path stubbed, cache, private building), run card, "
-          f"decide_batch, client retries and fallback, {time.time() - t0:.1f} s")
+    check_llm_claude()
+    print(f"OK  llm: report card (template, AI path stubbed, AI summary, cache, private building), run card, "
+          f"door names (D's, {doors} doors), decide_batch (one-option obs decided in code, plain reasons, chunks, parallel), Gemini retries and fallback, "
+          f"Claude client (roles, structured output, fallbacks, refusals, spend, budget), {time.time() - t0:.1f} s")
 
 
 def _png(width: int, height: int) -> bytes:
@@ -904,8 +1586,29 @@ def check_trace(client):
           f"propose 503 offline, 413, 415, 422, stubbed model, tidy_floor {'checked' if tidy_floor else 'not on this branch yet'}")
 
 
+def post_run(client, scenario: dict) -> str:
+    r = client.post("/api/runs", json=scenario)
+    assert r.status_code == 200, r.text
+    return r.json()["runId"]
+
+
+def wait_run(client, run_id: str, timeout: float = POLL_TIMEOUT) -> dict:
+    """GET /api/runs/ID until the job is done: the run/v0 itself (no status key), or {"status": "error", ...}."""
+    t0 = time.time()
+    while True:
+        r = client.get(f"/api/runs/{run_id}")
+        assert r.status_code == 200, r.text
+        out = r.json()
+        if out.get("status") != "running":
+            return out
+        assert time.time() - t0 < timeout, f"run not done after {timeout} s"
+        time.sleep(1)
+
+
 def check_run(client) -> str:
-    """A real run: example scenario, maxTime 60. Returns the summary line."""
+    """A real run: example scenario, maxTime 60. Returns the summary line. Two twins (A11) go in beside it and run in
+    the pool at the same time: the same scenario with fire.material "wood", whose run says so, and with "steel", which
+    the fire model refuses, so its job ends in an error that names the valid materials."""
     from backend.app import jobs
 
     assert client.get("/api/runs/doesnotexist").status_code == 404
@@ -914,21 +1617,33 @@ def check_run(client) -> str:
 
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 60
+    # A fire that is not placed in a room (the UI's Run with no fire placed, or a hand-made request): a plain 422 up
+    # front, never a job that ends in "KeyError: 'floor'". No job is queued for any of these.
+    fire = scenario["fire"]
+    unplaced = [
+        ("no fire", None),
+        ("only a type", {"type": "kitchen", "start": 0}),
+        ("no floor", {k: v for k, v in fire.items() if k != "floor"}),
+        ("no room", {k: v for k, v in fire.items() if k != "room"}),
+        ("a blank room", dict(fire, room="")),
+        ("an unknown room", dict(fire, room="R999")),
+        ("an unknown floor", dict(fire, floor="F99")),
+        ("no spot", {k: v for k, v in fire.items() if k not in ("x", "y")}),
+    ]
+    for what, bad in unplaced:
+        r = client.post("/api/runs", json=dict(scenario, fire=bad))
+        assert r.status_code == 422, (what, r.status_code, r.text)
+        detail = r.json()["detail"]
+        assert isinstance(detail, str) and "fire" in detail.lower() and "KeyError" not in detail, (what, detail)
+    r = client.post("/api/runs", json={k: v for k, v in scenario.items() if k != "fire"})
+    assert r.status_code == 422 and "no fire" in r.json()["detail"], r.text
     t0 = time.time()
-    r = client.post("/api/runs", json=scenario)
-    assert r.status_code == 200, r.text
-    run_id = r.json()["runId"]
-    while True:
-        r = client.get(f"/api/runs/{run_id}")
-        assert r.status_code == 200, r.text
-        run = r.json()
-        status = run.get("status")
-        if status == "error":
-            raise AssertionError(f"run failed: {run.get('error')}\n{run.get('traceback', '')}")
-        if status != "running":
-            break  # no status key: this is the run/v0 itself
-        assert time.time() - t0 < POLL_TIMEOUT, f"run not done after {POLL_TIMEOUT} s"
-        time.sleep(1)
+    run_id = post_run(client, scenario)
+    wood_id = post_run(client, dict(scenario, fire=dict(scenario["fire"], material="wood")))
+    steel_id = post_run(client, dict(scenario, fire=dict(scenario["fire"], material="steel")))
+    run = wait_run(client, run_id)
+    if run.get("status") == "error":
+        raise AssertionError(f"run failed: {run.get('error')}\n{run.get('traceback', '')}")
     elapsed = time.time() - t0
 
     assert run["id"] == run_id and run["version"].startswith("run/"), run.get("version")
@@ -937,6 +1652,28 @@ def check_run(client) -> str:
     assert doors, "metrics.doors is empty"
     saved_run = ROOT / "data" / "runs" / f"{run_id}.json"
     assert saved_run.is_file(), f"{saved_run} was not written"
+    assert run["fire"]["material"] == scenario["fire"]["material"] == "drywall", run["fire"]  # the example's own material
+
+    twin = wait_run(client, wood_id)
+    assert twin.get("status") != "error", f"wood run failed: {twin.get('error')}\n{twin.get('traceback', '')}"
+    assert twin["fire"]["material"] == "wood" and twin["fire"]["rooms"][0]["room"] == scenario["fire"]["room"], twin["fire"]
+    (ROOT / "data" / "runs" / f"{wood_id}.json").unlink(missing_ok=True)  # the twin's file is test noise
+    refused = wait_run(client, steel_id)
+    assert refused.get("status") == "error" and "concrete, drywall, wood" in refused.get("error", ""), refused
+
+    # brain goes through POST /api/runs to the sim unchanged: an all-LLM run (24 people) flags every agent and logs a
+    # decision event for each choice. The provider is off for the worker (it inherits this process's environment), so
+    # no model is called and every decision is the rules' own, marked fallback.
+    with env(LLM_PROVIDER="off"):
+        llm_id = post_run(client, dict(scenario, id="smoke-brain-llm", brain="llm", maxTime=40, alarmTime=0,
+                                       premovement={"office": [0, 0], "classroom": [0, 0]},
+                                       occupants={"total": 24, "mix": {"typical": 1}}))
+        showcase = wait_run(client, llm_id)
+    (ROOT / "data" / "runs" / f"{llm_id}.json").unlink(missing_ok=True)
+    assert showcase.get("status") != "error", f"all-LLM run failed: {showcase.get('error')}\n{showcase.get('traceback', '')}"
+    decisions = [e for e in showcase["events"] if e["type"] == "llm"]
+    assert len(showcase["agents"]) == 24 and all(a.get("llm") for a in showcase["agents"]), "brain llm did not reach the sim"
+    assert decisions and all(e.get("fallback") for e in decisions), decisions[:2]
 
     # after a "restart" (no futures in memory) the run is read back from disk
     jobs._futures.clear()
@@ -948,7 +1685,8 @@ def check_run(client) -> str:
         f"OK  run {run_id}: {len(run['frames'])} frames, {len(doors)} doors, "
         f"evacuated {m.get('evacuated')}/{m.get('agents')}, trapped {m.get('trapped')}, "
         f"t90 {m.get('t90')}, t100 {m.get('t100')}, {saved_run.stat().st_size / 1e6:.1f} MB, "
-        f"{elapsed:.1f} s through the API"
+        f"{elapsed:.1f} s through the API; twins: wood run says wood, steel refused ({refused['error'].split(':', 1)[0]}); "
+        f"{len(unplaced) + 1} unplaced fires refused with 422"
     )
 
 

@@ -2,11 +2,11 @@
 llm.propose_plan(image, hints).
 
 The names below load on first use (PEP 562), so `import backend.llm` stays cheap and
-`python -m backend.llm.features` does not import the module twice. google-genai itself is
-imported on the first model call.
+`python -m backend.llm.features` does not import the module twice. google-genai and anthropic are
+imported on the first model call (anthropic takes seconds to import: client.warm_up() does it ahead of time).
 """
 _FROM = {
-    "complete": "client", "provider": "client",
+    "complete": "client", "provider": "client", "spend_usd": "client", "stats": "client",
     "decide": "features", "decide_batch": "features", "report": "features", "report_card": "features",
     "propose_plan": "features", "sanitize_floor": "features",
 }

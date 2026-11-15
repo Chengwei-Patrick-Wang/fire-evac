@@ -52,8 +52,11 @@ that polygon, preventing jumps through thin walls and diagonal wall corners.
 
 `BuildingGraph.node_at` returns a global node index and can restrict snapping to
 a room polygon, even when the supplied ignition point lies outside the building.
-Unknown floors or rooms containing no grid centers raise `ValueError`.
-Each floor exposes local node coordinates, door memberships and a row-major
+A room with no grid center inside it (thinner than a cell) starts at the nearest
+center beside it that a straight walk from the room's anchor reaches (Tiny rooms,
+D24). Unknown floors, and rooms with no center inside or beside them, raise
+`ValueError`. Each floor exposes local node coordinates, door memberships, the
+prepared walkable polygon its edges stay inside (`walk`) and a row-major
 `snap` grid (`-1` where no node is close enough).
 
 `path_distance` uses Dijkstra with non-negative door penalties, charging once
@@ -72,7 +75,8 @@ states are overridden by `scenario.doors`; `closed` and `blocked` add 15 m on
 entry, while `open` and `propped` add none. The `fireDoor` flag is ignored.
 A closed door delays smoke but never seals the passage. `blocked` stops people
 in the simulator, and behaves like `closed` for smoke. `step` rebuilds
-`blocked_doors()` from doors containing any untenable node (flame or smoke);
+`blocked_doors()` from doors containing any untenable node (flame or smoke),
+plus every door of a room the fire has spread to (Fire spread, D25);
 the returned set is a copy.
 
 | Name | Value | Meaning |
@@ -158,7 +162,9 @@ test pass; smoke frames have interval 2 s and heat release is nondecreasing.
 - Eight-neighbor grid distances can overestimate unobstructed distances by
   about 8%; wall geometry and grid resolution add further approximation.
 - Each scenario has one ignition point. Stair links and closed-door penalties
-  approximate smoke transport rather than solving airflow.
+  approximate smoke transport rather than solving airflow. Rooms that catch fire
+  later (Fire spread, D25) add heat release and close their doors, but the smoke
+  still spreads from the one ignition point.
 - Front arrival is tabulated for 1800 s after ignition; farther nodes stay clear.
 
 ## Replay metrics (D5)
@@ -291,7 +297,8 @@ writing the file. All numeric explanations are ASCII, including building labels.
 
 Top kinds use `exit` for a door connected to outside, otherwise `stair` for a
 connection to a stair room, otherwise `door`. Kind `corridor` is never produced.
-Labels use `Exit <name>`, `Stair <group> door`, or `Door <id>`. Explanations give
+Labels use `Exit <name>`, `Stair <group> door`, or `Door <id> (<A> to <B>)` (since D23 a plain
+door reads `Door between <A> and <B>`: see "Readable door names (D23)"). Explanations give
 peak queues, mean waiting person-seconds and successful fire-run counts. Room
 explanations give mean trapped, mean censored t90 and that room's run count;
 when no run reaches 90%, the explanation says it was not reached by maxTime.
@@ -871,16 +878,12 @@ Both verification suites printed `fire checks OK`. Both CLI batches wrote
 their output files and printed the stability lines above. Output JSON and logs
 are gitignored; the commands above regenerate them.
 
-Office limitation: all three R203b seeds failed with
-`ValueError: No grid nodes inside the requested room on F2`.
-The room is an OPEN OFFICE fragment, 1.16 m² with bounds
-`(0.331, 23.818, 5.897, 24.026)`: only 0.208 m wide, below the 0.5 m
-smoke-grid spacing. The 71 other sampled rooms succeeded in all three seeds.
-Ranges and stability exclude those failures; R203b has no risk estimate.
-This is not the blocked-stair simulator failure recorded under D15.
-Handoff for B/A: inspect the narrow IFC room fragment before using this
-batch as a complete office survey. No geometry or grid-resolution changes
-are included in the ranges task.
+One office room is missing from these numbers: all three R203b seeds failed with
+`ValueError: No grid nodes inside the requested room on F2`, because the room is
+an OPEN OFFICE fragment only 0.21 m wide, thinner than the 0.5 m smoke-grid
+spacing. The 71 other sampled rooms succeeded in all three seeds, and ranges and
+stability exclude those failures. This is not the blocked-stair simulator failure
+recorded under D15. D24 fixes it: see Tiny rooms (D24).
 
 
 ## Smoke-model sensitivity (D17)
@@ -1467,6 +1470,439 @@ the rerun batch is `data/runs/batch-example-tradeoff.json` (all gitignored).
   holds the whole line, starting `Trade-off:`; `costs` has the cost phrases alone, for a badge or a second line. They
   are in the headline pack's `fixes[]` too (`FIX_KEYS`).
 - The report card quotes `fixes[].why` verbatim, so it now says "Trade-off" and the parenthesis for a rerun batch.
+
+## Readable door names (D23)
+
+A plain interior door used to read `Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`: its IFC id first, its rooms in
+brackets. That string was baked into `top[].why`, the stability line, the widen and keep-clear fixes, the pack's
+`weakSpots[].label` and `why`, and the error text of a fix that could not be measured, so a judge or a report card
+read `D$77xwP`. The rooms are the name now: `Door between CORRIDOR and SCIF OPEN OFFICE`. The words match the report
+card's (`Door between <A> and <B>`, `backend/llm/features.py`).
+
+### The rule
+
+`fire.batch.door_label(building, floor_id, door_id) -> (kind, label)` changes for kind `door` only. Exits
+(`Exit Entry (south)`) and stair doors (`Stair S1 door`) already read well and are as they were. A plain door is one
+that is neither of those. Its rooms are the floor's rooms it connects, in floor order:
+
+| The door | Its label |
+| --- | --- |
+| joins two rooms, and no other plain door of the floor joins the same two names | `Door between Kitchen and Corridor 1` |
+| joins one known room | `Door from Kitchen` |
+| joins no known room | `Door D5`, as before |
+| another plain door of the floor joins the same two names (either way round), or both names are equal | each name gets its room id: `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `Door between CORRIDOR (R1AC3) and CORRIDOR (R1CC1)` |
+| two or more doors join the same two rooms | the label above and `, 1 of 2`, `, 2 of 2`, in order of the middle of the opening: x, then y, to the centimetre |
+
+A room with no name is shown by its id, with no second id after it. A name is ASCII (`?` for anything else) and has no
+colon (`Lab: West` reads `Lab - West`), because a `why` line ends its label at the first `: ` and E34 reads it from
+there. Three or more known rooms read `Door between A, B and C` (no door in the three buildings has that). Ids stay in
+the data: `id`, `top[].id` and `fixes[].door` are as they were.
+
+`widen_door`'s two errors that name a door say its label, not its id, and reach `fixesSkipped[].reason` that way:
+`widening Door between Lobby and Corridor 1 changes room connections or walkable pieces` and `Door between Kitchen
+and Corridor 1 has no opening`. `unknown door <id>` has no label to give and keeps the id. Everything that calls
+`door_label` (`aggregate`, `seed_ranges`, `default_variants`, `candidate_fixes`, `build_headlines`,
+`refresh.exit_shift`) picks the rule up with no change of its own.
+
+### Measured on the three buildings
+
+Plain doors that share two room names with another plain door of their floor, from the files (the rule's counts):
+
+| Building | Plain doors | Name pairs shared | Doors that carry room ids | Numbered `n of m` |
+| --- | --- | --- | --- | --- |
+| Example | 18 | 0 | 0 | 0 |
+| Office | 85 | 3 (F1: CORRIDOR and OPEN OFFICE, 2 doors, and CORRIDOR and VEST/ENTRY, 3; F2: OPEN OFFICE and TEAM RM, 5) | 10 | 0 |
+| Clinic | 217 | 29 | 94 (17 of them between two rooms of one name) | 4 (two room pairs with two doors each: R1D22 and R1DC1, R2D21 and R2DC1) |
+
+On every floor of all three buildings the 320 plain-door labels are unique, ASCII, free of `:` and free of their own door
+id (`check_door_names`). `D$77xwP` is `Door between CORRIDOR and SCIF OPEN OFFICE`, `D$77xVs` is `Door between OPEN OFFICE
+(R113a) and CORRIDOR (R141)`, `DQnt_pi` is `Door between SECURE DOC ROOM and OPEN OFFICE`, and `Dv$nmj8` is `Door between
+TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1), 1 of 2` (its twin `Dv$nmZR` is `2 of 2`: the two share x, and
+`Dv$nmj8` is lower down the plan).
+
+### Saved batches: `relabel`
+
+`fire.batch.relabel(building, batch) -> dict` returns a copy of a saved batch with the new names, and reruns nothing (a
+saved batch has no per-door waits, so it can be relabeled but not aggregated again). It builds a map from each plain
+door's old label (today's exact string, `Door <id> (<A> to <B>)`, as saved with or without the ASCII fold) to its new
+one, and swaps those strings in every text outside the numeric sections (`runs`, `rooms`, `doors`, `heatmaps`): `top[].why`,
+`stability.why`, `whatIf[].label` and `why`, `fixes[].label` and `why`, `fixesSkipped[].reason`. A skipped fix's reason in
+the old id form (`widening D$77xsW changes room connections or walkable pieces`, `door D$77xsW has no opening`) gets
+the door's label. Ids, numbers and field names are untouched, a second pass changes nothing, and an old label that two
+floors would name differently (the same door id and room names on both) is left alone rather than guessed.
+
+`relabel` and `fire.fixes.restate` commute (`check_door_names` and all three demo batches): run them in either order.
+`build_headlines` relabels its input first, so a pack made from a batch saved before D23 reads like one made after it.
+
+### Changed labels
+
+The three demo batches (`frontend/public/demo/batch-<id>.json`), relabeled into `debug/d23-relabeled-<id>.json`
+(gitignored). Fifteen texts change, and no other text, id or number does:
+
+```text
+Example (top[0].why, top[4].why, stability.why, fixes[3].label and why):
+Door DL1 (Lobby to Corridor 1)                          -> Door between Lobby and Corridor 1
+Door D202 (Office 202 to Corridor 2)                    -> Door between Office 202 and Corridor 2
+
+Office (top[4].why):
+Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)             -> Door between CORRIDOR and SCIF OPEN OFFICE
+
+Clinic (top[0..2].why, top[4].why, stability.why, fixes[0].label and why, fixes[1].label and why):
+Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES)       -> Door between PHYSICAL EXAM and PROVIDER CUBICLES
+Door Dv$nmXk (CHIEF AERO MED. to PHYSICAL EXAM)         -> Door between CHIEF AERO MED. and PHYSICAL EXAM
+Door Dv$n$qC (LAB to CENT. STO.)                        -> Door between LAB and CENT. STO.
+Door DIf2sGN (DENTAL WAITING to CORRIDOR)               -> Door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1)
+```
+
+The last one carries room ids because two more F2 doors join DENTAL WAITING and a CORRIDOR (`DIf2olL`, `DIf2olz`).
+Whole lines, before then after:
+
+```text
+Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE): 15 people queued at peak; 52 person-seconds of waiting on average, 1 of them in smoke, across 294 fires.
+Door between CORRIDOR and SCIF OPEN OFFICE: 15 people queued at peak; 52 person-seconds of waiting on average, 1 of them in smoke, across 294 fires.
+
+Widen Door Dv$nmdJ (PHYSICAL EXAM to PROVIDER CUBICLES) from 0.86 m to 1.36 m
+Widen Door between PHYSICAL EXAM and PROVIDER CUBICLES from 0.86 m to 1.36 m
+
+The top 3 weak spots hold in 0 of 3 seeds: Door DL1 (Lobby to Corridor 1), Exit East stair exit, Exit Main entrance. Door DL1 (Lobby to Corridor 1) ranks first in 3 of 3.
+The top 3 weak spots hold in 0 of 3 seeds: Door between Lobby and Corridor 1, Exit East stair exit, Exit Main entrance. Door between Lobby and Corridor 1 ranks first in 3 of 3.
+```
+
+`python -m fire.headlines data/buildings/office.json debug/d23-relabeled-office.json --out debug/d23-headlines-office.json`
+gives weak spot #5 as `Door between CORRIDOR and SCIF OPEN OFFICE` (`label` and the start of `why`), and a pack built from
+the batch as saved gives the same pack.
+
+### Verification
+
+`python -m fire.smoke_test` and `python -m fire.checks --slow` both print `fire checks OK`. `check_door_names` (fast, no
+simulation) pins the labels above, the uniqueness over the three buildings, every branch of the rule on a made-up floor (a
+colon, a non-ASCII name, an unnamed room, a name shared either way round, three doors between two rooms of one name,
+one known room, none, an exit and a stair door), the two `widen_door` messages, the `aggregate` and stability lines, and
+`relabel` on a hand-made office batch (nothing changes but the texts, no old label or door id is left in a text, a second
+pass changes nothing, `restate` commutes with it) and on a building that names one old label two ways. The office's
+plain-door expectation in `office_checks` and the `D101` line of `check_labels` follow the new rule; `Door missing` stays.
+
+### Handoffs
+
+- **A:** call `fire.batch.relabel(building, batch)` in the precompute before writing `batch-<id>.json` (with
+  `fire.fixes.restate`, in either order). `fire.headlines` relabels on its own. No reruns are needed. Two places outside
+  `fire/` still word a plain door differently: `_Names.label` in `backend/llm/features.py` always shows the room ids
+  (`Door between Lobby (L1) and Corridor 1 (C1)`) and says `Door of <A>` for a one-room door, where D's label shows an id
+  only when the names collide and says `Door from <A>`; and `tools/build_examples.py` writes `Door <id> (<A> to <B>) on
+  <floor>` into the placeholder `batch.example.json`.
+- **E:** text only changes. E34 shows the labels the files carry: `weakSpots[].label` is the label, and a batch `top[].why`
+  starts with it up to the first `: ` (no label holds one). `fixesSkipped[].reason` names its door by label too, with
+  `id` still `widen-<door id>` for the key.
+
+All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
+compliance results.
+
+## Tiny rooms (D24)
+
+D16's office batch lost one room: all three R203b seeds failed with `ValueError: No grid nodes inside the requested room
+on F2` (they are the 3 failed runs of the demo batch). R203b is an OPEN OFFICE fragment of 1.16 m², 5.57 x 0.21 m
+(bounds `(0.331, 23.818, 5.897, 24.026)`), open to CORRIDOR R201 below it and OPEN OFFICE R203a above it with no wall
+between. The 0.5 m grid's nodes sit at y = 23.75 (in R201) and y = 24.25 (in R203a), straddling the room, so none is
+inside it. Of the 385 rooms of the three buildings (24 in the example, 109 in the office, 252 in the clinic) it is the
+only one with no node inside. The simulator was never the problem: C's keep-out gives R203b a 1.5 m disc. This section
+replaces D16's note on the failures.
+
+### The rule
+
+`FloorGraph.walk` keeps each floor's prepared polygon: the walkable area joined with the door passages buffered by half a
+cell, the region every edge of the graph is covered by. `BuildingGraph.node_at(floor_id, x, y, room_polygon)` is as it was
+for a room with a node inside, so no other fire moves. Only when no node lies inside the room polygon:
+
+- The anchor is (x, y) when the room polygon covers it, else the polygon's `representative_point()`.
+- The candidates are the nodes within one cell (`spec["cell"]`) of the room polygon whose straight segment to the anchor
+  is covered by `walk`, so a node behind a wall never wins. The nearest to the anchor wins; a tie goes to the lower node
+  index.
+- With no candidate it raises `ValueError("No grid nodes inside or beside the requested room on <floor>")`.
+
+R203b's anchor is its representative point (3.114, 23.922), the point `fire.batch` aims the fire at, and its node is
+(3.25, 23.75) in R201, 0.22 m away over walkable floor. `FireModel.source_xy` is that node, so the fire starts at the
+corridor edge of the sliver and spreads like any other. A room inside a wall still raises: the fixture's 0.16 x 2 m room
+inside its 0.2 m wall has nodes within a cell of it on both sides, but every straight walk from its point to them crosses
+the wall. `aset_by_room` samples the nodes inside each room, so R203b still has no smoke ASET (null, and a null margin).
+
+### Measured
+
+`run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from
+`apply_overrides(office.scenario, 250, "kitchen")` (the demo's scenario: 250 occupants, a kitchen fire, `maxTime` 400),
+gives 3 ok runs and none failed, in 82 s on the lead's Windows laptop (78 s a run, with another sweep running):
+
+| Seed | t90 (s) | t100 (s) | trapped | person-seconds in smoke |
+| --- | --- | --- | --- | --- |
+| 1 | 182.91 | 211.92 | 0 | 591.0 |
+| 2 | 190.55 | 220.76 | 0 | 535.5 |
+| 3 | 180.68 | 210.47 | 0 | 458.5 |
+
+The room's risk is `riskT90` 184.7 s (range 180.7 / 182.9 / 190.6) with 0 trapped and 0 dosed. That is slower than every
+room of the demo batch: its 97 rooms with a t90 have a median of 136.3 s and a slowest of 142.3 s (F1 R118b). The fire
+starts at a node of the corridor R201, so it is a fire at the corridor's edge, not in a closed room.
+
+### Verification
+
+`python -m fire.smoke_test` and `python -m fire.checks --slow` both print `fire checks OK`. `check_tiny_room` (fast, no
+simulation) pins the two fixture rooms (the 0.09 x 2 m room along A's east side gets a node in A within 0.5 m; the 0.16 x
+2 m room inside the wall still raises, naming F1), the node (3.25, 23.75) for R203b, a kitchen `FireModel` in R203b built
+with `source_xy` there, and, for every room of the office file with no node inside, a node within a cell that a straight
+walk over `walk` reaches. `check_grid` is as it was. `check_tiny_room_slow` runs office R203b through `_run_one` (seed 1,
+60 occupants, `maxTime` 240: `ok`, t90 138.3 s, 0 trapped) and checks that all 252 clinic rooms get a node.
+
+### Handoffs
+
+- **A:** R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs. Expect the
+  room ranking to move: R203b's t90 is above the demo batch's slowest room (142 s), and room scores are scaled against
+  the slowest room, so the worst-room entry in `top` can change.
+- **E:** nothing to change. A batch that holds R203b has a `rooms[]` entry for it like any other.
+
+All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
+compliance results.
+
+## Fire spread (D25)
+
+`FireModel` spreads the fire from the ignition room to its neighbors on a schedule set by a building-material setting,
+`fire.material`: `concrete`, `drywall` (the default) or `wood`. A room that catches fire closes its doors to routing and
+adds its own heat release, so the smoke grows with every burning room. The spread is a shortest-path schedule over a room
+graph: deterministic, cheap and easy to explain, not a cell-by-cell fire front. Since D26 it also climbs through the
+floor to the rooms above. **The presets are illustrative: round numbers picked for a legible demo. They are not
+engineering values, not validated and not for compliance.**
+
+### Presets (illustrative)
+
+Seconds, from `fire.spread.MATERIALS`:
+
+| Material | Flashover | Door link | Wall link | Floor link (D26) |
+| --- | --- | --- | --- | --- |
+| `concrete` | 600 | 300 | 1200 | 3600 |
+| `drywall` (default) | 300 | 180 | 600 | 900 |
+| `wood` | 150 | 90 | 240 | 300 |
+
+- **Flashover:** a room is fully involved this long after it ignites.
+- **Door link, wall link:** the delay before a burning room ignites a neighbor across a door (or a stair link), or across
+  a shared wall.
+- **Floor link:** the delay before a burning room ignites a room right above it, through the floor between them (next
+  section). Illustrative like the rest: a concrete slab practically never passes fire within a run, so concrete's 3600 s
+  is out of reach of any `maxTime` the app uses.
+- **Two orders hold, and tuning may not break them:** wood < drywall < concrete in every column, and door < wall in
+  every row, and a floor is slower than a door in every row (`floor` > `door`; it is also slower than a wall in all three
+  presets, which is not pinned). `check_spread` and `check_floor_spread` pin them. `check_spread` also pins the example's
+  schedule numbers below, so tune the presets there too.
+- `material_name(fire)` gives `drywall` when the key is missing. Anything but the exact names (`"Wood"`, `"steel"`,
+  `None`, `3`) raises `ValueError("Unknown fire material 'steel'; valid names: concrete, drywall, wood")`, and
+  `FireModel` fails the run with that message.
+
+### Floor links (D26)
+
+Fire also spreads from one floor to the next through the floor itself, at the material's `floor` delay above. **This is
+illustrative, like every number in this section: round values for a legible demo, not an engineering result and not for
+compliance.**
+
+- **Link:** `fire.spread.floor_links(building)` joins a room to each room on the next level up whose plan polygon overlaps
+  its own by at least `FLOOR_MIN_M2` = 2 m² (the area of the `shapely` intersection of the `buffer(0)` polygons). A big
+  room under several small ones, or the reverse, links to each of them. The ignition schedule runs Dijkstra over these
+  links together with the door and wall links: `ignite(upper) = ignite(lower) + MATERIALS[material]["floor"]`.
+- **Upward only.** Heat rises, and fire passing down through a floor is much slower and rare, so the model leaves it out:
+  a room never ignites the room below it through the floor, whatever the material or the horizon. (A fire upstairs can
+  still reach the floor below the way it did before, through the stairs.) `floor_links` holds only the upward direction;
+  `room_links` stays symmetric and lists no floor link.
+- **One level at a time.** Levels are taken in order like the stair links, two floors on one level never link, and a room
+  two floors up burns after the room between them (two floor delays).
+- **Stair rooms are left out** on both levels (a room a stair names, or typed `stair`): stair links already join them,
+  at the door delay.
+- **Not modelled: window-to-window spread.** Fire leaping out of a window and in at the window above (or across a
+  courtyard), shafts, ducts and other openings through a floor, and a slab that fails. The floor is one number per
+  material.
+- **Effect.** With drywall (900 s) and concrete (3600 s) no floor link fires inside the app's 400 to 600 s runs, so their
+  schedules, heat and doors are as D25 made them (and the checks that pin those numbers did not move). Wood (300 s) lights
+  rooms upstairs from 300 s: the room right over the ignition room at 300 s, the rooms over its neighbors from 390 s.
+
+### The rule
+
+**Room graph.** `room_links(building)` returns `{(floor, room): {(floor, room): "door" | "wall"}}`, symmetric, for every
+room in building order. It is cached by object identity like `get_graph`, so treat a building as immutable after its
+first lookup. `floor_links(building)` (the previous section) returns `{(floor, room): {(floor, room): "floor"}}` for every
+room, one way (lower room to the rooms above), from the same cache entry.
+
+- **Door link:** a door whose `connects` holds two different rooms of its floor. An exterior door joins a room to
+  `"outside"`, which is no room.
+- **Wall link:** two rooms of one floor whose polygons are within `WALL_GAP_M` = 0.25 m of each other (the office's
+  walls are 0.12 m thick), when each room's boundary runs along the other for at least `WALL_MIN_M` = 1.0 m:
+  `min((a.boundary & b.buffer(0.25)).length, (b.boundary & a.buffer(0.25)).length) >= 1.0`. The candidates come from an
+  `STRtree` `dwithin` query on the `buffer(0)` polygons.
+- **Stair link** (counts as a door link): for consecutive floors by `level`, each stair room of a group on the lower floor
+  and each stair room of the same group on the upper floor. No other room-graph link crosses floors; the one-way floor
+  links of D26 are `floor_links`' and cross floors upward only.
+- A pair with both a door and a wall keeps `"door"`.
+
+**Schedule.** `ignition_schedule(building, scenario)` is pure.
+
+- **Origin:** `(fire.floor, fire.room)` when that room exists, else the room whose polygon covers `(x, y)` on
+  `fire.floor`, else none, and the schedule is empty.
+- **Dijkstra** from the origin at `fire.start` (default 0): `ignite(n) = ignite(r) + MATERIALS[material][kind]`, with
+  `kind` `door`, `wall` or (D26, upward only) `floor`. The heap key is `(time, floor index, room index)` in building
+  order, so ties come out the same every time. The search keeps times relative to the start, so a fractional start adds
+  no float noise to the ties.
+- **Horizon:** only rooms with `ignite <= scenario.maxTime` (default 600, the sim's) are listed. The ignition room is
+  always listed, and first.
+- **Entries:** `{"room": id, "floor": id, "ignite": round(t, 2)}`, sorted by the heap key.
+- **Sprinklers:** with `sprinklers: true` the schedule holds only the ignition room. That is the usual confinement
+  assumption for a sprinkler-controlled fire, and it keeps the sprinkler what-if believable. It is not in the design:
+  drop the early return in `ignition_schedule` to let fire spread under sprinklers.
+
+**The model.** `FireModel(building, scenario, spread=True)` has `FireModel.material`, the material's name.
+`spread=False` keeps only the ignition room: the smoke-only model that `check_model` and `check_tuning` pin.
+
+- **The ignition room keeps today's rules:** its own heat curve `hrr_kw(params, t - start)`, its keep-out (C's side) and
+  the doors that smoke or flame close. A fire that does not spread before `maxTime` gives bit-identical arrays and values.
+- **Heat:** every other room adds `room_hrr_kw(peakKw, flashover, tau)` = `peakKw * min(1, (tau / flashover)^2)` for
+  `tau = t - ignite >= 0`: fully involved `flashover` seconds after it ignites, capped at the preset's peak. `hrr(t)` is
+  the total, summed with `math.fsum` so the building's room order never changes it. The arrival table adds the same
+  terms (vectorized, in sorted order) only when the schedule has a second room.
+- **Smoke and flame:** density uses the total `hrr(t)`. The flame footprint uses the ignition room's own curve.
+- **Doors:** `blocked_doors()` adds every door of a burning room other than the ignition room, exterior doors included, as
+  soon as `ignite <= t`.
+- `burning_rooms(t) -> set[(floor id, room id)]`: every room with `ignite <= t`, the ignition room included (so the set is
+  empty before `fire.start`).
+- `ignition_times() -> list[{"room", "floor", "ignite"}]`: the schedule, as fresh copies.
+- `NoFire` has both methods (an empty set, an empty list) and no `material` attribute.
+
+CLI: `python -m fire.spread BUILDING SCENARIO [--material NAME]` prints one `<ignite> s  <floor> <room> (<name>)` line per
+room and ends `<n> rooms by <maxTime> s (<material>)`. On the example, `--material drywall` ends `12 rooms by 400 s (drywall)`
+and `--material wood` ends `16 rooms by 400 s (wood)` (15 before the floor links).
+
+### Measured
+
+On the lead's Windows laptop. Links are unordered pairs; floor links (D26) are one-way, so each is counted once:
+
+| Building | Rooms | Door links (stair links) | Wall-only links | Floor links | Built in |
+| --- | --- | --- | --- | --- | --- |
+| example | 24 | 24 (2) | 22 | 10 | 0.02 s |
+| office | 109 | 91 | 176 | 117 | 0.13 s |
+| clinic | 252 | 222 | 347 | 215 | 0.24 s |
+
+The office's 117 floor links join 60 rooms of F1 to a room above and 41 rooms of F2 to a room below; the clinic's 215 join
+103 and 99. The times include the floor links.
+
+Rooms on fire by 400 s, the ignition room included. Floor links change only the wood column, and only for a fire that can
+climb (an F2 fire has no floor above it in these buildings; D25's numbers were: example R101 15, office R143 37, clinic
+R1AC1 75 with wood):
+
+| Fire in | Concrete | Drywall | Wood |
+| --- | --- | --- | --- |
+| example R101 | 2 | 12 | 16 |
+| office R143 | 9 | 21 | 46 |
+| office R203c | 5 | 6 | 36 |
+| office R237b | 4 | 4 | 14 |
+| clinic R1AC1 | 6 | 31 | 94 |
+
+The plan's prototype counted 74 for the clinic with wood before the floor links (D25 counted 75); every other D25
+number and the link counts agreed with it.
+
+Over every batch room (no corridors or stairs: 99 in the office, 206 in the clinic), the other rooms reached by 400 s
+average 1.3 (concrete), 6.5 (drywall) and 24.0 (wood) in the office, and 1.2, 6.3 and 24.7 in the clinic. With wood that
+was 19.6 and 21.2 before the floor links.
+
+The example's drywall schedule from the kitchen R101 (`python -m fire.spread contracts/building.example.json
+contracts/scenario.example.json`): R101 at 0 s, Corridor C1 at 180 s, then R102, L1, R103 to R108, SA1 and SB1 at 360 s.
+With wood: C1 at 90 s, those ten at 180 s, SA2 and SB2 (floor 2) at 270 s, R201 (the floor-2 office over R101, through
+the floor) at 300 s, C2 at 360 s. The office's drywall schedule from R143 starts with R143 at 0 s, then eight rooms at
+180 s (R121, R143A, R144 to R149) and twelve at 360 s.
+
+**Smoke.** A kitchen fire reaches 1 MW at 146 s and 1.5 MW at 179 s, and there the smoke density and front speed
+saturate. So drywall's first spread (180 s) leaves a kitchen's smoke exactly as it was and changes only `hrr` and
+`blocked_doors()`. Wood (90 s) makes the smoke faster and denser between 90 s and 179 s (on the example, the first
+difference is at 91 s). A trash fire (0.5 MW) has headroom, so every burning room adds smoke. Door D of
+`fixture_building()` is never closed by smoke within 400 s, with a kitchen or a trash fire at (8, 5), so with drywall it
+closes at 180 s only through the spread.
+
+**What the checks changed.** Two fast checks pin smoke-only numbers past 180 s: `check_model` (`hrr(200) == 1500`) and
+`check_tuning` (`blocked_doors() == {"D101"}` at 180 s, and `set()` for trash and bedroom up to 300 s). They build their
+models with `spread=False`; every assertion stays. `check_stairs`, `check_exposure` and `check_margins` pass as they were,
+because the example's kitchen smoke saturates. One slow check moved: `check_tradeoffs_slow` (the blocked main entrance,
+fires in L1 and R105) tests the trade-off wording, so it pins `fire.material` to `concrete`, which keeps the spread (the
+corridor at 300 s) out of its fires and all its assertions as they were. With drywall the lobby fire traps 17 and the R105
+fire traps one more person once E1 is blocked, so the net 16 is less than the lobby's 17 and `trapped_note` writes no
+"(N of N in fires in ...)" note. Every other slow check passes unchanged. Later, building-wide routing became the default
+for lobby and corridor fires (`sim/ROUTING.md`): the lobby fire then traps nobody, blocking E1 changes no trapped count
+and `add_whatif` writes no `dTrappedRooms`, so `check_tradeoffs_slow` also sets `buildingRouting` false (the legacy
+keep-out; seed 1: the lobby fire traps 2, none once E1 is blocked, and the line says "2 of 2 in fires in Lobby (L1)").
+
+**What D26 changed.** Only values the floor links move: the example's wood schedule gained R201 at 300 s (`check_spread`,
+16 rooms by 400 s, was 15) and the office's wood count from R143 is 46 (was 37). Every drywall and concrete number is as
+it was, because 900 s and 3600 s are past the 400 s horizon.
+
+**Risk.** Wood traps many people. From office R143 the corridor R121, R143A and R146 ignite at 90 s, while more than half
+the occupants are still inside (t50 is 97 s). The presets stay as pinned unless the lead asks to tune them within the
+orders.
+
+**The sim with floor links.** The sim needed no change: C27 already traps the people still inside any room that catches
+fire and closes that room's doors, on any floor. Seed 1, the demo's scenario (250 people, kitchen fire in R143, door
+D$77xsW closed; `maxTime` 400 s): with wood 217 out and 33 trapped before and after, 23 of them "burning room" and 10 "no
+route", and 46 rooms burned instead of 37 (F2 13, was 4); with drywall 250 out, 0 trapped, 21 rooms, as before. The example's
+kitchen fire R101 with wood: 124 out and 36 trapped (25 "burning room", 11 "no route") before and after, 16 rooms instead
+of 15. No one is trapped by the new rooms because the floors above ignite from 300 s, after their occupants have left.
+
+### Verification
+
+`python -m fire.smoke_test` and `python -m fire.checks --slow` both print `fire checks OK`; `python -m sim.smoke_test`
+(fast) still ends `OK`. The new `check_spread` (fast, no simulation) pins:
+
+- the two preset orders, the `room_hrr_kw` ramp, and `material_name` for each bad value, from the function and from
+  `FireModel`;
+- the two-room fixture: B at 180 s (drywall), 90 s (wood) and 300 s (concrete); 600, 240 and 1200 s with the door
+  removed; start 50 gives 230 s; `maxTime` 170, sprinklers, and 0.6 m of shared wall give A only; 1.2 m of shared wall
+  links; a degenerate room links to nothing; no room named, the room around the fire point is the origin;
+- a drywall `FireModel` against its `spread=False` twin: equal `hrr`, smoke density and blocked doors for every whole
+  second to 179 s, door D blocked at 180 s only in the spread model, `hrr(330)` 375 kW and `hrr(480)` 1500 kW higher, the
+  flame footprint equal to 400 s, `burning_rooms` and `ignition_times` as the schedule says, and a trash fire with wood
+  where the second room adds smoke from 90 s;
+- the example's three schedules and the lobby fire, its 24 door and 22 wall-only links, only stairs linking floors in
+  `room_links`, equal ignition per room with the floors reversed, and `NoFire`;
+- the office, when its file is there: 91 door and 176 wall-only links built in under 2 s, and from R143 9, 21 and 46
+  rooms by 400 s (concrete, drywall, wood). A rebuilt office gets the checks that hold for any building.
+
+The new `check_floor_spread` (fast) pins D26 on `two_floor_fixture()` (the fixture under a floor F2: room C right over B,
+room E beside C, door DC between them), a fire in A:
+
+- wood: B at 90 s, C at B's ignite time plus the floor delay (390 s), E at 480 s; a fire in B lights C at 300 s; start 50
+  shifts all of it; `maxTime` 389 and 390 cut at the floor link; sprinklers keep the fire in A; drywall gives C at 1080 s;
+- concrete: no upward spread within 600 s (nor within 3899 s; C at 3900 s);
+- upward only: a fire in C or E (F2) lists no F1 room, for every material and a 20,000 s horizon, and `floor_links` of
+  the fixture holds B to C and nothing downward;
+- the model: with wood C is in `burning_rooms` and DC in `blocked_doors()` from 390 s and not at 389 s, the heat is one
+  room's peak plus C's ramp above the smoke-only twin at 400 s; with concrete nothing on F2 burns to 600 s;
+- the rule: overlap of exactly 2 m² links and 1.9 m² does not (measured, not the upper room's own area), a room beside
+  another is no link, two floors on one level do not link, the next level up links whatever its number and the listing
+  order of the floors, a tower of three floors burns floor by floor (wood: 0, 300, 600 s), stair rooms (typed or named by
+  a stair) and degenerate rooms link to nothing;
+- the example: exactly its 10 links (C1-C2, L1-R203, and R101 to R108 under R201, R202 and R204 to R209), stair links as
+  before, the floor delay slower than the door delay for every material;
+- the office, when its file is there: for every link the upper room is on a higher level, neither room is a stair room and
+  the overlap is at least 2 m²; 117 links for the demo's file, and from R143 13 rooms of F2 with wood and none with
+  drywall or concrete.
+
+`check_spread_slow` runs the example's kitchen fire with drywall for 400 s (160 occupants). The corridor's 11 doors close
+by 180 s: D101 at 174 s by smoke, the other ten at exactly 180 s by the spread. By 400 s 1 of 160 is trapped (reason
+`no route`), t50 is 95.3 s and t90 is 120.7 s: with drywall the corridor ignites after most people are out. In the model the
+lobby and Stair B ignite at 360 s, so the exits E1 and E2 are in `blocked_doors()` from then on. The check sets
+`socialFollowing` false (C28's social cue gets all 160 out by 129 s, before the corridor ignites, so the run would end with
+no door left to close); false keeps the run event for event as the numbers above.
+
+### Handoffs
+
+- **C27:** the API above; nothing to change for the floor links (D26): a room on any floor that catches fire already
+  traps the people still inside it (`burning_rooms()`) and closes its doors (`blocked_doors()`). The first
+  `ignition_times()` entry is the ignition room, which keeps today's doors, keep-out and heat curve. `NoFire` has both
+  methods; `tools/toy_fire.ToyFire` has neither. `run()` writes `run["fire"]["rooms"] = fire.ignition_times()` and
+  `run["fire"]["material"] = fire.material`, only for a model that has a `material`.
+- **A11:** `fire.spread.ignition_schedule(building, scenario)` is pure and takes milliseconds after the first `room_links`
+  call; the report card uses it. `material_name` validates. Every demo number changes, so rerun the precompute without
+  `--resume`. The floor links (D26) change only wood: its schedules list more rooms upstairs (the demo's R143 wood
+  pair, 46 rooms instead of 37), and nothing for drywall or concrete.
+- **E:** a room is fully involved `flashover` seconds after it ignites (600, 300 or 150 s). That makes a natural
+  orange-to-red ramp.
 
 All numbers use the illustrative model and are ideas for a fire protection engineer to check; they are not design or
 compliance results.

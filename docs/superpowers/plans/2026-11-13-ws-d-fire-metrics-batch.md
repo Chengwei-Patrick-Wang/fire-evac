@@ -466,7 +466,6 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - For E: E34 mirrors `VERDICT`. `tradeoff` and `costs` are optional, and `helps` now excludes trade-offs.
 
 ### Task D23 (P0 · Sat 4 PM): Readable names for unnamed interior doors
-BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/batch.py` (`door_label`, new `relabel`), `fire/fixes.py` (`widen_door` messages), `fire/headlines.py` (`build_headlines` relabels its input), `fire/checks.py` (`office_checks`, `check_labels`, new `check_door_names`), `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`. Produce `debug/d23-relabeled-<id>.json` and `debug/d23-headlines-office.json` (gitignored).
 
@@ -495,12 +494,12 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - Ids stay in the data: `id`, `top[].id`, `fixes[].door`.
   - `relabel(building, batch) -> dict` (pure).
 
-- [ ] **Step 1: Rule.** Write the plain-door rule in `door_label`. Kinds, exits and stair doors are unchanged. `widen_door`'s three door errors name the door by its `door_label` label, not its id.
-- [ ] **Step 2: Relabel saved batches.**
+- [x] **Step 1: Rule.** Write the plain-door rule in `door_label`. Kinds, exits and stair doors are unchanged. `widen_door`'s three door errors name the door by its `door_label` label, not its id.
+- [x] **Step 2: Relabel saved batches.**
   - Build a map from each plain door's legacy label (today's exact string, via a private `_legacy_label`) to its new label.
   - `relabel` replaces those strings in `top[].why`, `stability.why`, `whatIf[].label` and `why`, `fixes[].label` and `why`, and `fixesSkipped[].reason`, and returns a copy. Numbers and ids are untouched.
   - `build_headlines` calls it on its input first, so a pack made from an old batch reads well too.
-- [ ] **Step 3: Checks.** Fast `check_door_names()`:
+- [x] **Step 3: Checks.** Fast `check_door_names()`:
   - Example: `D101` gives `Door between Kitchen and Corridor 1`, `DL1` gives `Door between Lobby and Corridor 1`.
   - Office: `D$77xwP` gives `Door between CORRIDOR and SCIF OPEN OFFICE`, `D$77xVs` gives `Door between OPEN OFFICE (R113a) and CORRIDOR (R141)`, `DQnt_pi` gives `Door between SECURE DOC ROOM and OPEN OFFICE`.
   - Clinic, skipped if missing: `Dv$nmj8` gives `Door between TEAM INTERACTION (R1D22) and WAITING / ACTIVITY AREA (R1DC1), 1 of 2`.
@@ -510,17 +509,16 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
     - changes nothing else (ids, numbers);
     - changes nothing on a second pass.
   - Move `office_checks`' plain-door expectation and `check_labels`' `D101` line to the new rule. `Door missing` stays.
-- [ ] **Step 4: Verify:**
+- [x] **Step 4: Verify:**
   - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
   - Relabel the three demo batches into `debug/d23-relabeled-<id>.json`, printing each changed label (old -> new).
   - `python -m fire.headlines data/buildings/office.json debug/d23-relabeled-office.json --out debug/d23-headlines-office.json` gives weak spot #5 as `Door between CORRIDOR and SCIF OPEN OFFICE`.
   - README section "Readable door names (D23)": the rule and the old -> new list.
-- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): readable names for unnamed interior doors"` (no attribution lines). Handoffs in the README:
+- [x] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): readable names for unnamed interior doors"` (no attribution lines). Handoffs in the README:
   - For A: call `fire.batch.relabel(building, batch)` in the precompute before writing `batch-<id>.json`. `fire.headlines` relabels on its own. No reruns are needed.
   - For E: text only changes. E34 shows the labels the files carry.
 
 ### Task D24 (P1 · Sat 6 PM): Tiny rooms: a fire in a room thinner than a smoke cell starts at the nearest reachable cell
-BLOCKED: taken over by the lead's machine at 14:21; skip
 
 **Files:** Modify `fire/grid.py` (`FloorGraph`, `BuildingGraph.__init__`, `node_at`), `fire/checks.py`, `fire/README.md`, `docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md`.
 
@@ -540,13 +538,13 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - A `node_at` fallback.
   - The error message `No grid nodes inside or beside the requested room on <floor>`.
 
-- [ ] **Step 1: Keep the polygon.** Store the per-floor polygon on `FloorGraph` as `walk`.
-- [ ] **Step 2: Fallback.** Only when no node lies inside the room polygon:
+- [x] **Step 1: Keep the polygon.** Store the per-floor polygon on `FloorGraph` as `walk`.
+- [x] **Step 2: Fallback.** Only when no node lies inside the room polygon:
   - The anchor is (x, y) if the room polygon covers it, else the polygon's `representative_point()`.
   - Candidates are nodes within one cell (`spec["cell"]`) of the room polygon whose straight segment to the anchor is covered by `walk`. The nearest to the anchor wins.
   - With no candidate, raise with the new message.
   - Rooms with a node inside behave exactly as today, so no other fire moves.
-- [ ] **Step 3: Checks.**
+- [x] **Step 3: Checks.**
   - **Fast `check_tiny_room()`:**
     - On `fixture_building()`, a 0.09 × 2 m room inside A along its east side (`box(9.9, 3, 9.99, 5)`) gets a node in A within 0.5 m.
     - A 0.16 × 2 m room inside the wall (`box(10.02, 3, 10.18, 5)`) still raises `ValueError` naming F1.
@@ -555,8 +553,29 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - **Slow `check_tiny_room_slow()`:**
     - `_run_one` for office R203b, seed 1, 60 occupants, `maxTime` 240 returns `ok: True`.
     - Every clinic room gets a node.
-- [ ] **Step 4: Verify:**
+- [x] **Step 4: Verify:**
   - `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`.
   - `run_many(office, base, [{"floor": "F2", "room": "R203b"}], seeds=(1, 2, 3), workers=3)`, with `base` from `apply_overrides(office.scenario, 250, "kitchen")`, has 3 ok runs. Paste their t90 and trapped into a README section "Tiny rooms (D24)" that replaces D16's "Office limitation" paragraph.
-- [ ] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
+- [x] **Step 5: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "fix(fire): fires in rooms thinner than a smoke cell start at the nearest reachable cell"` (no attribution lines).
   - Handoff for A: R203b's runs succeed on the next office precompute. Until then the demo batch lists 3 failed runs.
+
+## Added Sat (Ember UI and fire spread)
+
+> The task text, interfaces and measured numbers live in `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`. Each task is tracked here with the other D tasks.
+
+### Task D25 (P0 · Sat 6 PM): Fire spreads room to room at an illustrative material speed
+
+**Files:** Create `fire/spread.py`. Modify `fire/model.py` (`FireModel.__init__`, `hrr`, `_update`, new `burning_rooms`, `ignition_times`, attribute `material`), `fire/stub.py` (`NoFire.burning_rooms`, `NoFire.ignition_times`), `fire/checks.py` (new `check_spread`, `check_spread_slow`; `check_model` and `check_tuning` build their models with `spread=False`), `fire/README.md`, this file.
+
+- [x] **Step 1: Presets.** `MATERIALS`, `DEFAULT_MATERIAL`, `WALL_GAP_M`, `WALL_MIN_M` and `material_name` in `fire/spread.py`; a bad name raises `Unknown fire material 'steel'; valid names: concrete, drywall, wood`. Values as pinned.
+- [x] **Step 2: Room graph.** `room_links(building)`, cached by object identity. Matches the measured counts: example 24 door (2 stair) and 22 wall-only; office 91 and 176 in 0.1 s; clinic 222 and 347 in 0.27 s.
+- [x] **Step 3: Schedule.** `origin_room`, `ignition_schedule` (Dijkstra, heap key `(time, floor index, room index)`, `maxTime` horizon, sprinklers keep the origin), `room_hrr_kw`, and the CLI `python -m fire.spread BUILDING SCENARIO [--material NAME]`.
+- [x] **Step 4: Model.** `FireModel(building, scenario, spread=True)`, `FireModel.material`, the summed `hrr`, the arrival table, `_update` (density from the total, flame footprint from the ignition room's own curve, the doors of burning rooms), `burning_rooms(t)` and `ignition_times()`.
+- [x] **Step 5: Stub.** `NoFire.burning_rooms` and `NoFire.ignition_times`; no `material` attribute.
+- [x] **Step 6: Checks.** Fast `check_spread` and slow `check_spread_slow`; `check_model` and `check_tuning` build with `spread=False`. One slow check moved: `check_tradeoffs_slow` pins `fire.material` to `concrete` (it tests the trade-off wording; with drywall the R105 fire traps one more person with E1 blocked, so the lobby's 17 exceed the net 16 and `trapped_note` is blank). Every assertion stays; all other checks pass unchanged.
+- [x] **Step 7: Verify.** `python -m fire.smoke_test` and `python -m fire.checks --slow` print `fire checks OK`; `python -m fire.spread` on the example ends `12 rooms by 400 s (drywall)` and, with `--material wood`, `15 rooms by 400 s (wood)`; `python -m sim.smoke_test` (fast) ends `OK`. README section "Fire spread (D25)" with the presets, the rules, the measured tables and the handoffs.
+- [x] **Step 8: Commit:** `git add fire docs/superpowers/plans/2026-11-13-ws-d-fire-metrics-batch.md && git commit -m "feat(fire): fire spreads room to room at an illustrative material speed"` (no attribution lines).
+  - Handoff for C27: `blocked_doors()` already holds the doors of burning rooms; the first `ignition_times()` entry is the ignition room; `NoFire` has both methods, `ToyFire` neither.
+  - Handoff for A11: `ignition_schedule(building, scenario)` is pure; `material_name` validates; every demo number changes, so rerun without `--resume`.
+  - Handoff for E: a room is fully involved `flashover` seconds after it ignites.
+

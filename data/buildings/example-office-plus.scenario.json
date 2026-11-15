@@ -1,0 +1,47 @@
+{
+ "version": "scenario/v0",
+ "id": "example-plus-kitchen-fire",
+ "buildingId": "example-office-plus",
+ "seed": 1,
+ "occupants": {
+  "total": 160,
+  "mix": {
+   "typical": 0.85,
+   "older": 0.1,
+   "visitor": 0.05
+  },
+  "perRoom": {
+   "R101": 10,
+   "R102": 10,
+   "L1": 8,
+   "R103": 8,
+   "R104": 5,
+   "R105": 10,
+   "R106": 13,
+   "R107": 10,
+   "R108": 8,
+   "R201": 10,
+   "R202": 10,
+   "R203": 7,
+   "R204": 7,
+   "R205": 5,
+   "R206": 10,
+   "R207": 12,
+   "R208": 10,
+   "R209": 7
+  }
+ },
+ "fire": {
+  "floor": "F1",
+  "room": "R101",
+  "x": 8.0,
+  "y": 3.0,
+  "type": "kitchen",
+  "start": 0,
+  "material": "drywall"
+ },
+ "sprinklers": false,
+ "doors": {},
+ "alarmTime": 30,
+ "maxTime": 400
+}

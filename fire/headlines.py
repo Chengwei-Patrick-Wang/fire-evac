@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 import sys
 
-from fire.batch import door_label
+from fire.batch import door_label, relabel
 
 NOTE = ("Illustrative fire model and rule-based simulated occupants; "
         "ideas for a fire protection engineer to check, not a compliance result.")
@@ -127,7 +127,11 @@ def _sensitivity(sensitivity: dict | None) -> dict:
 
 def build_headlines(building: dict, batch: dict, sensitivity: dict | None = None,
                     sources: dict | None = None, generated: str | None = None) -> dict:
-    """The headlines/v0 pack. Reads the batch only; sections it lacks are left out, never null."""
+    """The headlines/v0 pack. Reads the batch only; sections it lacks are left out, never null.
+
+    D23: the batch is relabeled first, so a pack made from a batch saved before it names plain interior doors
+    by their rooms, not by their ids."""
+    batch = relabel(building, batch)
     spots = _weak_spots(building, batch)
     whatif = _what_if(batch)
     stability = _pick(batch.get("stability") or {}, ("why", "heldIn", "n"))

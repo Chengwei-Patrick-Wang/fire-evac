@@ -17,6 +17,7 @@
 - **Before the scaffold lands on `main` (~12:45 AM Sat):** `frontend/` does not exist, and only `contracts/plan.example.json` and `scenario.example.json` do. Do E1 now, then start E2 on `SAMPLE_BUILDING` (hand-made in E1 from the spec §6 description). When the scaffold lands: `git fetch origin && git merge origin/main`, copy `contracts/{building,run,batch,scenario}.example.json` into `frontend/public/demo/` and list the building, run and batch in `index.json` in A's A5 format (E1 Step 4; ids copied from each file; `scenario.example.json` is only for Open file tests; re-copy after every `python tools/build_examples.py`). If an example disagrees with `types.ts`, the example wins: fix the types and tell A. Never re-plan scaffold work.
 - **Big files:** never read `run.example.json` whole (about 1 MB now, several MB for real runs). Header: `jq -c 'del(.frames,.smoke,.agents,.events,.fire.hrr,.metrics.heatmaps,.metrics.doors)' FILE | head -c 2500`. One frame: `jq -c '.frames[10] | {t, n: (.a|length), first: .a[0]}' FILE`. Event counts: `jq -c '[.events[].type] | group_by(.) | map({(.[0]): length}) | add' FILE`. No jq: `node -e "const r=require('./contracts/run.example.json');console.log(Object.keys(r),r.frames.length)"`.
 - **Run a task (one per session, then `/clear`):** Claude Code on Pro: Sonnet, medium effort, `acceptEdits`, "Use superpowers:executing-plans to do only Task E3 of docs/superpowers/plans/2026-11-13-ws-e-frontend.md". Codex on Plus (reads AGENTS.md itself): "Do only Task E3 of that plan, in order, ticking its boxes." Order: E1 to E9, then P1 (E10 to E12), then P2 (E13); E8 (due Sat 4 PM) goes before E7 (due Sat 10 PM). Behind at 1:30 AM? Ship the skeleton first (E2 Walls and Scene, E3 Index, Sampling and Clock); labels, toggles, marks and fixtures follow.
+- **Ember rework (Sat 14 Nov):** E36 to E38 are in `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`. After E36 the shell below (`TopBar`, `Toolbar3D`, `Scrubber`, `AgentLegend`, the 300 px and 380 px panels) no longer exists; see "Task E36" at the end of this file for where each control went.
 - **Git:** every task's last step is `git add frontend && git commit -m "<message>" && git push` (first push: `git push -u origin ws-e`); push at least hourly, PR to `main` at least every 2 h (the first right after E1), merge `main` into `ws-e` at each sync; if `package.json` or the lockfile conflicts, keep both sides' dependencies and run `npm install`. Never force-push, never push to `main`.
 
 ## Global Constraints
@@ -458,8 +459,7 @@
 - [x] **Step 5: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): static mode disables the sprinklers what-if and quotes the measured one"` (no attribution lines).
 
 ### Task E34 (P1 · Sat 6 PM): Fix lines show trade-offs, and no list names a spot by its raw id
-BLOCKED: taken over by the lead's machine at 14:21; skip
-- **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Files:** Modify `frontend/src/model/fixes.ts`, `frontend/src/model/spots.ts`, `frontend/src/dashboard/MeasuredFixes.tsx`, `frontend/src/dashboard/WeakSpots.tsx`, `frontend/src/dashboard/HeadlinePack.tsx`, `frontend/src/ui/PrintReport.tsx`, `frontend/src/ui/WhatIfCard.tsx`, `frontend/src/ui/AboutOverlay.tsx`, `frontend/src/tour/scenes.ts`, `frontend/src/App.css`, `frontend/scripts/make-fixtures.mjs`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
 - **Interfaces:**
   - **Consumes, from E28:**
     - `Fix`, `readFixes`, `fixTarget` and `fixLine`. `fixLine` builds a signed compact line, with "; +1.3 trapped per fire" when |dTrapped| ≥ 0.05.
@@ -483,21 +483,21 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
     - Batch `top[]` entries have no `label`, but every `why` starts with it (`<label>: ...`). D18's `weakSpots[]` carry `label`.
     - Interior-door labels inside D's text still carry IFC ids (`Door D$77xwP (CORRIDOR to SCIF OPEN OFFICE)`). The batches and headline packs pick up readable labels once D23 lands and A reruns the precompute; A's report cards already use `_Names.label`.
   - **Produces:** `VERDICT`, `fixVerdict(fix) → 'helps' | 'tradeoff' | 'nogain'`, `fixCosts(fix) → string[]`, `spotLabel(entry) → string`, `.badge.trade`, fixture entries, and qa checks.
-- [ ] **Step 1: One rule.**
+- [x] **Step 1: One rule.**
   - In `fixes.ts`, add `VERDICT = { t90: 1, trapped: 0.05, smokePct: 5 }` and `fixVerdict(fix)`:
     - `n === 0` gives 'nogain'.
     - When `typeof fix.tradeoff === 'boolean'` (D22 data): 'tradeoff' if true, else 'helps' if `helps`, else 'nogain'.
     - Otherwise, gains and costs from the numbers by D22's rule.
   - `Fix` gains `tradeoff?: boolean` and `costs?: string[]`.
-- [ ] **Step 2: Line.**
+- [x] **Step 2: Line.**
   - `fixLine` keeps today's text for 'helps' and 'nogain', so E28's expectations hold.
   - A trade-off lists its gains, then "; but " and its costs, in the same signed form. Example: "Keep Exit Main entrance clear (vs blocked): -58 s t90, -68% smoke exposure across 36 fires; but +1.3 trapped per fire".
   - A measure that is neither a gain nor a cost is left out.
-- [ ] **Step 3: Badge.**
+- [x] **Step 3: Badge.**
   - helps → `.badge.ok` "helps"; tradeoff → `.badge.trade` "trade-off"; nogain → `.badge.warn` "no gain".
   - App.css: `.badge.trade { background: #7c2d12; color: #ffedd5 }`. qa's axe step checks contrast.
   - Scene 5's "Best measured fix" is the first fix whose verdict is 'helps'.
-- [ ] **Step 4: Names, never ids.** In `spots.ts`, `spotLabel(entry)` returns, in order of preference:
+- [x] **Step 4: Names, never ids.** In `spots.ts`, `spotLabel(entry)` returns, in order of preference:
   - `entry.label`, if it's a non-empty string;
   - else the text of `entry.why` before its first ": ";
   - else `Room <id>` for kind `room` (room ids read well);
@@ -510,23 +510,123 @@ BLOCKED: taken over by the lead's machine at 14:21; skip
   - HeadlinePack and scene 5, instead of `?? t.id`.
   
   "Not measured" items read `<kind word>: <reason>`, with kind words Widen, Keep clear, Sprinklers and Self-closers. `data-spot`, React keys and `goToSpot` keep the ids.
-- [ ] **Step 5: Fixtures.** In `make-fixtures.mjs`, for `.fixtures/fixes.batch.json` (made-up numbers for the UI only):
+  
+  The what-if door dropdown (the lead note above E32), done in the same step:
+  - Each option reads the door in words, from `doorLabels(building)` in `spots.ts` (cached per building): "Stair SB door", "Exit Main entrance", "Door between Kitchen and Corridor 1". That is D's `door_label` with D23's plain-door wording, so the picker and the lists agree once D23's labels land.
+  - Equal readings on a floor are numbered ", 1 of 2", and a building with several floors adds " · F1". The option's value stays the door id, and the door select takes its own row (the long labels pushed the state select out of the panel).
+  - The same words name the door in the what-if result headline ("Propping Stair SB door open: ...") and in scene 4's fallback caption. AboutOverlay's "Top weak spot" line uses `spotLabel`.
+- [x] **Step 5: Fixtures.** In `make-fixtures.mjs`, for `.fixtures/fixes.batch.json` (made-up numbers for the UI only):
   - Give the `top` entries readable whys: "Stair SB door: 31 people queued at peak; ...", "Stair SA door: ...", "Stair SA door: ...".
   - Append `keepClear-E1` in today's shape: label "Keep Exit Main entrance clear (vs blocked)", derivedFrom "whatIf.blockedExit", door E1, floor F1, n 36, dT90 −58, dSmokeSeconds −3022, smokePct −68, dTrapped 1.3, helps true, no `tradeoff`.
   - Append `keepClear-E2` in D22's shape: label "Keep Exit East stair exit clear (vs blocked)", door E2, floor F1, n 36, dT90 −4, dTrapped −0.2, smokePct 37, helps false, tradeoff true, costs ["37% more time in smoke"].
   - Give both a `why` in D's shape.
-- [ ] **Step 6: QA.** Extend step `fixes`, which runs only with `--open`.
+- [x] **Step 6: QA.** Extend step `fixes`, which runs only with `--open`.
   - When the loaded batch is the fixture (`batch.id === 'fixes'`), report a problem unless all of these hold:
     - the list shows two "trade-off" badges;
     - it contains "; but +1.3 trapped per fire";
     - none of DSB2, DSA2, DSA1, E1, E2 appears as a whole word in any `.fixes .target` or `.spots button b` text.
   - Demo batches skip that id assertion: their D-written labels keep IFC ids until D23 and the precompute rerun.
   - The fly-to assertion on the first button stays for every batch.
-- [ ] **Step 7: Verify.**
+- [x] **Step 7: Verify.**
   - `npm run build` passes with no type errors. Run `node scripts/make-fixtures.mjs`.
   - `npm run qa -- --open .fixtures/fixes.batch.json` exits 0:
     - `qa/fixes-list.png` shows "→ #1 Stair SB door" and two "trade-off" badges at the end of the list;
     - `qa/open-1-tab-risk.png`'s weak-spot headings read labels, not DSB2.
   - `npm run qa -- --open public/demo/batch-example-office.json` exits 0. Its `qa/fixes-list.png` shows keepClear-E1 with a "trade-off" badge, "; but +1.3 trapped per fire" and "→ #4 Exit Main entrance".
-- [ ] **Step 8: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): trade-off badges for measured fixes; spots named by label, never raw id"` (no attribution lines).
+- [x] **Step 8: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): trade-off badges for measured fixes; spots named by label, never raw id"` (no attribution lines).
   - Say in the commit body that office and clinic interior doors read well once D23 lands and A reruns the precompute.
+
+### Task E35 (P0 · Sat 5 PM): Live mode falls back to the nearest precomputed run
+- **Files:** Modify `frontend/src/store/app.ts`, `frontend/src/ui/ScenarioPanel.tsx`, `frontend/src/model/fixes.ts`, `frontend/src/App.css`, `frontend/scripts/qa.mjs`, `docs/superpowers/plans/2026-11-13-ws-e-frontend.md`.
+- **Interfaces:**
+  - **Consumes:**
+    - Spec §8 beat 3: the judge's fire "runs live, or loads the nearest precomputed run".
+    - `runScenario` (`store/app.ts`). In live mode (`VITE_API_URL` set and `/health` answered) it posts the scenario with `startRun` and waits with `pollRun` (the client's wait, `maxS` 180 s).
+      - Only a connection failure (`Could not reach`, `Timed out`) falls back today: the app switches to static mode (banner "Backend unreachable: precomputed runs only") and takes static mode's path.
+      - Every other failure shows only `runError`: `Request failed (500)`, a run that reports `status: error`, "Run did not finish within 180 s".
+    - Static mode's `loadNearest`: `listDemoRuns(b.id)`, `nearestPrecomputedRun(entries, sc.fire)` (same floor first, then the nearest fire), `addRun` or `switchRun`, then `runNote` "Static mode: nearest precomputed run, fire in <room>, <d> m from your click". With none: `ApiError('No precomputed run for this building')`.
+    - `ScenarioPanel` shows `runError` (`p.err`) and `runNote` (`p.dim`) under the Run button.
+    - `fixLine` and `measures()` (`model/fixes.ts`) write the t90 change as `sg(dT90) s t90`, so 0.3 s reads "+0 s t90" (and -0.3 s "0 s t90").
+  - **Produces:** `useApp.runFallback`, the live-failure note, "no change in 90% out" in fix lines, and qa step `live-fallback`.
+- [x] **Step 1: One path to the nearest run.**
+  - In `runScenario`, turn `loadNearest` into `showNearest(afterLiveFailure)`. It keeps the same rule and loading, and returns false when the building has no precomputed run, or is no longer the loaded building (a late fallback must never add a run to another building).
+  - Any live failure, not only a connection failure, falls through to it, and is logged with `console.warn`.
+  - A connection failure still ends live mode, as today (static mode and the banner). Other failures keep live mode, so the next click tries the backend again.
+  - While it loads, the Run button reads "Loading precomputed run…".
+  - After a live failure the note is "Live run unavailable: showing the nearest precomputed fire (room <entry.fire.room>)." Static mode's note stays as it is.
+  - When nothing can be shown, the error is today's: the live failure itself, or "No precomputed run for this building" after a connection failure.
+  - A live run that succeeds takes the same lines as before.
+- [x] **Step 2: Show the note.**
+  - `useApp.runFallback` (false) is set with the note, and reset when a run starts and in `setBuilding`.
+  - `ScenarioPanel` renders the note as `p.warn` with `role="status"` when it is set, else `p.dim` as before. App.css: `.scenario .warn { color: var(--warn) }`.
+- [x] **Step 3: "no change in 90% out".**
+  - In `fixes.ts`, `t90Text(v)` is "no change in 90% out" when `Math.round(v) === 0`, else the signed "-12 s t90". `fixLine` and `measures()` use it.
+  - Example: "Self-closers on stair doors (vs propped open): no change in 90% out, -394 person-seconds in smoke across 36 fires".
+  - A trade-off never lists a t90 under 1 s, so its line is unchanged.
+- [x] **Step 4: QA.** Add step `live-fallback` after `fixes`, in a fresh page so the main page's runs stay as they are.
+  - qa has no backend, so the page is put in live mode by hand (`__app.setState({ mode: 'live' })`) and `POST /runs` and `GET /runs/*` are answered by routes.
+  - Four ways to fail, each ending on the precomputed run nearest the draft's fire, with the note (the only `p.warn`) and no `runError`. The draft's fire is first moved onto another precomputed fire, taken from `demo/index.json`:
+    - HTTP 500 on the start (mode still live);
+    - `{ status: 'error' }` on the poll (still live);
+    - `{ status: 'running' }` with `Date.now` jumped 200 s ahead, past the wait (still live);
+    - the connection refused (mode becomes static, with the banner "Backend unreachable: precomputed runs only").
+  - Then the building's id is renamed to one with no runs: the live error stays in `runError`, with no note. Shot `live-fallback.png`. Console errors from the routed 500 and the refused connection are expected in this page only.
+- [x] **Step 5: Verify.**
+  - `npm run build` passes with no type errors.
+  - `npm run qa` exits 0 with 0 axe violations (`qa/live-fallback.png` shows the amber note under Run).
+  - `python tools/check_all.py frontend privacy` ends with ALL OK.
+  - Manual, on throwaway servers (free ports; 5173 and 8000 stay untouched):
+    - A dev server with `VITE_API_URL=http://localhost:8099/api` and nothing listening there. The startup health check fails, so the app starts in static mode: put it in live mode by hand (`__app.setState({ mode: 'live' })`), pick a fire room and click Run. The amber note, the banner "Backend unreachable: precomputed runs only" and the nearest run appear.
+    - A stand-in API that answers `/health` and the buildings and fails `POST /runs` (HTTP 500, a run that reports an error, a run that never finishes), with a second dev server pointed at it: the app starts in live mode by itself, stays live after each failure, and shows the note and the nearest run.
+    - Stop both dev servers and the stand-in.
+- [x] **Step 6: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "fix(frontend): live mode falls back to the nearest precomputed run"` (no attribution lines).
+
+## Reworked Sat 14 Nov (Ember)
+
+E36 to E38 are in `docs/superpowers/plans/2026-11-14-ember-ui-fire-spread.md`. E36 removed `TopBar`, `Toolbar3D`, `Scrubber` and `AgentLegend`, so where a task above names them, read the table below. The data, replay, tour and dashboard tasks above still describe how those parts work.
+
+### Task E36 (P0 · Sat 7 PM): Ember theme and shell layout (done; the steps are in the Ember plan)
+- **Theme:** the §11 tokens in `index.css` (the old names stay as aliases), `ui/theme.ts` (`CANVAS`, `sceneBg`, `useChartTheme`), the high-contrast theme redefines the same tokens, and every dark colour is gone from the CSS, the charts and the in-scene labels (`.l3d`, `.tip3d`).
+- **Shell:** a viewer between the analytics sidebar (left) and a dock (floor strip, timeline, credits) at the bottom. The top navigation is a drawer behind the chevron `#nav-toggle`. The legend and a one-button rail (Layers) float at the top right; the scenario and layers cards float over the viewer. Store: `navOpen`, `sidebarOpen`, `card`.
+- **Where each old control went:**
+
+  | Before | Now |
+  | --- | --- |
+  | `TopBar`: brand | sidebar header "Ember" (`TracerBar` in the tracer) |
+  | `TopBar`: Building select, mode chip, Demo, About | nav menubar, right |
+  | `TopBar`: Replay / Tracer tabs | File > Trace a floor plan; "Back to 3D replay" in `TracerBar` |
+  | `TopBar`: run tabs | Timeline "Run" select |
+  | `TopBar`: Share, Open file | nav toolbar; File menu |
+  | `TopBar`: Display (High contrast, Reduce motion) | Settings menu |
+  | `Toolbar3D`: Explode, Labels, Smoke / Fire / Heatmap / Queues / Risk map, Trails, lens buttons | Layers card |
+  | `Toolbar3D`: floor select | floor strip |
+  | `Toolbar3D`: Color status / profile | legend switch "Color by type"; Settings |
+  | `Toolbar3D`: Agent view, Split, Save PNG, Top view, Overview | nav toolbar ("Reset camera" for Overview); View and File menus |
+  | `Scrubber` | `Timeline` (speeds 0.25 to 10×, Restart, Run select) |
+  | `AgentLegend` | `LegendCard` |
+  | left panel "Scenario" | "Fire and scenario" card (Set fire, Run simulation, What-if) |
+  | right panel "Results" | analytics sidebar; "Overview" tab replaces "Results" |
+
+- **QA:** `npm run qa` has the new steps `shell` (default state, menus, Focus mode, floor strip, alerts), `tour` (all six scenes, timers of 10 s or more shortened tenfold) and `phone` (390 × 844), axe on the nav, two menus, both cards, Focus mode and high contrast, and a Tab pass through the open nav.
+
+### Task E37 (P0 · Sat 9 PM): Building look, floor views, visibility and agent colors (done; the steps are in the Ember plan)
+- **Building:** each floor is a slab (the walkable ring with its holes as one `ExtrudeGeometry`, 0.15 m, top face on the floor plane), cutaway interior walls (white, 1.4 m), blue glass on the exterior walls with a top rail, and a translucent stair core. `classifyWalls(floor)` in `scene/geometry.ts` splits the walkable ring's segments: a segment is exterior when one point 0.6 m to a side is walkable and the point on the other side is outside every room and the walkable area. Room fills are off by default (Layers > Room colors); labels show the name and, when the name doesn't say it, the room type. A "Floor N" pill (`.floortag`) sits at each floor's front-left corner. Door colours are open #2563EB, closed #1E3A8A, propped #0891B2, blocked #DC2626; exits are #16A34A.
+- **Lights:** a `hemisphereLight` replaces the ambient light. three 0.187 has no legacy lights, so intensity 1 shows an albedo at about a third of its colour: the building's materials are `toneMapped={false}` and the lights are hemisphere 1.8 and directional 1.6 (the plan's 1.0 and 0.9 rendered the slabs mid-grey, not the reference's light grey). Everything else keeps its look.
+- **Floor views:** store `viewMode` (`'stacked' | 'single' | 'side' | 'ghost'`), `focusFloor` and `setViewMode(mode, floor?, fit = true)`. `visibleFloors` is written only by `setViewMode` and `flyTo` (which now means a single-floor view). `floorPlace`, `toPlaced`, `fromPlaced` and the `usePlace()` hook put every layer where its floor sits (stacked and single at `floorY`, side in a row on the ground, ghost like stacked with every floor but the focus floor at `GHOST` = 0.15 opacity). Controls: View > Floor view, the floor strip (Whole building is stacked; a floor is single, or moves the ghost focus), Layers > Floor gap (off in single and side). `explode` starts at `DEFAULT_EXPLODE` = 0.6.
+- **Placing a fire:** `FirePicker` keeps one pick plane per floor, as big as that floor and at its place; in the ghost view only the solid floor takes clicks. (A plane the size of the whole building plus 10 m, as before, caught the clicks meant for the front of the floor below.) `Menu` radio options can now be disabled (Side by side and Ghost, for a one-floor building).
+- **Deep links:** `v=side`, `v=ghost` (with `f`), and `f` alone for one floor; `x` is written only when the gap isn't the default, and a link without it means the default. A link that carries a camera pose keeps it (`setViewMode(..., fit = false)`).
+- **Fire and smoke visibility:** `ui/VisibilityCard.tsx` (the right rail's eye button, the toolbar's Visibility, View > Fire and smoke visibility…), store `fireGlow` (0 to 2) and `smokeOpacity` (0 to 1.5). They change the picture only: `Fire.tsx` scales its size, light and emissive, `Smoke.tsx` its alpha byte.
+- **Agent colours:** store `colorBy` (`'status' | 'type'`) replaces `agentColor`. `STATUS_COLORS` (green moving or in a stairwell, amber not moving yet or waiting, red trapped) and `TYPE_COLORS` (Okabe-Ito without yellow and vermillion) live in `replay/Agents.tsx`; the exit bars and the mobility table use `TYPE_COLORS` too. Trapped people also get a red ring, stairwell people are drawn smaller, waiting people keep their seconds label. The legend card lists the rows of the current scheme.
+- **Exit bars** are named like the doors in the fix list and the door picker (`doorLabels`), as horizontal bars with the name wrapped on two lines; the id stays in the tooltip.
+- **Brand:** `BRAND` in `ui/theme.ts` (the sidebar header, the About card, the tracer bar) and the page title read "Fireproof".
+- **Frame-rate overlay:** the drei `Stats` shows only with `?perf` in the URL, never by default on the dev server.
+- **QA:** `npm run qa` has the new steps `views` (the four floor views at 60 s: shots, `visibleFloors`, the pressed floor-strip item, and the same `dl.kpis` and `#replay-summary` text in every view; View > Side by side), `colors` (the legend switch) and `visibility` (the rail button, High visibility, Reset), the `deeplink` step opens `v=side`, `v=ghost&f=F2` and `f=F2`, and `a11y` also runs axe with the visibility card open and with `colorBy: 'type'`.
+
+### Task E38 (P0 · Sat 11 PM): Spreading fire on screen and the material setting (done; the steps are in the Ember plan)
+- **Reading the spread:** `model/fireSpread.ts` has `readSpread(run)` (`{rooms, material}` from `run.fire.rooms` and `fire.material`, sorted by `ignite`; null without the field, so such a run looks exactly as before), `burningAt(spread, t)`, `spreadTint(ignite, t, glow)` (#F97316 turning to #DC2626 over the 60 s after ignition, opacity `min(0.85, (0.35 + 0.25k)(0.5 + 0.5 glow))`), `MATERIALS` (Concrete, Drywall, Wood), `materialPair(entries, buildingId)` with `materialPartner`, and the small helpers `runMaterial` and `materialWords` ("Wood instead of drywall"). The types (`Material`, `FireRoom`, `DemoRun.whatIf` 'material') come from `data/types.ts`. Nothing is ever extrapolated: a room that `fire.rooms` doesn't list never burns on screen.
+- **On screen:** `replay/BurningRooms.tsx` (after `Fire` in `Scene`, keyed by the run, only while the Fire layer is on) tints each burning room's polygon 0.05 m above its floor through `floorPlace` and `toPlaced` (a transparent `meshBasicMaterial`, `toneMapped` off like the building; the faint floors of the ghost view get `GHOST` of the opacity; a hidden floor draws nothing) and stands one orange cone (radius 0.35, height 0.9, base on the floor, scaled by 0.6 + 0.4 × `fireGlow`, left off the faint floors of the ghost view) in every burning room but the one that holds the fire sphere. A room id the building lacks is skipped with one `console.warn` per run. `replay/BlockedDoors.tsx` lays a #DC2626 overlay (0.035 m up, on the door's `rect`, else a 0.3 m strip) on each door of a `door_blocked` event from its time on, for runs that carry a spread. `spreadStats = {burning, drawn, closed}` is `window.__spread` in dev and with `?qa`.
+- **Words:** the Overview line `p.spreadline` ("Fire spread (illustrative, Wood): 3 rooms burning · 9 by the end of the run", counting the rooms that ignite by the run's last frame; "material not set" without `fire.material`), and three legend rows for a run with a spread: "Burning room (illustrative)", "Fire marker", "Closed door".
+- **Material setting:** store `material` ('drywall', kept across buildings) and `setMaterial`; the scenario card's "Building material (illustrative)" select (disabled in static mode, with the note "Material needs the live backend…"). A live run sends `fire: {...fire, material}` and its label ends " · Wood" or " · Concrete"; a live what-if keeps its base run's material.
+- **Material pair:** `showMaterialPair()` loads the building's precomputed drywall and wood runs (the wood entry has `whatIf: 'material'` and `material: 'wood'`) and shows them side by side at the clock time they were at. The What-if card's `.material` section ("Compare wood with drywall") exists only for a building that has such a pair, so an index without one (the demo index before A11 part 2's rerun) shows nothing; the headline reads "Wood instead of drywall" (followed by the smoke figure when both runs have exposure). `findPrecomputedVariant` stays door-only (`'propped'`), so a material entry never passes for a door what-if (static what-if, tour scene 4, `restoreLink`); `restoreLink` opens an `r` that names a wood entry as the pair.
+- **Live what-if fallback:** like E35 did for runs, any failure of a live what-if ends on the precomputed propped-door run with the note "Live what-if unavailable: showing the precomputed what-if (…)" (`whatIfNote`, `whatIfFallback`, shown as `p.warn[role=status]`); only a refused connection or a timeout also ends live mode. With no precomputed what-if the error is the live failure itself, or "No precomputed what-if for this fire" after a refused connection.
+- **QA:** `npm run qa` has the new steps `fire-spread` (the fixture `contracts/run.spread.fixture.json`, read from disk and opened through `#open-file`: `__spread` against the run's own `fire.rooms`, the spread line, the legend rows, the Fire layer off, the closed doors, the end of the run, each floor view on a copy with its ignition times halved so that both floors burn, a close-up, and a copy without `fire.rooms`), `material-pair` (the real index plus a `qa-wood` entry, first in the list, served from the fixture: the static what-if still finds the propped run, "Compare wood with drywall" splits the view at the same clock time, and the pair's link restores it; the main page's section exists exactly when the real index has a wood run for the building, and a real pair in the index is compared the same way) and `whatif-fallback` (`http`, `failed`, `slow` and `down`, and no precomputed what-if). `whatif-static` also checks the disabled material select and its note.

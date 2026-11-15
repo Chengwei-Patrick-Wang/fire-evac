@@ -1,7 +1,9 @@
 import type { Building } from '../data/types'
 import type { RunIndex } from './runIndex'
 
-const R = 2 + 1e-4
+/** A moving person counts toward a door or stair when within this many metres (2 m, plus a tolerance). */
+export const QUEUE_RADIUS = 2 + 1e-4
+const R = QUEUE_RADIUS
 
 export interface QueueTarget {
   id: string

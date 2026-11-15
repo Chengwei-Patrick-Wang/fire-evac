@@ -1,14 +1,28 @@
+/* Ember tokens (docs/design/ember-ui.md §11). Inter is named first but not bundled (no web fonts): machines without it get system-ui.
+   Contrast, measured against WCAG AA: --text-2 passes on --surface (4.76:1) and --canvas (4.55:1) but fails on --surface-2 (4.34:1)
+   and --primary-soft (4.37:1), so text on those two uses --text only. Coloured text uses a -text token (each about 5:1 on white);
+   --fire, --caution and --safe are fills. White on --primary is 5.17:1. */
 :root {
-  --bg: #0b1220; --panel: #111a2e; --line: #1e293b; --line-strong: #334155; --text: #e2e8f0; --muted: #94a3b8;
-  --accent: #1d4ed8; --accent-line: #3b82f6; --warn: #fbbf24; --danger: #f87171; --ok: #4ade80;
-  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --radius: 4px;
+  --canvas: #F8FAFC; --surface: #FFFFFF; --surface-2: #F1F5F9; --text: #111827; --text-2: #64748B; --border: #E5E7EB; --border-strong: #CBD5E1;
+  --primary: #2563EB; --primary-hover: #1D4ED8; --primary-soft: #EFF6FF; --primary-text: #1D4ED8;
+  --fire: #F97316; --fire-text: #C2410C; --severe: #DC2626; --caution: #F59E0B; --caution-text: #B45309; --safe: #16A34A; --safe-text: #15803D; --focus: #2563EB;
+  --shadow: 0 2px 8px rgba(15,23,42,.06); --r-ctl: 8px; --r-card: 12px; --s5: 24px; --fs-xl: 18px;
+  --font: Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* The old names stay as aliases, so rules that were not touched follow the new tokens. */
+  --bg: var(--canvas); --panel: var(--surface); --line: var(--border); --line-strong: var(--border-strong); --muted: var(--text-2);
+  --accent: var(--primary); --accent-line: var(--primary); --warn: var(--caution-text); --danger: var(--severe); --ok: var(--safe-text); --radius: var(--r-ctl);
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
   --fs-xs: 11px; --fs-sm: 12px; --fs-md: 14px; --fs-lg: 16px;
-  font-family: system-ui, sans-serif;
+  font-family: var(--font);
 }
 html, body, #root { margin: 0; height: 100%; background: var(--bg); }
 * { box-sizing: border-box; }
+/* Author display rules (flex, grid) would override the hidden attribute. */
+[hidden] { display: none !important; }
 :root[data-contrast="high"] {
-  --bg: #000; --panel: #000; --line: #1a1a1a; --line-strong: #fff; --text: #fff; --muted: #e5e5e5;
-  --accent: #0040c0; --accent-line: #ffd400; --warn: #ffd400;
+  --canvas: #000; --surface: #000; --surface-2: #000; --text: #fff; --text-2: #e5e5e5; --border: #fff; --border-strong: #fff;
+  --primary: #0040c0; --primary-soft: #000; --primary-text: #ffd400;
+  --fire-text: #ffb37a; --severe: #ff6b6b; --caution-text: #ffd400; --safe-text: #4ade80; --focus: #ffd400; --shadow: none;
+  --accent-line: #ffd400; --warn: #ffd400;
 }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

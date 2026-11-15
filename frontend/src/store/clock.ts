@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 
+/** Playback speeds the timeline and the Simulation menu offer. */
+export const SPEEDS = [0.25, 0.5, 1, 2, 4, 10]
+
 interface ClockState {
   t: number
   playing: boolean

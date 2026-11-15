@@ -1,4 +1,4 @@
-// Headless visual QA: node scripts/qa.mjs [--open FILE]...  (run `npm run build` first; `npm run qa` does both)
+// Headless visual QA: node scripts/qa.mjs [--open FILE]... [--only=step,step]  (run `npm run build` first; `npm run qa` does both)
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,10 +10,14 @@ const AXE_ALLOW = []
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = join(root, 'qa')
+// A11's run/v0 with fire.rooms (the room-to-room spread), kept in contracts/ and never copied into public/.
+const FIXTURE = join(root, '..', 'contracts', 'run.spread.fixture.json')
 const opens = []
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--open' && process.argv[i + 1]) opens.push(resolve(process.argv[++i]))
 }
+// --only=a,b runs just the steps whose names start with a or b (`load` first: most steps work on its page), for trying one change.
+const ONLY = (process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length) ?? '').split(',').filter(Boolean)
 const FPS = process.argv.includes('--fps')
 const GPU = process.argv.includes('--gpu')
 rmSync(out, { recursive: true, force: true })
@@ -27,7 +31,8 @@ const lines = []
 let webgl = false
 let playSecs = 0
 
-const server = await preview({ root, preview: { port: 4317 }, logLevel: 'warn' })
+// QA_PORT lets two worktrees run qa side by side (default 4317).
+const server = await preview({ root, preview: { port: Number(process.env.QA_PORT) || 4317 }, logLevel: 'warn' })
 let browser
 try {
   try {
@@ -76,6 +81,7 @@ try {
   page.on('pageerror', (e) => errors.push(`[${cur}] ${String(e)}`))
 
   const step = async (name, fn) => {
+    if (ONLY.length && !ONLY.some((o) => name.startsWith(o))) return
     cur = name
     try {
       await fn()
@@ -83,12 +89,19 @@ try {
       problems.push(`step "${name}" failed: ${String(e).split('\n')[0]}`)
     }
   }
-  const shot = async (name) => {
-    await page.screenshot({ path: join(out, name + '.png') })
+  // Console and page errors of an extra page go to the report under `tag` (a missing calibration.json is allowed).
+  const watchPage = (pg, tag, ignore = /calibration\.json/) => {
+    pg.on('console', (m) => {
+      if (m.type() === 'error' && !ignore.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[${tag}] ${m.text()}`)
+    })
+    pg.on('pageerror', (e) => errors.push(`[${tag}] ${String(e)}`))
+  }
+  const shot = async (name, pg = page) => {
+    await pg.screenshot({ path: join(out, name + '.png') })
     shots.push(name)
   }
   const tabShots = async (prefix) => {
-    const names = ['results', 'risk', 'report', 'cred']
+    const names = ['results', 'risk', 'report']
     for (let i = 0; i < names.length; i++) {
       await step(`${prefix}tab-${names[i]}`, async () => {
         await page.locator('.results [role=tab]').nth(i).click()
@@ -97,8 +110,35 @@ try {
       })
     }
   }
-  const changedShare = (b64) =>
-    page.evaluate(async (b64) => {
+  // The nav is a drawer, collapsed by default: open it to reach a menu or the toolbar, and leave it collapsed again.
+  const nav = async (pg, open) => {
+    const t = pg.locator('#nav-toggle')
+    if (((await t.getAttribute('aria-expanded')) === 'true') !== open) await t.click()
+    await pg.waitForFunction((o) => document.getElementById('nav-toggle')?.getAttribute('aria-expanded') === String(o), open, { timeout: 5000 })
+  }
+  const pickMenu = async (pg, menu, item) => {
+    await pg.locator('#topnav .menus').getByRole('button', { name: menu, exact: true }).click()
+    await pg.locator('[role=menu] .mi-label', { hasText: new RegExp(`^${item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }).first().click()
+  }
+  const AXE = join(root, 'node_modules', 'axe-core', 'axe.min.js')
+  const axeOn = async (pg, label, sel) => {
+    if (!existsSync(AXE)) return void lines.push('axe skipped: not installed')
+    if (!(await pg.evaluate(() => !!window.axe))) await pg.addScriptTag({ path: AXE })
+    const res = await pg.evaluate(
+      async (sel) => {
+        const r = await window.axe.run(document.querySelector(sel), { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })
+        return r.violations.map((v) => ({ id: v.id, impact: v.impact, target: String(v.nodes[0]?.target?.[0] ?? ''), n: v.nodes.length }))
+      },
+      sel,
+    )
+    for (const v of res) {
+      if ((v.impact === 'serious' || v.impact === 'critical') && !AXE_ALLOW.includes(v.id)) problems.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
+      else lines.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
+    }
+    lines.push(`axe ${label}: ${res.length} violations`)
+  }
+  const changedShare = (b64, pg = page) =>
+    pg.evaluate(async (b64) => {
         const img = new Image()
         img.src = 'data:image/png;base64,' + b64
         await img.decode()
@@ -129,8 +169,8 @@ try {
         }
         return diff / (d.length / 4)
     }, b64)
-  const blankCheck = async (name) => {
-    const canvases = page.locator('main.center canvas')
+  const blankCheck = async (name, pg = page) => {
+    const canvases = pg.locator('main.center canvas')
     const n = await canvases.count()
     if (n === 0) {
       problems.push(`no canvas in ${name}`)
@@ -139,7 +179,7 @@ try {
     }
     for (let i = 0; i < n; i++) {
       const buf = await canvases.nth(i).screenshot()
-      const share = await changedShare(buf.toString('base64'))
+      const share = await changedShare(buf.toString('base64'), pg)
       lines.push(`${name}: canvas ${i} changed ${(share * 100).toFixed(1)}%`)
       if (share < 0.01) problems.push(`blank canvas in ${name}`)
     }
@@ -150,18 +190,111 @@ try {
     await page.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
     webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'))
   })
-  await step('whatif-static', async () => {
-    // No VITE_API_URL here, so the app is in static mode: the Sprinklers box must be off and quote the measured what-if.
-    const box = page.locator('.scenario .whatif')
+  await step('shell', async () => {
+    const bad = (m) => problems.push(`shell: ${m}`)
+    const toggle = page.locator('#nav-toggle')
+    // Default state: nav collapsed, analytics open, timeline in the dock.
+    if ((await toggle.getAttribute('aria-label')) !== 'Expand navigation' || (await toggle.getAttribute('aria-expanded')) !== 'false') bad('#nav-toggle is not "Expand navigation" / aria-expanded=false by default')
+    if (await page.locator('#topnav').isVisible()) bad('#topnav is visible by default')
+    if (!(await page.getByRole('button', { name: 'Hide analytics' }).isVisible())) bad('"Hide analytics" is not visible by default')
+    if (!(await page.locator('footer.dock #play').isVisible())) bad('#play is not visible inside footer.dock')
+    // Speeds.
+    const speeds = (await page.locator('select[aria-label="Playback speed"] option').allTextContents()).map((t) => t.trim())
+    if (speeds.join(' ') !== '0.25× 0.5× 1× 2× 4× 10×') bad(`speed options read "${speeds.join(' ')}"`)
+    await page.locator('select[aria-label="Playback speed"]').selectOption('4')
+    if ((await page.evaluate(() => window.__clock.getState().speed)) !== 4) bad('choosing 4× did not set the clock speed to 4')
+    await page.locator('select[aria-label="Playback speed"]').selectOption('1')
+    if ((await page.evaluate(() => window.__clock.getState().speed)) !== 1) bad('choosing 1× did not set the clock speed to 1')
+    // Floor strip and legend.
+    const floors = (await page.locator('nav.floorstrip button').allInnerTexts()).map((t) => t.trim())
+    if (floors.join('|') !== 'Whole building|Floor 1|Floor 2') bad(`floor strip reads "${floors.join('|')}"`)
+    if ((await page.locator('nav.floorstrip button').first().getAttribute('aria-pressed')) !== 'true') bad('Whole building is not pressed by default')
+    if (!(await page.locator('section.legendcard').isVisible())) bad('the legend card is not visible')
+    await shot('shell')
+    // Navigation drawer and menus.
+    await toggle.click()
+    await page.waitForFunction(() => document.getElementById('nav-toggle')?.getAttribute('aria-label') === 'Collapse navigation', null, { timeout: 5000 }).catch(() => bad('one click did not turn #nav-toggle into "Collapse navigation"'))
+    const menus = (await page.locator('#topnav .menus > .menuwrap > button').allInnerTexts()).map((t) => t.trim())
+    if (menus.join(' ') !== 'File View Simulation Analysis') bad(`menus read "${menus.join(' ')}"`)
+    await page.locator('#topnav .menus').getByRole('button', { name: 'View', exact: true }).click()
+    await page.locator('[role=menu][aria-label=View]').waitFor({ timeout: 5000 })
+    await page.waitForTimeout(300)
+    await shot('nav-view')
+    await page.keyboard.press('Escape')
+    if ((await page.locator('[role=menu]').count()) !== 0) bad('Escape did not close the View menu')
+    if ((await page.evaluate(() => document.activeElement?.textContent?.trim())) !== 'View') bad('Escape did not put focus back on the View button')
+    // Focus mode: both drawers collapsed, the viewer takes the full width, and the toggles stay.
+    await pickMenu(page, 'View', 'Focus mode')
+    await page.waitForTimeout(500)
+    const fm = await page.evaluate(() => ({ nav: window.__app.getState().navOpen, side: window.__app.getState().sidebarOpen, w: document.querySelector('main.center').getBoundingClientRect().width, focus: document.activeElement?.id }))
+    if (fm.nav || fm.side) bad(`Focus mode left navOpen=${fm.nav}, sidebarOpen=${fm.side}`)
+    if (fm.w < 1400) bad(`in Focus mode main.center is ${Math.round(fm.w)} px wide, want at least 1400`)
+    if (fm.focus !== 'nav-toggle') bad(`Focus mode left focus on "${fm.focus}", want nav-toggle`)
+    await shot('focus-mode')
+    await page.getByRole('button', { name: 'Show analytics' }).click()
+    if (!(await page.evaluate(() => window.__app.getState().sidebarOpen)) || !(await page.getByRole('button', { name: 'Hide analytics' }).isVisible())) bad('"Show analytics" did not restore the sidebar')
+    // Floor strip: one floor, then the whole building.
+    await page.locator('nav.floorstrip button', { hasText: 'Floor 2' }).click()
+    await page.waitForTimeout(2500)
+    const f2 = await page.evaluate(() => ({ v: window.__app.getState().visibleFloors, p: [...document.querySelectorAll('nav.floorstrip button')].map((b) => b.getAttribute('aria-pressed')) }))
+    if (JSON.stringify(f2.v) !== '["F2"]') bad(`Floor 2 set visibleFloors to ${JSON.stringify(f2.v)}`)
+    if (f2.p.join() !== 'false,false,true') bad(`pressed states after Floor 2: ${f2.p.join()}`)
+    await shot('floor-2')
+    await blankCheck('floor-2')
+    await page.locator('nav.floorstrip button', { hasText: 'Whole building' }).click()
+    await page.waitForTimeout(500)
+    if ((await page.evaluate(() => window.__app.getState().visibleFloors)) !== null) bad('Whole building did not set visibleFloors to null')
+    // Alerts: paused, a chokepoint alert flies to its floor. (The first run may have none at 60 s: other times are tried before giving up.)
+    let alerted = false
+    for (const t of [60, 75, 90, 105, 120, 140]) {
+      await page.evaluate((t) => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(t)
+      }, t)
+      await page.waitForTimeout(800)
+      if ((await page.locator('ul.alerts button').count()) === 0) continue
+      alerted = true
+      await page.locator('ul.alerts button').first().click()
+      await page.waitForTimeout(2500)
+      const v = await page.evaluate(() => window.__app.getState().visibleFloors)
+      if (!v || v.length !== 1) bad(`an alert click left visibleFloors ${JSON.stringify(v)}`)
+      await shot('alert-fly')
+      lines.push(`alerts: clicked the first at ${t} s`)
+      await page.locator('nav.floorstrip button', { hasText: 'Whole building' }).click()
+      break
+    }
+    if (!alerted) lines.push('alerts: none at 60 s')
+    await page.evaluate(() => window.__clock.getState().seek(0))
+    await nav(page, false)
+  })
+  await step('scenario-static', async () => {
+    // No VITE_API_URL here, so the app is in static mode. The What if… section is gone from the card: no door picker, no door state, no Sprinklers, no Run what-if.
+    await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
+    const box = page.locator('.scenario')
     await box.scrollIntoViewIfNeeded()
-    await page.waitForFunction(() => /fires:/.test(document.querySelector('.scenario .whatif .note')?.textContent ?? ''), null, { timeout: 5000 }).catch(() => {})
-    const check = box.locator('label.check', { hasText: 'Sprinklers' }).locator('input[type=checkbox]')
-    if ((await check.count()) === 0 || (await check.isEnabled())) problems.push('whatif-static: the Sprinklers checkbox is missing or enabled in static mode')
-    const notes = box.locator('p.note')
-    const note = (await notes.count()) > 0 ? ((await notes.first().textContent()) ?? '') : ''
-    if (!/Sprinklers need the live backend/.test(note)) problems.push(`whatif-static: note lacks "Sprinklers need the live backend": "${note}"`)
-    if (!/fires:/.test(note)) problems.push(`whatif-static: note lacks the measured "fires:" quote: "${note}"`)
-    await shot('whatif-static')
+    const gone = await box.evaluate((el) => ({
+      section: !!el.querySelector('.whatif'),
+      door: !!el.querySelector('select[aria-label="Door"], select[aria-label="State"]'),
+      sprinklers: /Sprinklers/.test(el.innerText),
+      run: [...el.querySelectorAll('button')].some((b) => /what-if/i.test(b.textContent ?? '')),
+      text: /What if/i.test(el.innerText),
+    }))
+    if (Object.values(gone).some(Boolean)) problems.push(`scenario-static: the What if… section is still in the card ${JSON.stringify(gone)}`)
+    // The building material needs the live backend too: the select is off, and says so.
+    const mat = page.locator('.scenario label', { hasText: 'Building material (illustrative)' }).locator('select')
+    if ((await mat.count()) !== 1 || (await mat.isEnabled())) problems.push('scenario-static: the material select is missing or enabled in static mode')
+    if ((await page.locator('.scenario p.note', { hasText: 'Material needs the live backend' }).count()) !== 1) problems.push('scenario-static: the note "Material needs the live backend" is missing')
+    // So does the Crowd (who decides where people go): the select is off on the rules, with its three options, and says so.
+    const crowd = page.locator('.scenario label', { hasText: 'Crowd' }).locator('select')
+    if ((await crowd.count()) !== 1 || (await crowd.isEnabled())) problems.push('scenario-static: the Crowd select is missing or enabled in static mode')
+    else {
+      const opts = (await crowd.locator('option').allTextContents()).map((t) => t.trim()).join('|')
+      if (opts !== 'Rules (hard-coded)|Some people ask Claude|Everyone asks Claude') problems.push(`scenario-static: the Crowd options read "${opts}"`)
+      if ((await crowd.inputValue()) !== 'rules') problems.push('scenario-static: the Crowd select does not show the rules in static mode')
+    }
+    if ((await page.locator('.scenario p.note', { hasText: 'Claude crowds need the live backend' }).count()) !== 1) problems.push('scenario-static: the note "Claude crowds need the live backend" is missing')
+    await shot('scenario-static')
+    await page.evaluate(() => window.__app.setState({ card: null }))
   })
   await step('replay-60s', async () => {
     const t0 = Date.now()
@@ -188,41 +321,1249 @@ try {
     await shot('replay-60s')
     await blankCheck('replay-60s')
   })
+  await step('views', async () => {
+    // The four floor views at 60 s, paused. Hiding or fading a floor is a picture change: the numbers the page reads from the run must not move.
+    const bad = (m) => problems.push(`views: ${m}`)
+    const read = () =>
+      page.evaluate(() => {
+        const a = window.__app.getState()
+        return {
+          visible: a.visibleFloors,
+          focus: a.focusFloor,
+          pressed: [...document.querySelectorAll('nav.floorstrip button')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent.trim()),
+          kpis: document.querySelector('dl.kpis')?.textContent ?? '',
+          summary: document.getElementById('replay-summary')?.textContent ?? '',
+        }
+      })
+    let ref = null
+    for (const [mode, floor] of [['stacked'], ['single', 'F2'], ['side'], ['ghost', 'F2']]) {
+      await page.evaluate(([m, f]) => window.__app.getState().setViewMode(m, f), [mode, floor])
+      await page.waitForTimeout(1500)
+      const r = await read()
+      const want = mode === 'single' ? '["F2"]' : 'null'
+      if (JSON.stringify(r.visible) !== want) bad(`${mode}: visibleFloors is ${JSON.stringify(r.visible)}, want ${want}`)
+      if (mode === 'ghost' && r.focus !== 'F2') bad(`ghost: focusFloor is ${r.focus}, want F2`)
+      const pressed = mode === 'single' || mode === 'ghost' ? 'Floor 2' : 'Whole building'
+      if (r.pressed.join('|') !== pressed) bad(`${mode}: the pressed floor-strip item is "${r.pressed.join('|')}", want "${pressed}"`)
+      if (!r.kpis || !/^At \d+:\d\d, /.test(r.summary)) bad(`${mode}: dl.kpis or #replay-summary is empty ("${r.summary.slice(0, 40)}")`)
+      if (!ref) ref = r
+      else {
+        if (r.kpis !== ref.kpis) bad(`${mode}: dl.kpis changed with the view ("${r.kpis}" vs "${ref.kpis}")`)
+        if (r.summary !== ref.summary) bad(`${mode}: #replay-summary changed with the view ("${r.summary}" vs "${ref.summary}")`)
+      }
+      await shot(`view-${mode}`)
+      await blankCheck(`view-${mode}`)
+    }
+    // Through the UI: View > Side by side.
+    await page.evaluate(() => window.__app.getState().setViewMode('stacked'))
+    await nav(page, true)
+    await pickMenu(page, 'View', 'Side by side')
+    await page.waitForTimeout(300)
+    if ((await page.evaluate(() => window.__app.getState().viewMode)) !== 'side') bad('View > Side by side did not set viewMode to side')
+    await page.locator('#topnav .menus').getByRole('button', { name: 'View', exact: true }).click()
+    const radio = page.locator('[role=menu][aria-label=View] [role=menuitemradio]', { hasText: 'Side by side' })
+    if ((await radio.getAttribute('aria-checked')) !== 'true') bad('the View menu does not show Side by side as aria-checked=true')
+    await page.keyboard.press('Escape')
+    await nav(page, false)
+    await page.evaluate(() => window.__app.getState().setViewMode('stacked'))
+    await page.waitForTimeout(500)
+  })
+  await step('colors', async () => {
+    const bad = (m) => problems.push(`colors: ${m}`)
+    const sw = page.locator('section.legendcard button[role=switch]')
+    const people = () => page.locator('section.legendcard .lc-body ul').first().locator('li').allInnerTexts().then((t) => t.map((x) => x.trim()))
+    await sw.click()
+    if ((await page.evaluate(() => window.__app.getState().colorBy)) !== 'type') bad('the legend switch did not set colorBy to type')
+    if ((await sw.getAttribute('aria-checked')) !== 'true') bad('the switch is not aria-checked=true in type mode')
+    const want = 'typical|older|visitor|cane|walker|wheelchair|Trapped (red ring)'
+    const got = (await people()).join('|')
+    if (got !== want) bad(`the type legend reads "${got}", want "${want}"`)
+    await page.waitForTimeout(1000)
+    await shot('colors-type')
+    await blankCheck('colors-type')
+    await sw.click()
+    if ((await page.evaluate(() => window.__app.getState().colorBy)) !== 'status') bad('the legend switch did not return to status')
+    if (!(await people()).includes('Delayed or waiting')) bad('the status legend lacks "Delayed or waiting"')
+  })
+  await step('visibility', async () => {
+    const bad = (m) => problems.push(`visibility: ${m}`)
+    const read = () => page.evaluate(() => ({ g: window.__app.getState().fireGlow, o: window.__app.getState().smokeOpacity }))
+    await page.locator('.rail').getByRole('button', { name: 'Fire and smoke visibility', exact: true }).click()
+    await page.locator('#card-visibility').waitFor({ timeout: 5000 })
+    const card = page.locator('#card-visibility')
+    const high = card.getByRole('button', { name: 'High visibility', exact: true })
+    await high.click()
+    const v = await read()
+    if (v.g !== 2 || v.o !== 1.5) bad(`High visibility left fireGlow ${v.g} and smokeOpacity ${v.o}, want 2 and 1.5`)
+    if ((await high.getAttribute('aria-pressed')) !== 'true') bad('High visibility is not aria-pressed=true while its values hold')
+    // Close to the fire at 120 s, where a bigger glow and denser smoke show (the fly-to also isolates the fire's floor).
+    await page.evaluate(() => {
+      window.__clock.getState().seek(120)
+      const a = window.__app.getState()
+      const f = a.runs[a.activeRunKey].run.fire
+      a.flyTo(f.floor, [f.x, f.y])
+    })
+    await page.waitForTimeout(3500)
+    await shot('visibility-high')
+    await card.getByRole('button', { name: 'Reset', exact: true }).click()
+    const r = await read()
+    if (r.g !== 1 || r.o !== 1) bad(`Reset left fireGlow ${r.g} and smokeOpacity ${r.o}, want 1 and 1`)
+    if ((await high.getAttribute('aria-pressed')) !== 'false') bad('High visibility is still pressed after Reset')
+    await page.evaluate(() => {
+      window.__app.setState({ card: null })
+      window.__app.getState().setViewMode('stacked')
+      window.__clock.getState().seek(60)
+    })
+    await page.waitForTimeout(500)
+  })
+  // The fire alarm: a blinking red bell and "Alarm" at the viewer's bottom right from the alarm's time on. Hidden before it and again after a scrub back,
+  // announced once per run, steady under reduced motion, readable in high contrast, beside the legend and rail on a desktop and on a phone, one badge in the compare view.
+  await step('alarm', async () => {
+    const bad = (m) => problems.push(`alarm: ${m}`)
+    const baseUrl = server.resolvedUrls.local[0]
+    const mm = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
+    // The demo runs of a building were made with its batch's base scenario: its alarmTime is what the page should show.
+    const alarm = await page.evaluate(() => window.__app.getState().batch?.base?.alarmTime)
+    if (typeof alarm !== 'number') return void bad('the loaded building has no batch base alarmTime to compare with')
+    const at = (pg, t) =>
+      pg.evaluate((t) => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(t)
+      }, t)
+    const settle = (pg) => pg.waitForTimeout(300)
+    const boxes = (pg) =>
+      pg.evaluate(() => {
+        const out = {}
+        for (const [k, sel] of Object.entries({ badge: '.alarmbadge', main: 'main.center', legend: 'section.legendcard', rail: '.railbtn', dock: 'footer.dock', caps: '.pane-caption' }))
+          out[k] = [...document.querySelectorAll(sel)].filter((el) => el.getClientRects().length).map((el) => {
+            const r = el.getBoundingClientRect()
+            return { l: r.left, t: r.top, r: r.right, b: r.bottom }
+          })
+        out.win = { w: window.innerWidth, scroll: document.documentElement.scrollWidth }
+        return out
+      })
+    const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+    // The badge sits at the viewer's bottom right, above the dock, over none of the legend, the rail buttons or the compare view's captions.
+    const placed = async (pg, tag, phone) => {
+      const L = await boxes(pg)
+      const b = L.badge[0]
+      const m = L.main[0]
+      if (L.badge.length !== 1) return void bad(`${tag}: ${L.badge.length} badges, want 1`)
+      if (b.l < m.l - 0.5 || b.t < m.t - 0.5 || b.r > m.r + 0.5 || b.b > m.b + 0.5) bad(`${tag}: the badge is outside the viewer`)
+      if (m.r - b.r > (phone ? 64 : 24) || m.b - b.b > (phone ? 60 : 24)) bad(`${tag}: the badge is not at the viewer's bottom right (${Math.round(m.r - b.r)} px from the right, ${Math.round(m.b - b.b)} px from the bottom)`)
+      if (L.dock[0] && b.b > L.dock[0].t + 0.5) bad(`${tag}: the badge is not above the dock`)
+      for (const name of ['legend', 'rail', 'caps']) for (const o of L[name]) if (hit(b, o)) bad(`${tag}: the badge overlaps the ${name}`)
+      if (L.win.scroll > L.win.w + 1) bad(`${tag}: the page overflows sideways`)
+    }
+    const opacities = (pg) =>
+      pg.evaluate(async () => {
+        const el = document.querySelector('.alarmbadge svg')
+        const v = []
+        for (let i = 0; i < 24; i++) {
+          v.push(+getComputedStyle(el).opacity)
+          await new Promise((r) => setTimeout(r, 60))
+        }
+        return v
+      })
+    const badge = page.locator('.alarmbadge')
+    const status = page.locator('#alarm-status')
+
+    // Before the alarm: no badge, an empty status line. The status line is counted whenever it is given the announcement.
+    await page.evaluate(() => {
+      window.__alarmSaid = 0
+      const s = document.getElementById('alarm-status')
+      if (s) new MutationObserver(() => void (s.textContent.trim() && window.__alarmSaid++)).observe(s, { childList: true, characterData: true, subtree: true })
+    })
+    await page.evaluate(() => window.__app.setState({ split: false, card: null }))
+    await at(page, 0)
+    await settle(page)
+    if (await badge.count()) bad('the badge shows at t = 0')
+    if ((await status.textContent())?.trim()) bad('the status line is not empty at t = 0')
+    if ((await status.getAttribute('role')) !== 'status') bad('#alarm-status lacks role=status')
+    await at(page, alarm - 1)
+    await settle(page)
+    if (await badge.count()) bad(`the badge shows 1 s before the alarm (${alarm} s)`)
+
+    // At the alarm: the badge with its word, the announcement, the timeline's mark at the same time.
+    await at(page, alarm + 1)
+    await badge.waitFor({ timeout: 5000 }).catch(() => bad(`the badge does not show 1 s after the alarm (${alarm} s)`))
+    if ((await badge.innerText().catch(() => '')).trim() !== 'Alarm') bad(`the badge reads "${(await badge.innerText().catch(() => '')).trim()}", want "Alarm"`)
+    if ((await badge.locator('svg').count()) !== 1) bad('the badge has no bell icon')
+    await page
+      .waitForFunction(() => document.getElementById('alarm-status')?.textContent.trim() === 'Fire alarm sounding', null, { timeout: 3000 })
+      .catch(async () => bad(`the status line reads "${(await status.textContent())?.trim()}", want "Fire alarm sounding"`))
+    const mark = await page.locator('.timeline .mark[aria-label^="Alarm "]').first().getAttribute('aria-label')
+    if (mark !== `Alarm ${mm(alarm)}`) bad(`the timeline's alarm mark reads "${mark}", want "Alarm ${mm(alarm)}"`)
+    await placed(page, 'desktop', false)
+    await page.waitForTimeout(500)
+    await shot('alarm')
+
+    // The bell blinks about once a second and is steady under reduced motion.
+    const css = await page.locator('.alarmbadge svg').evaluate((el) => {
+      const c = getComputedStyle(el)
+      return { name: c.animationName, dur: c.animationDuration, count: c.animationIterationCount }
+    })
+    if (css.name !== 'alarm-blink' || css.dur !== '1s' || css.count !== 'infinite') bad(`the bell's animation is ${JSON.stringify(css)}, want alarm-blink, 1s, infinite`)
+    const blink = await opacities(page)
+    if (Math.min(...blink) > 0.5 || Math.max(...blink) < 0.9) bad(`the bell does not blink: opacity ranged ${Math.min(...blink).toFixed(2)} to ${Math.max(...blink).toFixed(2)} over 1.4 s`)
+    await page.evaluate(() => (document.documentElement.dataset.motion = 'reduce'))
+    const still = await opacities(page)
+    const stillName = await page.locator('.alarmbadge svg').evaluate((el) => getComputedStyle(el).animationName)
+    if (stillName !== 'none' || Math.max(...still) - Math.min(...still) > 0.01) bad(`under reduced motion the bell still animates (animation ${stillName}, opacity ${Math.min(...still).toFixed(2)} to ${Math.max(...still).toFixed(2)})`)
+    await page.evaluate(() => delete document.documentElement.dataset.motion)
+
+    // High contrast: black pill, white border and word, a light red bell.
+    await page.evaluate(() => (document.documentElement.dataset.contrast = 'high'))
+    const hc = await page.locator('.alarmbadge').evaluate((el) => {
+      const c = getComputedStyle(el)
+      return { bg: c.backgroundColor, border: c.borderTopColor, color: c.color, bell: getComputedStyle(el.querySelector('svg')).color }
+    })
+    if (hc.bg !== 'rgb(0, 0, 0)' || hc.border !== 'rgb(255, 255, 255)' || hc.color !== 'rgb(255, 255, 255)' || hc.bell !== 'rgb(255, 107, 107)') bad(`high contrast: the badge is ${JSON.stringify(hc)}, want a black pill with a white border and word and a rgb(255, 107, 107) bell`)
+    await placed(page, 'high contrast', false)
+    await shot('alarm-hc')
+    await page.evaluate(() => delete document.documentElement.dataset.contrast)
+    await axeOn(page, 'alarm', 'main.center')
+
+    // Scrubbing back hides it again, and coming back to it is not announced a second time.
+    await at(page, 0)
+    await settle(page)
+    if (await badge.count()) bad('the badge is still there after scrubbing back to t = 0')
+    await at(page, alarm + 5)
+    await settle(page)
+    if (!(await badge.count())) bad('the badge did not come back after scrubbing forward again')
+    const said = await page.evaluate(() => window.__alarmSaid)
+    if (said !== 1) bad(`the alarm was announced ${said} times in one run, want 1`)
+
+    // A live run carries its scenario: the "Alarm sounds after" setting wins over what the run's people did.
+    await page.evaluate(() => {
+      const a = window.__app.getState()
+      const k = a.activeRunKey
+      window.__alarmRun = a.runs[k]
+      const scenario = { version: 'scenario/v0', seed: 1, occupants: { total: 1, mix: {} }, fire: { type: 'kitchen' }, alarmTime: 50 }
+      window.__app.setState({ runs: { ...a.runs, [k]: { ...a.runs[k], scenario } } })
+    })
+    await at(page, 40)
+    await settle(page)
+    if (await badge.count()) bad('with a scenario alarmTime of 50 the badge shows at 40 s')
+    await at(page, 51)
+    await settle(page)
+    if (!(await badge.count())) bad('with a scenario alarmTime of 50 the badge is missing at 51 s')
+    const live = await page.locator('.timeline .mark[aria-label^="Alarm "]').first().getAttribute('aria-label')
+    if (live !== 'Alarm 0:50') bad(`with a scenario alarmTime of 50 the timeline's alarm mark reads "${live}", want "Alarm 0:50"`)
+    await page.evaluate(() => {
+      const a = window.__app.getState()
+      window.__app.setState({ runs: { ...a.runs, [a.activeRunKey]: window.__alarmRun } })
+    })
+    await at(page, 60)
+
+    // The compare view: one badge for the pair, over neither pane's caption.
+    const pf = await ctx.newPage()
+    watchPage(pf, 'alarm-split')
+    try {
+      await pf.goto(`${baseUrl}?qa`)
+      await pf.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await pf.evaluate(() => window.__app.getState().showBrainPair())
+      await pf.waitForFunction(() => window.__app.getState().split && window.__app.getState().pairBusy === null, null, { timeout: 60000 })
+      await at(pf, alarm + 1)
+      await settle(pf)
+      if ((await pf.locator('main.center canvas').count()) !== 2) bad('split: the compare view does not draw two canvases')
+      await placed(pf, 'split', false)
+      await at(pf, alarm - 1)
+      await settle(pf)
+      if (await pf.locator('.alarmbadge').count()) bad('split: the badge shows before the alarm')
+    } finally {
+      await pf.close()
+    }
+
+    // A phone: smaller, left of the two rail buttons, clear of the legend and the dock, in the compare view above the captions.
+    const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+    await pctx.addInitScript(() => {
+      try {
+        localStorage['fes.aboutSeen'] = '1'
+      } catch {
+        /* ignore */
+      }
+    })
+    const ph = await pctx.newPage()
+    watchPage(ph, 'alarm-phone')
+    try {
+      await ph.goto(`${baseUrl}?qa`)
+      await ph.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await at(ph, alarm - 1)
+      await settle(ph)
+      if (await ph.locator('.alarmbadge').count()) bad('phone: the badge shows before the alarm')
+      await at(ph, alarm + 1)
+      await settle(ph)
+      await placed(ph, 'phone', true)
+      const small = await ph.locator('.alarmbadge').evaluate((el) => ({ font: parseFloat(getComputedStyle(el).fontSize), bell: el.querySelector('svg').getBoundingClientRect().width }))
+      if (small.font > 12 || small.bell > 16.5) bad(`phone: the badge is ${small.font} px text with a ${small.bell} px bell, want 12 px or less and 16 px`)
+      await ph.screenshot({ path: join(out, 'alarm-phone.png') })
+      shots.push('alarm-phone')
+      await ph.evaluate(() => window.__app.getState().showBrainPair())
+      await ph.waitForFunction(() => window.__app.getState().split && window.__app.getState().pairBusy === null, null, { timeout: 60000 })
+      await at(ph, alarm + 1)
+      await settle(ph)
+      await placed(ph, 'phone split', true)
+      await ph.screenshot({ path: join(out, 'alarm-phone-split.png') })
+      shots.push('alarm-phone-split')
+    } finally {
+      await pctx.close()
+    }
+  })
+  // The room-to-room spread on screen, in a fresh page and the stacked view. The fixture is A11's run/v0 with fire.rooms: it is read from disk
+  // (contracts/run.spread.fixture.json) and opened through File > Open, so it never has to be copied into public/ (which would publish it).
+  await step('fire-spread', async () => {
+    if (!existsSync(FIXTURE)) return void problems.push('fire-spread: fixture missing (A11 part 1)')
+    const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'))
+    const bad = (m) => problems.push(`fire-spread: ${m}`)
+    const pf = await ctx.newPage()
+    pf.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[fire-spread] ${m.text()}`)
+    })
+    pf.on('pageerror', (e) => errors.push(`[fire-spread] ${String(e)}`))
+    try {
+      await pf.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await pf.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      const seek = async (t) => {
+        await pf.evaluate((t) => {
+          window.__clock.setState({ playing: false })
+          window.__clock.getState().seek(t)
+        }, t)
+        return pf.evaluate(() => window.__clock.getState().t)
+      }
+      // What the active run itself lists at t: the rooms of its fire.rooms with ignite <= t, those the building has, and per floor.
+      const own = (t) =>
+        pf.evaluate((t) => {
+          const a = window.__app.getState()
+          const run = a.runs[a.activeRunKey].run
+          const has = (r) => !!a.building.floors.find((f) => f.id === r.floor)?.rooms.some((x) => x.id === r.room)
+          const rooms = (run.fire.rooms ?? []).filter((r) => r.ignite <= t)
+          const byFloor = {}
+          for (const r of rooms) if (has(r)) byFloor[r.floor] = (byFloor[r.floor] ?? 0) + 1
+          // The doors the run has closed by t, that the building has (BlockedDoors draws each once).
+          const closed = new Set()
+          for (const e of run.events) if (e.type === 'door_blocked' && e.t <= t && a.building.floors.some((f) => (!e.floor || f.id === e.floor) && f.doors.some((d) => d.id === e.door))) closed.add(`${e.floor}|${e.door}`)
+          return { hasRooms: !!run.fire.rooms?.length, burning: rooms.length, drawn: rooms.filter(has).length, byFloor, closed: closed.size }
+        }, t)
+      // The frame loop writes __spread: wait for it to reach the wanted numbers (or give up), then read it.
+      const spread = async (want) => {
+        await pf.waitForFunction(([b, d]) => window.__spread.burning === b && window.__spread.drawn === d, [want.burning, want.drawn], { timeout: 10000 }).catch(() => {})
+        return pf.evaluate(() => ({ ...window.__spread }))
+      }
+      const openRun = async (run, file = null) => {
+        await pf.locator('#open-file').setInputFiles(file ?? { name: `${run.id}.json`, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(run)) })
+        await pf.waitForFunction((id) => {
+          const a = window.__app.getState()
+          return !!a.activeRunKey && a.runs[a.activeRunKey].run.id === id && a.loading === null
+        }, run.id, { timeout: 60000 })
+      }
+
+      // 1. The default run, paused at 60 s: it draws exactly the rooms its own fire.rooms lists by then (none for a run without the field).
+      const t60 = await seek(60)
+      const w60 = await own(t60)
+      const g60 = await spread(w60)
+      if (g60.drawn !== w60.drawn) bad(`the default run at ${t60} s draws ${g60.drawn} burning rooms, its own fire.rooms lists ${w60.drawn}`)
+      if (!w60.hasRooms) {
+        if ((await pf.locator('p.spreadline').count()) !== 0) bad('a run without fire.rooms shows the spread line')
+        if ((await pf.locator('section.legendcard', { hasText: 'Burning room' }).count()) !== 0) bad('a run without fire.rooms shows the burning-room legend row')
+      }
+      lines.push(`fire-spread: the default run has ${w60.hasRooms ? 'fire.rooms' : 'no fire.rooms'}; ${g60.drawn} rooms drawn at ${t60} s`)
+
+      // 2. The fixture, opened through the file input in the building it was made for.
+      const bid = await pf.evaluate(() => window.__app.getState().building.id)
+      if (bid !== fx.buildingId) {
+        await nav(pf, true)
+        await pf.locator('select[aria-label="Building"]').selectOption(fx.buildingId)
+        await pf.waitForFunction((id) => {
+          const a = window.__app.getState()
+          return a.building?.id === id && a.loading === null && !!a.activeRunKey
+        }, fx.buildingId, { timeout: 60000 })
+        await nav(pf, false)
+      }
+      await openRun(fx, FIXTURE)
+      const times = (fx.fire.rooms ?? []).map((r) => r.ignite).sort((a, b) => a - b)
+      const dur = await pf.evaluate(() => window.__clock.getState().duration)
+      if (times.length === 0) return void bad('the fixture lists no fire.rooms')
+      // The second ignition (one second past it); with one room, the first. Never past the end of the run.
+      const t1 = await seek(Math.min(dur, times.length > 1 ? times[1] + 1 : times[0]))
+      const want = await own(t1)
+      const wantFile = times.filter((x) => x <= t1).length
+      if (want.burning !== wantFile) bad(`at ${t1} s the page's run lists ${want.burning} burning rooms, the fixture file ${wantFile}`)
+      const got = await spread(want)
+      if (got.burning !== want.burning || got.drawn !== want.drawn) bad(`at ${t1} s __spread is ${JSON.stringify(got)}, want burning ${want.burning} and drawn ${want.drawn}`)
+      const sayN = new RegExp(`\\b${want.burning} rooms? burning`)
+      await pf.waitForFunction((src) => new RegExp(src).test(document.querySelector('p.spreadline')?.textContent ?? ''), sayN.source, { timeout: 8000 }).catch(() => {})
+      const line = (await pf.locator('p.spreadline').allInnerTexts()).join(' | ')
+      if (!sayN.test(line) || !/illustrative/.test(line)) bad(`the spread line reads "${line}", want "${want.burning} room(s) burning" and "illustrative"`)
+      const matName = fx.fire.material ? fx.fire.material[0].toUpperCase() + fx.fire.material.slice(1) : null
+      if (matName && !line.includes(matName)) bad(`the spread line reads "${line}", want the material ${matName}`)
+      const legend = await pf.locator('section.legendcard').innerText()
+      for (const row of ['Burning room (illustrative)', 'Fire marker', 'Closed by fire']) if (!legend.includes(row)) bad(`the legend lacks "${row}"`)
+      // The "Fire marker" row is a small flame, like the flame sprites it stands for (not the old cone swatch).
+      const marker = pf.locator('section.legendcard li', { hasText: 'Fire marker' })
+      if ((await marker.locator('svg.lucide-flame').count()) !== 1 || (await marker.locator('.cone').count()) !== 0) bad('the "Fire marker" legend row is not a flame icon')
+      if ((await pf.evaluate(() => window.__app.getState().viewMode)) !== 'stacked') bad('the page left the stacked view')
+      // The doors the run closes show as they close: none before the first, all of them at the end.
+      if (got.closed !== want.closed) bad(`at ${t1} s ${got.closed} closed doors are drawn, the run has closed ${want.closed}`)
+      // The Fire layer off draws no tint.
+      await pf.evaluate(() => window.__app.setState((s) => ({ layers: { ...s.layers, fire: false } })))
+      await pf.waitForFunction(() => window.__spread.drawn === 0, null, { timeout: 8000 }).catch(() => {})
+      const off = await pf.evaluate(() => window.__spread.drawn)
+      if (off !== 0) bad(`with the Fire layer off ${off} burning rooms are still drawn`)
+      await pf.evaluate(() => window.__app.setState((s) => ({ layers: { ...s.layers, fire: true } })))
+      await spread(want)
+      await pf.waitForTimeout(800)
+      await shot('fire-spread', pf)
+      await blankCheck('fire-spread', pf)
+      await axeOn(pf, 'fire-spread', '.app')
+      await pf.evaluate(() => window.__app.setState({ fireGlow: 2 }))
+      await pf.waitForTimeout(800)
+      await shot('fire-spread-high', pf)
+      await pf.evaluate(() => window.__app.setState({ fireGlow: 1 }))
+
+      // The end of the run: every burning room, and the doors closed by then.
+      const tEnd = await seek(dur)
+      const wEnd = await own(tEnd)
+      const gEnd = await spread(wEnd)
+      if (gEnd.drawn !== wEnd.drawn || gEnd.closed !== wEnd.closed) bad(`at the end (${tEnd} s) __spread is ${JSON.stringify(gEnd)}, want drawn ${wEnd.drawn} and closed ${wEnd.closed}`)
+      await pf.waitForTimeout(500)
+      await shot('fire-spread-end', pf)
+
+      // 3. Hidden floors. The fixture's ignition times are halved so that every floor it lists burns within the run; then each floor view must draw
+      // only the burning rooms of the floors it shows (fire on a hidden floor never shows on another one), and the tints must read on the slabs.
+      const fast = { ...fx, id: `${fx.id}-fast`, fire: { ...fx.fire, rooms: fx.fire.rooms.map((r) => ({ ...r, ignite: Math.round(r.ignite / 2) })) } }
+      await openRun(fast)
+      const tFast = await seek(dur)
+      const wFast = await own(tFast)
+      const floorsBurning = Object.keys(wFast.byFloor)
+      const views = [['stacked', undefined, wFast.drawn]]
+      for (const f of floorsBurning) views.push(['single', f, wFast.byFloor[f]])
+      views.push(['side', undefined, wFast.drawn], ['ghost', floorsBurning[0], wFast.drawn])
+      for (const [mode, floor, n] of views) {
+        await pf.evaluate(([m, f]) => window.__app.getState().setViewMode(m, f), [mode, floor])
+        const g = await spread({ burning: wFast.burning, drawn: n })
+        if (g.drawn !== n) bad(`${mode}${floor ? ' ' + floor : ''} view: ${g.drawn} burning rooms drawn, want ${n} (rooms on the floors that view shows)`)
+        if (mode !== 'stacked' && !(mode === 'single' && floor !== floorsBurning[0])) {
+          await pf.waitForTimeout(1500)
+          await shot(`fire-spread-${mode}`, pf)
+          await blankCheck(`fire-spread-${mode}`, pf)
+        }
+      }
+      lines.push(`fire-spread: views draw ${views.map(([m, f, n]) => `${m}${f ? ' ' + f : ''} ${n}`).join(', ')} of ${wFast.drawn} burning rooms`)
+      // A close-up on a burning room other than the ignition room (the fire sphere stands there): it carries the flame marker.
+      const near = await pf.evaluate((rooms) => {
+        const a = window.__app.getState()
+        for (const r of rooms.slice(1)) {
+          const room = a.building.floors.find((f) => f.id === r.floor)?.rooms.find((x) => x.id === r.room)
+          if (!room || ['stair', 'corridor'].includes(room.type)) continue
+          const n = room.polygon.length
+          return { floor: r.floor, at: [room.polygon.reduce((s, p) => s + p[0], 0) / n, room.polygon.reduce((s, p) => s + p[1], 0) / n] }
+        }
+        return null
+      }, fast.fire.rooms)
+      if (near) {
+        await pf.evaluate((t) => window.__app.getState().flyTo(t.floor, t.at), near)
+        await pf.waitForTimeout(3500)
+        await shot('fire-spread-close', pf)
+      }
+      await pf.evaluate(() => window.__app.getState().setViewMode('stacked'))
+
+      // 4. A run without fire.rooms (an old precomputed run, an older backend) draws no spread at all, and nothing fails.
+      const plain = { ...fx, id: `${fx.id}-plain`, fire: { floor: fx.fire.floor, x: fx.fire.x, y: fx.fire.y, hrr: fx.fire.hrr } }
+      await openRun(plain)
+      await seek(dur)
+      await pf.waitForTimeout(1200)
+      const none = await pf.evaluate(() => ({ ...window.__spread }))
+      if (none.drawn !== 0 || none.burning !== 0 || none.closed !== 0) bad(`a run without fire.rooms reports ${JSON.stringify(none)}`)
+      if ((await pf.locator('p.spreadline').count()) !== 0) bad('a run without fire.rooms shows the spread line')
+      if ((await pf.locator('section.legendcard').innerText()).includes('Burning room')) bad('a run without fire.rooms shows the burning-room legend row')
+      await blankCheck('fire-spread-none', pf)
+    } finally {
+      await pf.close()
+    }
+  })
+  // The wood-against-drywall pair. The fixture stands in for the wood run: the index is the real one plus one entry for it, and the file is served from disk.
+  await step('material-pair', async () => {
+    const bad = (m) => problems.push(`material-pair: ${m}`)
+    const before = problems.length
+    if (!existsSync(FIXTURE)) return void problems.push('material-pair: fixture missing (A11 part 1)')
+    const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'))
+    const realIndex = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    const base = realIndex.runs.find((r) => r.buildingId === fx.buildingId && r.whatIf === null)
+    if (!base) return void bad(`the demo index has no baseline run for building ${fx.buildingId}`)
+    const entry = { id: 'qa-wood', buildingId: fx.buildingId, label: 'Wood (qa fixture)', file: 'fixtures/fire-spread.run.json', whatIf: 'material', material: 'wood', fire: base.fire, doors: {} }
+    const watch = (pg, tag) => {
+      pg.on('console', (m) => {
+        if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[${tag}] ${m.text()}`)
+      })
+      pg.on('pageerror', (e) => errors.push(`[${tag}] ${String(e)}`))
+    }
+    // Compares in a fresh page: clicks the button, waits for the split view with `wood` active and its partner loaded, and checks what the comparison under Building material says.
+    const compare = async (pg, woodId, shotName) => {
+      await pg.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await pg.evaluate(() => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(30)
+        window.__app.setState({ card: 'scenario' })
+      })
+      const before = await pg.evaluate(() => window.__clock.getState().t)
+      const btn = pg.getByRole('button', { name: 'Compare wood with drywall' })
+      // It is there because the index has the pair, and it sits under the Building material setting: after its hint, before the Crowd setting.
+      await btn.waitFor({ timeout: 10000 })
+      const placed = await pg.evaluate(() => {
+        const sc = document.querySelector('.scenario')
+        const b = [...sc.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Compare wood with drywall')
+        const hint = sc.querySelector('#sc-hint-material')
+        const crowd = [...sc.querySelectorAll('label')].find((l) => l.textContent.trim().startsWith('Crowd'))
+        const after = (x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING)
+        return !!b && !!hint && !!crowd && after(hint, b) && after(b, crowd)
+      })
+      if (!placed) bad('"Compare wood with drywall" is not under the Building material setting, before the Crowd setting')
+      await btn.scrollIntoViewIfNeeded()
+      await btn.click()
+      await pg.waitForFunction((id) => {
+        const a = window.__app.getState()
+        const w = a.runs[id]
+        return a.split && a.activeRunKey === id && !!w?.whatIf && !!a.runs[w.whatIf.baselineKey] && a.pairBusy === null
+      }, woodId, { timeout: 60000 })
+      const s = await pg.evaluate((id) => {
+        const a = window.__app.getState()
+        const w = a.runs[id]
+        return { keys: a.compareKeys, base: w.whatIf.baselineKey, material: w.whatIf.material, door: w.whatIf.door, t: window.__clock.getState().t, err: a.pairError, canvases: document.querySelectorAll('main.center canvas').length }
+      }, woodId)
+      if (s.err) bad(`pairError "${s.err}"`)
+      if (s.keys.join() !== `${s.base},${woodId}`) bad(`compareKeys ${s.keys.join()}, want ${s.base},${woodId}`)
+      if (s.material !== 'wood' || s.door !== '') bad(`the wood run's whatIf is ${JSON.stringify({ material: s.material, door: s.door })}`)
+      if (Math.abs(s.t - before) > 0.2) bad(`the clock moved from ${before} s to ${s.t} s`)
+      if (s.canvases !== 2) bad(`${s.canvases} canvases in the split view, want 2`)
+      const text = await pg.locator('.scenario .paircompare.material').innerText()
+      if (!text.includes('Wood instead of drywall')) bad(`the comparison lacks "Wood instead of drywall": "${text.slice(0, 160)}"`)
+      await pg.locator('.scenario .paircompare.material .whatif-card').first().scrollIntoViewIfNeeded()
+      await pg.waitForTimeout(1500)
+      await shot(shotName, pg)
+      await blankCheck(shotName, pg)
+      await axeOn(pg, shotName, '.app')
+    }
+    // The real index with the material entry FIRST: it is found wherever it stands in the list.
+    const routes = async (pg) => {
+      await pg.route('**/demo/index.json', async (route) => {
+        const res = await route.fetch()
+        const idx = await res.json()
+        idx.runs = [entry, ...idx.runs]
+        await route.fulfill({ response: res, json: idx })
+      })
+      await pg.route('**/demo/fixtures/fire-spread.run.json', (route) => route.fulfill({ path: FIXTURE, contentType: 'application/json' }))
+    }
+    const pm = await ctx.newPage()
+    watch(pm, 'material-pair')
+    try {
+      await routes(pm)
+      await pm.goto(`${server.resolvedUrls.local[0]}?qa&building=${fx.buildingId}`)
+      await pm.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await compare(pm, 'qa-wood', 'material-pair')
+      // The link of the pair opens the pair again: a wood entry in `r` loads its drywall partner first, and the link's split keeps the two side by side.
+      await pm.waitForTimeout(1500)
+      const hash = await pm.evaluate(() => location.hash)
+      if (!/(^#|&)r=qa-wood(&|$)/.test(hash) || !/(^#|&)split=1(&|$)/.test(hash)) bad(`the link of the pair reads "${hash}", want r=qa-wood and split=1`)
+      const pl = await ctx.newPage()
+      watch(pl, 'material-pair-link')
+      try {
+        await routes(pl)
+        await pl.goto(`${server.resolvedUrls.local[0]}?qa${hash}`)
+        await pl.waitForFunction(() => {
+          const a = window.__app?.getState()
+          const w = a?.runs['qa-wood']
+          return !!w?.whatIf && a.activeRunKey === 'qa-wood' && a.split && !!a.runs[w.whatIf.baselineKey] && a.loading === null
+        }, null, { timeout: 60000 })
+        const l = await pl.evaluate(() => ({ whatIf: window.__app.getState().runs['qa-wood'].whatIf, canvases: document.querySelectorAll('main.center canvas').length }))
+        if (l.whatIf.material !== 'wood' || l.whatIf.door !== '' || l.canvases !== 2) bad(`the pair's link restored ${JSON.stringify(l)}, want the wood variant in a split view`)
+      } catch (e) {
+        bad(`the pair's link did not restore the pair: ${String(e).split('\n')[0]}`)
+      } finally {
+        await pl.close()
+      }
+    } finally {
+      await pm.close()
+    }
+    // The main page reads the real index: the section is there exactly when the loaded building has a wood run in it.
+    const loaded = await page.evaluate(() => window.__app.getState().building.id)
+    const woods = realIndex.runs.filter((r) => r.whatIf === 'material' && r.material === 'wood' && realIndex.runs.some((b) => b.buildingId === r.buildingId && b.whatIf === null && b.fire.room === r.fire.room))
+    await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
+    await page.waitForTimeout(600)
+    const shown = (await page.getByRole('button', { name: 'Compare wood with drywall' }).count()) > 0
+    const wanted = woods.some((r) => r.buildingId === loaded)
+    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the Compare wood with drywall button for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a wood run for it`)
+    await page.evaluate(() => window.__app.setState({ card: null }))
+    lines.push(`material-pair: the real index has ${woods.length} wood run(s); the main page (${loaded}) ${shown ? 'shows' : 'hides'} the section`)
+    if (problems.length === before) lines.push('material-pair ok: Compare wood with drywall (under Building material) splits the view at the same time, the link of the pair restores it')
+    // With a real pair in the index (A11 part 2's rerun), it is compared the same way.
+    if (woods[0]) {
+      const pr = await ctx.newPage()
+      watch(pr, 'material-pair-real')
+      try {
+        await pr.goto(`${server.resolvedUrls.local[0]}?qa&building=${woods[0].buildingId}`)
+        await compare(pr, woods[0].id, 'material-pair-real')
+      } finally {
+        await pr.close()
+      }
+    }
+  })
+  // Rules against a Claude crowd. The real index has no such pair yet, so the index here is the real one plus one qa entry (whatIf 'brain', brain 'llm'), and its
+  // file is a copy of the rules baseline it pairs with, carrying three of Claude's decisions for one person: two from Claude and one the rules made after Claude's
+  // time ran out. The file is served from memory.
+  await step('claude-pair', async () => {
+    const bad = (m) => problems.push(`claude-pair: ${m}`)
+    const before = problems.length
+    const realIndex = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    const base = realIndex.runs.find((r) => r.id === 'example-office-R101-base') ?? realIndex.runs.find((r) => r.whatIf === null)
+    if (!base) return void bad('the demo index has no baseline run')
+    const baseRun = JSON.parse(readFileSync(join(root, 'dist', 'demo', base.file), 'utf8'))
+    const who = baseRun.agents[0].idx
+    const floor = baseRun.agents[0].floor
+    const reason = 'The east stair is clear and close, so I go there.'
+    // Claude's run traps three more people than the rules' and never gets 90% out: the headline must lead with that, and put the smoke line second.
+    const trappedMore = baseRun.metrics.trapped + 3
+    const claudeRun = {
+      ...baseRun,
+      id: 'qa-claude-run',
+      metrics: { ...baseRun.metrics, trapped: trappedMore, t90: null },
+      agents: baseRun.agents.map((a, i) => (i < 12 ? { ...a, llm: true } : a)),
+      events: [
+        ...baseRun.events,
+        { t: 20, type: 'llm', idx: who, floor, target: 'qa-exit', action: 'reroute', reason },
+        { t: 60, type: 'llm', idx: who, floor, target: 'qa-exit', action: 'wait', reason: 'rules: keep current target', fallback: true },
+      ].sort((a, b) => a.t - b.t),
+    }
+    const entry = { id: 'qa-claude', buildingId: base.buildingId, label: 'Kitchen, Claude (qa)', file: 'fixtures/claude-crowd.run.json', whatIf: 'brain', brain: 'llm', fire: base.fire, doors: base.doors }
+    // The real index with the Claude entry FIRST: it is found wherever it stands in the list.
+    const routes = async (pg) => {
+      await pg.route('**/demo/index.json', async (route) => {
+        const res = await route.fetch()
+        const idx = await res.json()
+        idx.runs = [entry, ...idx.runs]
+        await route.fulfill({ response: res, json: idx })
+      })
+      await pg.route('**/demo/fixtures/claude-crowd.run.json', (route) => route.fulfill({ json: claudeRun }))
+    }
+    // Compares in a fresh page: clicks the button, waits for the split view with the Claude run active and its rules partner loaded, and checks what the card says.
+    const compare = async (pg, claudeId, shotName, headline = null) => {
+      await pg.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await pg.evaluate(() => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(30)
+        window.__app.setState({ card: 'scenario' })
+      })
+      const t0 = await pg.evaluate(() => window.__clock.getState().t)
+      const btn = pg.getByRole('button', { name: 'Compare rules with Claude crowd' })
+      // It is there because the index has the pair, and it sits under the Crowd setting: after its hint, before the people setting.
+      await btn.waitFor({ timeout: 10000 })
+      const placed = await pg.evaluate(() => {
+        const sc = document.querySelector('.scenario')
+        const b = [...sc.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Compare rules with Claude crowd')
+        const hint = sc.querySelector('#sc-hint-crowd')
+        const people = [...sc.querySelectorAll('label')].find((l) => l.textContent.trim().startsWith('People in the building'))
+        const after = (x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING)
+        return !!b && !!hint && !!people && after(hint, b) && after(b, people)
+      })
+      if (!placed) bad('"Compare rules with Claude crowd" is not under the Crowd setting, before the people setting')
+      await btn.scrollIntoViewIfNeeded()
+      await btn.click()
+      await pg.waitForFunction((id) => {
+        const a = window.__app.getState()
+        const c = a.runs[id]
+        return a.split && a.activeRunKey === id && !!c?.whatIf && !!a.runs[c.whatIf.baselineKey] && a.pairBusy === null
+      }, claudeId, { timeout: 60000 })
+      const s = await pg.evaluate((id) => {
+        const a = window.__app.getState()
+        const c = a.runs[id]
+        return { keys: a.compareKeys, base: c.whatIf.baselineKey, brain: c.whatIf.brain, material: c.whatIf.material, door: c.whatIf.door, t: window.__clock.getState().t, err: a.pairError, canvases: document.querySelectorAll('main.center canvas').length }
+      }, claudeId)
+      if (s.err) bad(`pairError "${s.err}"`)
+      if (s.keys.join() !== `${s.base},${claudeId}`) bad(`compareKeys ${s.keys.join()}, want ${s.base},${claudeId}`)
+      if (s.brain !== 'llm' || s.door !== '' || s.material !== undefined) bad(`the Claude run's whatIf is ${JSON.stringify({ brain: s.brain, door: s.door, material: s.material })}`)
+      if (Math.abs(s.t - t0) > 0.2) bad(`the clock moved from ${t0} s to ${s.t} s`)
+      if (s.canvases !== 2) bad(`${s.canvases} canvases in the split view, want 2`)
+      const text = await pg.locator('.scenario .paircompare.claudepair').innerText()
+      if (!text.includes('Claude crowd instead of rules')) bad(`the comparison lacks "Claude crowd instead of rules": "${text.slice(0, 200)}"`)
+      if (!/t90 .*trapped \d+ → \d+/.test(text)) bad(`the comparison lacks the t90 and trapped line: "${text.slice(-200)}"`)
+      // With a known difference in the people trapped, the headline leads with it, then the smoke line, then the t90 line.
+      if (headline) {
+        const i0 = text.indexOf(headline)
+        const i1 = i0 < 0 ? -1 : text.indexOf('person-seconds in smoke', i0 + headline.length)
+        const i2 = i1 < 0 ? -1 : text.indexOf('t90 ', i1)
+        if (i2 < 0) bad(`the comparison does not read "${headline}", then the smoke line, then the t90 line: "${text.slice(Math.max(0, text.indexOf('Claude crowd instead') - 20))}"`)
+      }
+      await pg.locator('.scenario .paircompare.claudepair .whatif-card').first().scrollIntoViewIfNeeded()
+      await pg.waitForTimeout(1500)
+      await shot(shotName, pg)
+      await blankCheck(shotName, pg)
+      await axeOn(pg, shotName, '.app')
+    }
+    const pc = await ctx.newPage()
+    watchPage(pc, 'claude-pair')
+    try {
+      await routes(pc)
+      await pc.goto(`${server.resolvedUrls.local[0]}?qa&building=${base.buildingId}`)
+      await pc.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await compare(pc, 'qa-claude', 'claude-pair', `Claude crowd instead of rules: ${trappedMore} people trapped instead of ${baseRun.metrics.trapped}; 90% never get out`)
+      // The run is named once for who decides: the Run select, and the caption of its pane.
+      const opt = ((await pc.locator('select[aria-label="Run"] option[value="qa-claude"]').textContent()) ?? '').trim()
+      if (opt !== 'Kitchen, Claude (qa) · Claude crowd') bad(`the Run select names the Claude run "${opt}", want "Kitchen, Claude (qa) · Claude crowd"`)
+      if (!(await pc.locator('.pane-caption').allInnerTexts()).some((t) => t.includes('Claude crowd'))) bad('no pane caption names the Claude crowd')
+      // The link of the pair opens the pair again.
+      await pc.waitForTimeout(1500)
+      const hash = await pc.evaluate(() => location.hash)
+      if (!/(^#|&)r=qa-claude(&|$)/.test(hash) || !/(^#|&)split=1(&|$)/.test(hash)) bad(`the link of the pair reads "${hash}", want r=qa-claude and split=1`)
+      const pl = await ctx.newPage()
+      watchPage(pl, 'claude-pair-link')
+      try {
+        await routes(pl)
+        await pl.goto(`${server.resolvedUrls.local[0]}?qa${hash}`)
+        await pl.waitForFunction(() => {
+          const a = window.__app?.getState()
+          const c = a?.runs['qa-claude']
+          return !!c?.whatIf && a.activeRunKey === 'qa-claude' && a.split && !!a.runs[c.whatIf.baselineKey] && a.loading === null
+        }, null, { timeout: 60000 })
+        const l = await pl.evaluate(() => ({ whatIf: window.__app.getState().runs['qa-claude'].whatIf, canvases: document.querySelectorAll('main.center canvas').length }))
+        if (l.whatIf.brain !== 'llm' || l.whatIf.door !== '' || l.canvases !== 2) bad(`the pair's link restored ${JSON.stringify(l)}, want the Claude run (brain llm, no door) in a split view`)
+      } catch (e) {
+        bad(`the pair's link did not restore the pair: ${String(e).split('\n')[0]}`)
+      } finally {
+        await pl.close()
+      }
+      // The legend names the people who ask Claude, for the Claude run only.
+      const legendHas = async () => (await pc.locator('section.legendcard').innerText()).includes('Asks Claude (pink ring)')
+      if (!(await legendHas())) bad('the legend lacks the "Asks Claude" row for a run in which people ask Claude')
+      await pc.evaluate(() => window.__app.getState().switchRun('example-office-R101-base'))
+      if (await legendHas()) bad('the legend shows the "Asks Claude" row for the rules run')
+    } finally {
+      await pc.close()
+    }
+    // The main page reads the real index: the button is there exactly when the loaded building has a Claude pair in it.
+    const loaded = await page.evaluate(() => window.__app.getState().building.id)
+    const claudes = realIndex.runs.filter((r) => r.whatIf === 'brain' && r.brain === 'llm' && realIndex.runs.some((b) => b.buildingId === r.buildingId && b.whatIf === null && b.fire.room === r.fire.room))
+    await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
+    await page.waitForTimeout(600)
+    const shown = (await page.getByRole('button', { name: 'Compare rules with Claude crowd' }).count()) > 0
+    const wanted = claudes.some((r) => r.buildingId === loaded)
+    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the Compare rules with Claude crowd button for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a Claude pair for it`)
+    await page.evaluate(() => window.__app.setState({ card: null }))
+    lines.push(`claude-pair: the real index has ${claudes.length} Claude pair(s); the main page (${loaded}) ${shown ? 'shows' : 'hides'} the section`)
+    if (problems.length === before) lines.push('claude-pair ok: Compare rules with Claude crowd (under Crowd) splits the view, its link restores the pair, the legend names the people who ask Claude')
+    // With a real pair in the index, it is compared the same way.
+    if (claudes[0]) {
+      const pr = await ctx.newPage()
+      watchPage(pr, 'claude-pair-real')
+      try {
+        await pr.goto(`${server.resolvedUrls.local[0]}?qa&building=${claudes[0].buildingId}`)
+        await compare(pr, claudes[0].id, 'claude-pair-real')
+      } finally {
+        await pr.close()
+      }
+    }
+  })
+  // The Crowd select in live mode. qa has no backend, so a fresh page is put in live mode by hand and the API answered by routes (as in live-fallback).
+  await step('crowd-live', async () => {
+    const bad = (m) => problems.push(`crowd-live: ${m}`)
+    const before = problems.length
+    const p6 = await ctx.newPage()
+    watchPage(p6, 'crowd-live', /calibration\.json|status of 500|ERR_CONNECTION_REFUSED/)
+    try {
+      const posts = []
+      let how = 'running'
+      const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+      await p6.route('**/runs', (r) => {
+        if (r.request().method() === 'POST') posts.push(JSON.parse(r.request().postData() ?? '{}'))
+        return how === 'http' ? json(r, { detail: 'qa: backend error' }, 500) : json(r, { runId: 'qa-run' })
+      })
+      await p6.route('**/runs/qa-run', (r) => json(r, { status: 'running' }))
+      await p6.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await p6.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await p6.evaluate(() => {
+        // pollRun's wait is of Date.now: this lets the page's clock jump over it
+        const real = Date.now.bind(Date)
+        let skew = 0
+        Date.now = () => real() + skew
+        window.__skew = (ms) => (skew += ms)
+        window.__app.setState({ mode: 'live', card: 'scenario', notice: null })
+      })
+      const select = p6.locator('.scenario label', { hasText: 'Crowd' }).locator('select')
+      const runButton = p6.locator('.scenario > button.run')
+      const state = () =>
+        p6.evaluate(() => {
+          const a = window.__app.getState()
+          return { running: a.running, err: a.runError, note: a.runNote, fallback: a.runFallback, brain: a.draft.brain }
+        })
+      const setPeople = (n) =>
+        p6.evaluate((n) => {
+          const a = window.__app.getState()
+          a.patchDraft({ occupants: { ...a.draft.occupants, total: n } })
+        }, n)
+      // Live: the select is on, on the rules, and the static-mode note is gone.
+      if (!(await select.isEnabled())) bad('the Crowd select is off in live mode')
+      if ((await select.inputValue()) !== 'rules') bad(`the Crowd select shows "${await select.inputValue()}" at the start, want rules`)
+      if ((await p6.locator('.scenario p.note', { hasText: 'Claude crowds need the live backend' }).count()) !== 0) bad('the static-mode note shows in live mode')
+      // Everyone asks Claude with more than 200 people: a warning, and no way to run: the button, the nav's Run, and the store.
+      await select.selectOption('llm')
+      await setPeople(250)
+      const warn = p6.locator('.scenario p.warn[role=alert]')
+      await warn.waitFor({ timeout: 5000 })
+      const w = await warn.innerText()
+      if (!/200 people/.test(w) || !/\b250\b/.test(w)) bad(`the warning reads "${w}", want 200 people and 250`)
+      if (!(await runButton.isDisabled())) bad('the Run button is on with 250 people and everyone asking Claude')
+      await shot('crowd-limit', p6)
+      await axeOn(p6, 'crowd-limit', '.app')
+      await nav(p6, true)
+      if (!(await p6.locator('.ctxbar').getByRole('button', { name: 'Run simulation', exact: true }).isDisabled())) bad("the nav's Run simulation button is on with 250 people and everyone asking Claude")
+      await nav(p6, false)
+      await p6.evaluate(() => {
+        const a = window.__app.getState()
+        void a.runScenario(a.draft)
+      })
+      await p6.waitForTimeout(500)
+      const blocked = await state()
+      if (posts.length !== 0 || blocked.running !== null || !/200 people/.test(blocked.err ?? '')) bad(`runScenario with 250 people sent ${posts.length} request(s), running ${blocked.running}, error "${blocked.err}"`)
+      // 160 people: the warning goes, and the run is sent with brain llm, says whom Claude is deciding for, and is waited for fifteen minutes (not ten).
+      await setPeople(160)
+      if ((await warn.count()) !== 0) bad('the warning stays at 160 people')
+      if (!(await runButton.isEnabled())) bad('the Run button stays off at 160 people')
+      await runButton.click()
+      await p6.waitForFunction(() => /^Claude is deciding for 160 people… \d+ s$/.test(window.__app.getState().running ?? ''), null, { timeout: 20000 })
+      if (!(await runButton.innerText()).includes('Claude is deciding for 160 people…')) bad('the Run button does not show the Claude status')
+      if (posts.length !== 1 || posts[0].brain !== 'llm' || posts[0].occupants?.total !== 160) bad(`the request carried ${JSON.stringify({ brain: posts[0]?.brain, people: posts[0]?.occupants?.total })}, want brain llm and 160 people`)
+      await shot('crowd-live', p6)
+      await p6.evaluate(() => window.__skew(200000))
+      await p6.waitForFunction(() => / 2\d\d s$/.test(window.__app.getState().running ?? ''), null, { timeout: 15000 }).catch(() => bad('three minutes in, the Claude run is no longer waited for'))
+      await p6.evaluate(() => window.__skew(800000))
+      await p6.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
+      const done = await state()
+      if (!done.fallback || !/^Live run unavailable: showing the nearest precomputed fire \(room \S+\)\. That run uses the rules crowd, not Claude\.$/.test(done.note ?? '') || done.err) bad(`after six minutes the note reads "${done.note}" (error "${done.err}")`)
+      // The other two crowds are sent as chosen, and only the Claude crowds say the fallback is not theirs.
+      how = 'http'
+      for (const [value, claude] of [['mixed', true], ['rules', false]]) {
+        await select.selectOption(value)
+        await runButton.click()
+        await p6.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
+        const sent = posts[posts.length - 1]?.brain
+        const st = await state()
+        if (sent !== value) bad(`choosing "${value}" sent brain ${sent}`)
+        if (/rules crowd, not Claude/.test(st.note ?? '') !== claude) bad(`after a failed ${value} run the note reads "${st.note}"`)
+      }
+      if (problems.length === before) lines.push('crowd-live ok: the Crowd select, the 200-person block, brain in the request, the Claude status and its six minutes, the rules-crowd note')
+    } finally {
+      await p6.close()
+    }
+  })
+  // The Fire and scenario card in plain words: the fire's size and growth in place of its type, the fire placed by clicking (with a list as the other way), the people
+  // mix in percent, a hint under each field, and no door overrides. A fresh page in static mode; for what the card sends, live mode is put on by hand and the API
+  // answered by a failing route (the request is all that is read).
+  await step('scenario-card', async () => {
+    const bad = (m) => problems.push(`scenario-card: ${m}`)
+    const before = problems.length
+    const p7 = await ctx.newPage()
+    watchPage(p7, 'scenario-card', /calibration\.json|status of 500|ERR_CONNECTION_REFUSED/)
+    try {
+      const posts = []
+      await p7.route('**/runs', (r) => {
+        if (r.request().method() === 'POST') posts.push(JSON.parse(r.request().postData() ?? '{}'))
+        return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'qa: backend error' }) })
+      })
+      await p7.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await p7.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await p7.evaluate(() => window.__app.setState({ card: 'scenario' }))
+      const card = p7.locator('.scenario')
+      await card.waitFor({ timeout: 10000 })
+      const draft = () => p7.evaluate(() => window.__app.getState().draft)
+      const placing = () => p7.evaluate(() => window.__app.getState().placing)
+      const field = (label) => card.locator('label', { hasText: label })
+      const size = field('Fire size').locator('select')
+      const growth = field('How fast it grows').locator('select')
+      const where = card.locator('.fireplace .where')
+      const mover = card.locator('.fireplace button')
+      const texts = async (loc) => (await loc.allTextContents()).map((t) => t.trim()).join('|')
+      // Plain words, with a hint under the fields; nothing of the old labels, the fire type, the fire room list or the door overrides. (The texts a label or button
+      // holds itself, not the options inside it.)
+      const own = await card.evaluate((el) => [...el.querySelectorAll('label, legend, h4, summary, button')].map((n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join(' ').trim()).filter(Boolean))
+      for (const w of ['Fire size', 'How fast it grows', 'Move fire', 'Choose a room from a list', 'Room', 'Building material (illustrative)', 'Crowd', 'People in the building', 'Who is inside', 'Typical adults', 'Older adults (walk slower)', "Visitors (don't know the building)", 'Variation', 'Alarm sounds after (seconds)'])
+        if (!own.includes(w)) bad(`the card lacks "${w}" (it has ${JSON.stringify(own)})`)
+      for (const w of ['Occupants', 'Seed', 'Alarm time (s)', 'Fire', 'Fire room', 'Door overrides', 'Door…', 'Add', 'Click a floor to place the fire'])
+        if (own.includes(w)) bad(`the card still has "${w}"`)
+      const all = await card.innerText()
+      for (const w of ['Fire in:', 'How big the fire gets.', 'How quickly it reaches its full size.', 'How fast the fire spreads from room to room.', 'Who decides where people go.', 'How many people are inside when the fire starts.', 'Same number, same run; change it to see another possible night.', 'Seconds after the fire starts.'])
+        if (!all.includes(w)) bad(`the card lacks the text "${w}"`)
+      if ((await card.locator('select[aria-label="Door to override"], select option[value="liquid"], select option[value="battery"]').count()) !== 0) bad('the card still has a door override or a fire type select')
+      if ((await texts(size.locator('option'))) !== 'Small, like a wastebasket|Medium, like a kitchen fire|Large, like a burning room') bad(`the Fire size options read "${await texts(size.locator('option'))}"`)
+      if ((await texts(growth.locator('option'))) !== 'Slow|Medium|Fast|Very fast') bad(`the growth options read "${await texts(growth.locator('option'))}"`)
+      // The defaults are today's: a medium (kitchen) fire that grows fast, 160 people in the 85, 10 and 5 percent mix.
+      if ((await size.inputValue()) !== 'medium' || (await growth.inputValue()) !== 'fast') bad(`the fire shows ${await size.inputValue()} and ${await growth.inputValue()}, want medium and fast`)
+      const pct = async () => [await field('Typical adults').locator('input').inputValue(), await field('Older adults').locator('input').inputValue(), await field('Visitors').locator('input').inputValue()].join(',')
+      if ((await pct()) !== '85,10,5' || (await card.locator('fieldset.mix .note').count()) !== 0) bad(`the mix shows ${await pct()} with ${await card.locator('fieldset.mix .note').count()} note(s), want 85,10,5 and none`)
+      // The fire placed by clicking: it says where, "Move fire" turns placing on (and "Cancel" off), and the room list is a collapsed disclosure.
+      if (!/^Fire in: \S.*, Floor \d+/.test(await where.innerText())) bad(`the card says "${await where.innerText()}", want "Fire in: <room>, Floor N"`)
+      if ((await placing()) !== false || (await mover.innerText()) !== 'Move fire') bad(`with a fire placed, placing is ${await placing()} and the button reads "${await mover.innerText()}", want false and "Move fire"`)
+      await mover.click()
+      if ((await placing()) !== true || (await mover.innerText()) !== 'Cancel' || !/Click a room in the building to move the fire\./.test(await where.innerText())) bad(`after "Move fire", placing is ${await placing()}, the button reads "${await mover.innerText()}" and the card says "${await where.innerText()}"`)
+      await mover.click()
+      if ((await placing()) !== false) bad('Cancel did not turn placing off')
+      const disclosure = card.locator('details.roompick')
+      const summary = disclosure.locator('summary')
+      if ((await summary.innerText()) !== 'Choose a room from a list' || (await disclosure.evaluate((d) => d.open)) || (await disclosure.locator('select').isVisible())) bad('the room list is not a collapsed "Choose a room from a list"')
+      await summary.focus()
+      await p7.keyboard.press('Enter')
+      if (!(await disclosure.evaluate((d) => d.open)) || !(await disclosure.locator('select').isVisible())) bad('Enter on the disclosure does not open the room list')
+      const rooms = disclosure.locator('select')
+      const was = (await draft()).fire.room
+      const pick = (await rooms.locator('option').evaluateAll((os) => os.map((o) => o.value))).find((v) => v.includes('|') && v.split('|')[1] !== was)
+      if (!pick) bad('the room list offers no other room')
+      else {
+        await rooms.selectOption(pick)
+        const f = (await draft()).fire
+        if (f.floor !== pick.split('|')[0] || f.room !== pick.split('|')[1] || typeof f.x !== 'number' || typeof f.y !== 'number' || (await placing()) !== false) bad(`choosing ${pick} from the list left the fire at ${JSON.stringify(f)} (placing ${await placing()})`)
+        if (!(await where.innerText()).includes('Fire in:')) bad(`after the list, the card says "${await where.innerText()}"`)
+      }
+      // No fire yet: the card says so and starts placing by itself, also when it is opened that way.
+      await p7.evaluate(() => {
+        const a = window.__app.getState()
+        a.patchDraft({ fire: { type: a.draft.fire.type, start: 0 } })
+      })
+      await p7.waitForFunction(() => window.__app.getState().placing === true, null, { timeout: 5000 }).catch(() => bad('a draft with no fire did not turn placing on'))
+      if (!/^No fire placed yet\./.test(await where.innerText()) || !/Click a room in the building to place the fire\./.test(await where.innerText()) || (await mover.innerText()) !== 'Cancel') bad(`with no fire the card says "${await where.innerText()}" and the button reads "${await mover.innerText()}"`)
+      // With no fire the card's Run is off and says why (the backend refuses a run with no fire), and so are the nav's two Run buttons.
+      const HINT = 'Click a room to place the fire first'
+      const cardRun = p7.locator('.scenario > button.run')
+      const navRun = p7.locator('.ctxbar').getByRole('button', { name: 'Run simulation', exact: true })
+      const offWithHint = async (what, el) => {
+        if (!(await el.isDisabled()) || (await el.getAttribute('title')) !== HINT) bad(`${what} is ${(await el.isDisabled()) ? 'off' : 'on'} with title "${await el.getAttribute('title')}" and no fire, want off with "${HINT}"`)
+      }
+      await offWithHint("the card's Run", cardRun)
+      const hintText = await card.locator('p#sc-hint-run').innerText().catch(() => '')
+      if (hintText !== HINT) bad(`the hint under the card's Run reads "${hintText}", want "${HINT}"`)
+      await cardRun.scrollIntoViewIfNeeded()
+      await shot('scenario-card-nofire', p7)
+      await nav(p7, true)
+      await offWithHint("the toolbar's Run simulation", navRun)
+      await p7.locator('#topnav .menus').getByRole('button', { name: 'Simulation', exact: true }).click()
+      await offWithHint("the Simulation menu's Run simulation", p7.getByRole('menuitem', { name: 'Run simulation', exact: true }))
+      await p7.keyboard.press('Escape')
+      await nav(p7, false)
+      await p7.evaluate(() => window.__app.setState({ card: null, placing: false }))
+      await p7.evaluate(() => window.__app.setState({ card: 'scenario' }))
+      await p7.waitForFunction(() => window.__app.getState().placing === true, null, { timeout: 5000 }).catch(() => bad('opening the card with no fire did not turn placing on'))
+      await card.locator('details.roompick summary').click()
+      await rooms.selectOption(pick ?? '')
+      if ((await placing()) !== false || !(await where.innerText()).startsWith('Fire in:')) bad('a room chosen from the list did not place the fire and end placing')
+      // Placed, the Run buttons are on again and the hint is gone.
+      if (!(await cardRun.isEnabled()) || (await cardRun.getAttribute('title')) !== null || (await card.locator('p#sc-hint-run').count()) !== 0) bad("placing the fire from the list did not turn the card's Run on and its hint off")
+      await nav(p7, true)
+      if (!(await navRun.isEnabled())) bad("placing the fire did not turn the toolbar's Run simulation on")
+      await nav(p7, false)
+      // The fire as the card shows it: the presets the card does not offer, a growth in the backend's other spellings, and a type it has never seen (nothing throws).
+      const shows = async (fire) => {
+        await p7.evaluate((f) => {
+          const a = window.__app.getState()
+          a.patchDraft({ fire: { ...a.draft.fire, ...f } })
+        }, fire)
+        return `${await size.inputValue()}/${await growth.inputValue()}`
+      }
+      for (const [fire, want] of [
+        [{ type: 'battery', growth: undefined }, 'small/ultra-fast'],
+        [{ type: 'liquid', growth: undefined }, 'medium/ultra-fast'],
+        [{ type: 'trash', growth: undefined }, 'small/fast'],
+        [{ type: 'bedroom', growth: undefined }, 'large/medium'],
+        [{ type: 'kitchen', growth: 'instant' }, 'medium/ultra-fast'],
+        [{ type: 'Kitchen', growth: 'Ultra_Fast' }, 'medium/ultra-fast'],
+        [{ type: 'no-such-fire', growth: 'no-such-growth' }, 'medium/fast'],
+        [{ type: 'kitchen', growth: undefined }, 'medium/fast'],
+      ]) {
+        const got = await shows(fire)
+        if (got !== want) bad(`a fire of ${JSON.stringify(fire)} shows ${got}, want ${want}`)
+      }
+      // The people mix: percent on the card, fractions in the scenario, and a note when it does not add up to 100%.
+      const typical = field('Typical adults').locator('input')
+      await typical.fill('60')
+      const mix = (await draft()).occupants.mix
+      if (mix.typical !== 0.6 || mix.older !== 0.1 || mix.visitor !== 0.05) bad(`typing 60 left the mix at ${JSON.stringify(mix)}, want 0.6, 0.1 and 0.05`)
+      const note = (await card.locator('fieldset.mix .note').allInnerTexts()).join(' ')
+      if (note !== 'These add up to 75%. They are scaled to 100% when you run.') bad(`the mix note reads "${note}"`)
+      await typical.fill('85')
+      if ((await card.locator('fieldset.mix .note').count()) !== 0) bad('the mix note stays at 100%')
+      await field('People in the building').locator('input').fill('120')
+      await field('Variation').locator('input').fill('7')
+      await field('Alarm sounds after').locator('input').fill('45')
+      const d = await draft()
+      if (d.occupants.total !== 120 || d.seed !== 7 || d.alarmTime !== 45) bad(`the people, variation and alarm fields wrote ${JSON.stringify({ total: d.occupants.total, seed: d.seed, alarm: d.alarmTime })}, want 120, 7 and 45`)
+      await shot('scenario-card', p7)
+      await axeOn(p7, 'scenario-card', '.app')
+      // What goes to the backend (live mode by hand). Untouched, the fire is today's: kitchen, no growth written. Size and growth write the type and the growth; the
+      // doors the draft carries go with the run though the card no longer shows them.
+      await p7.evaluate(() => {
+        const a = window.__app.getState()
+        a.patchDraft({ fire: { type: 'kitchen', floor: a.draft.fire.floor, room: a.draft.fire.room, x: a.draft.fire.x, y: a.draft.fire.y, start: 0 }, doors: { DSA1: 'propped' } })
+        window.__app.setState({ mode: 'live' })
+      })
+      const run = async () => {
+        const n = posts.length
+        await p7.locator('.scenario > button.run').click()
+        await p7.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
+        return posts.length > n ? posts[posts.length - 1] : null
+      }
+      let sent = await run()
+      if (!sent || sent.fire.type !== 'kitchen' || 'growth' in sent.fire || JSON.stringify(sent.doors) !== '{"DSA1":"propped"}') bad(`an untouched card sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth, doors: sent?.doors })}, want kitchen, no growth and its doors`)
+      await size.selectOption('small')
+      await growth.selectOption('ultra-fast')
+      sent = await run()
+      if (!sent || sent.fire.type !== 'trash' || sent.fire.growth !== 'ultra-fast') bad(`Small and Very fast sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth })}, want trash and ultra-fast`)
+      await size.selectOption('large')
+      sent = await run()
+      if (!sent || sent.fire.type !== 'bedroom' || sent.fire.growth !== 'ultra-fast') bad(`Large sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth })}, want bedroom and the growth kept (ultra-fast)`)
+      await growth.selectOption('slow')
+      await size.selectOption('medium')
+      sent = await run()
+      if (!sent || sent.fire.type !== 'kitchen' || sent.fire.growth !== 'slow') bad(`Slow and Medium sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth })}, want kitchen and slow`)
+      if (problems.length === before) lines.push('scenario-card ok: plain labels and hints, fire size and growth, placing and the room list, the percent mix, no door overrides')
+    } finally {
+      await p7.close()
+    }
+  })
   await tabShots('')
-  await step('cred', async () => {
-    await page.locator('.results [role=tab]').nth(3).click()
+  // The three tabs tell the story fast. "This fire": a Trapped tile (not Remaining), the busiest exit and, for a precomputed pair, its verdict. "All fires": the risk map
+  // first, coloured by people trapped (on while the tab is open, off again after), then "Where people get stuck" with no score or seed badges, no doubled names, no
+  // restated fix lines or "keep clear" fix, then the what-if in relative terms. "Report": the AI summary first, and no copy of the Risk tab.
+  await step('story', async () => {
+    const bad = (m) => problems.push(`story: ${m}`)
+    const ps = await ctx.newPage()
+    watchPage(ps, 'story')
+    try {
+    await ps.goto(`${server.resolvedUrls.local[0]}?qa`)
+    await ps.waitForFunction(() => window.__app?.getState().activeRunKey && window.__app.getState().loading === null, null, { timeout: 60000 })
+    await ps.waitForTimeout(800)
+    await ps.evaluate(() => window.__app.setState((s) => ({ card: null, navOpen: false, sidebarOpen: true, resultsTab: 'results', layers: { ...s.layers, risk: false } })))
+    await ps.waitForTimeout(600)
+    const tiles = (await ps.locator('dl.kpis dt').allInnerTexts()).map((t) => t.trim()).join('|')
+    if (tiles !== 'Evacuated|Trapped|Chokepoints|Evacuation time') bad(`the tiles read "${tiles}", want Evacuated|Trapped|Chokepoints|Evacuation time`)
+    const exitLine = await ps.locator('.overview .exitline').innerText().catch(() => '')
+    if (!/^Busiest exit: .+, \d+ of \d+ people$/.test(exitLine)) bad(`the busiest-exit line reads "${exitLine}"`)
+    lines.push(`story: "${exitLine}"; pair line "${await ps.locator('.overview .pairline').innerText().catch(() => '(none)')}"`)
+    await shot('story-overview', ps)
+    await ps.locator('.results [role=tab]').nth(1).click()
+    await ps.waitForTimeout(1200)
+    const r = await ps.evaluate(() => {
+      const s = window.__app.getState()
+      const w = document.querySelector('.weak')
+      const list = w?.querySelector('ol.spots:not(.fixes)')
+      const head = w?.querySelector('.whatif-headline')
+      const norm = (t) => t.replace(/\s+/g, ' ').trim()
+      return {
+        metric: s.riskMetric,
+        layer: s.layers.risk,
+        select: w?.querySelector('select')?.value ?? null,
+        options: [...(w?.querySelectorAll('select option') ?? [])].map((o) => o.textContent).join('|'),
+        maps: w?.querySelectorAll('.riskmaps figure svg').length ?? 0,
+        floors: s.building.floors.length,
+        heads: [...(w?.querySelectorAll('h4') ?? [])].map((h) => norm(h.textContent ?? '')),
+        badges: list?.querySelectorAll('.badge').length ?? 0,
+        spots: [...(list?.querySelectorAll('button.spot') ?? [])].map((b) => norm(b.innerText)),
+        fixes: [...(w?.querySelectorAll('ol.fixes li') ?? [])].map((li) => norm(li.innerText)),
+        fixDim: w?.querySelectorAll('ol.fixes li .dim').length ?? 0,
+        headline: head ? norm(head.querySelector('.main')?.textContent ?? '') : null,
+        order: list && head ? !!(list.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING) : null,
+        mapFirst: w && list ? !!(w.querySelector('.riskmaps')?.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING) : null,
+        text: norm(w?.innerText ?? ''),
+      }
+    })
+    if (r.metric !== 'riskTrapped' || r.select !== 'riskTrapped') bad(`the risk metric is ${r.metric} (select ${r.select}), want riskTrapped`)
+    if (r.options !== 'People trapped|Time to get 90% out') bad(`the metric options read "${r.options}"`)
+    if (!r.layer) bad('the risk map is not on in the Risk tab')
+    if (r.maps !== r.floors || r.maps === 0) bad(`${r.maps} risk maps in the tab for ${r.floors} floors`)
+    if (!r.mapFirst) bad('the risk map does not come before the weak-spot list')
+    if (!r.heads.includes('Where people get stuck') || r.heads.includes('Weak spots')) bad(`the headings read ${JSON.stringify(r.heads)}`)
+    if (r.badges) bad(`${r.badges} badges in the weak-spot cards (the score, seed and kind ones are gone)`)
+    for (const t of r.spots) {
+      if (/score \d|of \d+ seeds/i.test(t)) bad(`a weak-spot card shows a score or seed badge: "${t}"`)
+      if (/^#\d+ (\w+) \1\b/i.test(t)) bad(`a weak-spot card doubles its name: "${t}"`)
+    }
+    if (r.spots.length === 0) bad('no weak-spot cards')
+    if (r.fixes.some((t) => /keep .* clear/i.test(t))) bad(`a "keep clear" fix is listed: ${JSON.stringify(r.fixes)}`)
+    if (r.fixDim) bad(`${r.fixDim} grey lines under the fixes (each restated its bold line)`)
+    if (r.headline && /person-seconds|smoke dose/i.test(r.headline)) bad(`the what-if headline reads "${r.headline}"`)
+    if (r.headline && r.order === false) bad('the what-if headline comes before the weak-spot list')
+    if (/riskT90|riskTrapped/.test(r.text)) bad('a raw metric id shows in the Risk tab')
+    lines.push(`story: Risk tab, ${r.maps} maps, cards ${JSON.stringify(r.spots.slice(0, 2))}, headline "${r.headline}"`)
+    await shot('story-risk', ps)
+    // The Risk tab (the map, its legend, the cards) in the high-contrast theme: no axe violation either.
+    await ps.evaluate(() => (document.documentElement.dataset.contrast = 'high'))
+    await ps.waitForTimeout(300)
+    await shot('story-risk-contrast', ps)
+    await axeOn(ps, 'story risk high contrast', '.app')
+    await ps.evaluate(() => delete document.documentElement.dataset.contrast)
+    await ps.locator('.results [role=tab]').nth(0).click()
+    await ps.waitForTimeout(400)
+    if (await ps.evaluate(() => window.__app.getState().layers.risk)) bad('the risk map stayed on after leaving the Risk tab')
+    await ps.locator('.results [role=tab]').nth(2).click()
+    await ps.locator('.results .report .aisummary').waitFor({ timeout: 15000 })
+    const rep = await ps.locator('.results .report').evaluate((el) => ({ first: el.firstElementChild?.className ?? '', copy: !!el.querySelector('.whatif-headline, ol.spots') }))
+    if (!/\baisummary\b/.test(rep.first) || rep.copy) bad(`the Report tab starts with "${rep.first}" and ${rep.copy ? 'carries' : 'has no'} copy of the Risk tab`)
+    await shot('story-report', ps)
+    await ps.locator('.results [role=tab]').nth(0).click()
+    } finally {
+      await ps.close()
+    }
+    // A run that is half of a precomputed pair says how the pair came out, from the index numbers: the wood run (people trapped lead) and the Claude crowd run (the time to 90% out).
+    const idx = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    for (const [pick, want] of [
+      [(e) => e.whatIf === 'material' && e.material === 'wood', (e) => `Wood instead of drywall: ${e.metrics.trapped} ${e.metrics.trapped === 1 ? 'person' : 'people'} trapped instead of `],
+      [(e) => e.whatIf === 'brain' && e.brain === 'llm', () => 'Claude crowd instead of rules: '],
+    ]) {
+      const e = idx.runs.find(pick)
+      if (!e?.metrics) continue
+      const pw = await ctx.newPage()
+      watchPage(pw, 'story-pair')
+      try {
+        await pw.goto(`${server.resolvedUrls.local[0]}?qa#b=${e.buildingId}&r=${e.id}`)
+        await pw.waitForFunction((id) => window.__app?.getState().activeRunKey === id && window.__app.getState().loading === null, e.id, { timeout: 60000 })
+        await pw.locator('.overview .pairline').waitFor({ timeout: 15000 })
+        const line = await pw.locator('.overview .pairline b').innerText()
+        if (!line.startsWith(want(e))) bad(`the pair verdict of ${e.id} reads "${line}", want it to start "${want(e)}"`)
+        else lines.push(`story: ${e.id}: "${line}"`)
+      } catch (err) {
+        bad(`the pair verdict of ${e.id}: ${String(err).split('\n')[0]}`)
+      } finally {
+        await pw.close()
+      }
+    }
+  })
+  // What the app no longer has, checked on the screen: the menus and tools, the legend rows and the sidebar tab, and the old links that used to open them.
+  await step('removed', async () => {
+    const bad = (m) => problems.push(`removed: ${m}`)
+    await nav(page, true)
+    const menus = (await page.locator('#topnav .menus > .menuwrap > button').allInnerTexts()).map((t) => t.trim())
+    for (const w of ['Edit', 'Settings']) if (menus.includes(w)) bad(`the ${w} menu is back`)
+    if ((await page.locator('#topnav .menubar').getByRole('button', { name: 'Demo', exact: true }).count()) !== 0) bad('the Demo button is back')
+    const tools = await page.locator('.ctxbar button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label')))
+    for (const w of ['Agent view', 'Save PNG', 'Share', 'What-if', 'Demo']) if (tools.includes(w)) bad(`the ${w} tool is back`)
+    const items = {}
+    for (const menu of ['File', 'View', 'Simulation', 'Analysis']) {
+      await page.locator('#topnav .menus').getByRole('button', { name: menu, exact: true }).click()
+      await page.locator(`[role=menu][aria-label=${menu}]`).waitFor({ timeout: 5000 })
+      items[menu] = (await page.locator(`[role=menu][aria-label=${menu}] .mi-label`).allInnerTexts()).map((t) => t.trim())
+      await page.keyboard.press('Escape')
+    }
+    const all = Object.values(items).flat().join('|')
+    for (const re of [/Share/, /Save 3D view/, /Agent/, /What-if/, /Credibility/, /demo/i]) if (re.test(all)) bad(`a menu item still matches ${re}: ${all}`)
+    // High contrast and Reduce motion are in View, and work from there.
+    for (const w of ['High contrast', 'Reduce motion']) if (!items.View.includes(w)) bad(`View lacks "${w}" (it has ${items.View.join('|')})`)
+    const motion = () => page.evaluate(() => document.documentElement.dataset.motion ?? null)
+    const wasMotion = await motion()
+    await pickMenu(page, 'View', 'Reduce motion')
+    if ((await motion()) === wasMotion) bad('View > Reduce motion did not change data-motion')
+    await pickMenu(page, 'View', 'Reduce motion')
+    if ((await motion()) !== wasMotion) bad('View > Reduce motion did not toggle back')
+    // (Toggling saved the choice: forget it, so the reduced-motion check in a11y still follows the emulated media preference.)
+    await page.evaluate(() => localStorage.removeItem('fes.a11y'))
+    await nav(page, false)
+    const legend = await page.locator('section.legendcard').innerText()
+    if (/Door (open|closed|propped|blocked)/i.test(legend)) bad(`the legend still has door-state rows: "${legend.replace(/\n/g, ' | ')}"`)
+    const tabs = (await page.locator('.results [role=tab]').allInnerTexts()).map((t) => t.trim()).join('|')
+    if (tabs !== 'This fire|All fires|Report') bad(`the sidebar tabs read "${tabs}", want This fire|All fires|Report`)
+    // Old links. tab=cred and tab=credibility open the first tab ("This fire", id results); ?demo is ignored (no tour, no Demo button); a link to a door what-if still loads, as the plain run.
+    const bid = await page.evaluate(() => window.__app.getState().building.id)
+    const base = page.url().split('#')[0].split('?')[0]
+    // `ready` says when the link has been restored: by default once a run is shown and nothing is loading.
+    const opened = async (url, tag, fn, ready = () => !!window.__app?.getState().activeRunKey && window.__app.getState().loading === null, arg = null) => {
+      const pg = await ctx.newPage()
+      watchPage(pg, tag)
+      try {
+        await pg.goto(url)
+        await pg.waitForFunction(ready, arg, { timeout: 60000 })
+        await pg.waitForTimeout(500)
+        await fn(pg)
+      } finally {
+        await pg.close()
+      }
+    }
+    for (const tab of ['cred', 'credibility'])
+      await opened(`${base}?qa#b=${bid}&tab=${tab}`, 'removed-link', async (pg) => {
+        const got = await pg.evaluate(() => ({ tab: window.__app.getState().resultsTab, sel: document.querySelector('.results [role=tab][aria-selected=true]')?.textContent ?? null }))
+        if (got.tab !== 'results' || got.sel !== 'This fire') bad(`a link with tab=${tab} opened ${JSON.stringify(got)}, want the first tab, This fire`)
+      }, () => /(^#|&)tab=results(&|$)/.test(location.hash)) // (the link sync rewrites the hash once the old link has been restored)
+    await opened(`${base}?qa&demo`, 'removed-demo', async (pg) => {
+      const got = await pg.evaluate(() => ({ cap: !!document.querySelector('.tourcap'), tour: typeof window.__tour, nav: window.__app.getState().navOpen }))
+      if (got.cap || got.tour !== 'undefined') bad(`?demo still starts something: ${JSON.stringify(got)}`)
+    })
+    const realIndex = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    const propped = realIndex.runs.find((r) => r.whatIf === 'propped')
+    if (propped)
+      await opened(`${base}?qa#b=${propped.buildingId}&r=${propped.id}&split=1`, 'removed-door-link', async (pg) => {
+        const got = await pg.evaluate(() => ({ key: window.__app.getState().activeRunKey, pair: !!window.__app.getState().runs[window.__app.getState().activeRunKey]?.whatIf, split: document.querySelectorAll('main.center canvas').length }))
+        if (got.key !== propped.id || got.pair || got.split !== 1) bad(`a link to the door what-if ${propped.id} loaded ${JSON.stringify(got)}, want that run alone (the comparison it asks for is ignored)`)
+      }, (id) => window.__app.getState().activeRunKey === id && window.__app.getState().loading === null, propped.id)
+    lines.push('removed ok: no Edit or Settings menu, no Demo, Share, Save PNG, Agent view, Credibility, What if or door-state legend rows; High contrast and Reduce motion are in View; old links load')
+  })
+  // The expand control: the analytics sidebar grows toward the middle of the screen, the charts re-render at the new width, and the 3D view keeps the rest.
+  await step('sidebar-wide', async () => {
+    const bad = (m) => problems.push(`sidebar-wide: ${m}`)
+    await page.evaluate(() => window.__app.setState({ sidebarOpen: true, sidebarWide: false, resultsTab: 'results', card: null, navOpen: false }))
+    await page.locator('#results-panel .recharts-surface').first().waitFor({ timeout: 15000 }).catch(() => {})
+    await page.evaluate(() => document.querySelector('.sb-body')?.scrollTo(0, 0))
+    await page.waitForTimeout(600)
+    const measure = () =>
+      page.evaluate(() => ({
+        side: document.querySelector('#analytics').getBoundingClientRect().width,
+        center: document.querySelector('main.center').getBoundingClientRect().width,
+        chart: document.querySelector('#results-panel .recharts-surface')?.getBoundingClientRect().width ?? 0,
+        vw: window.innerWidth,
+      }))
+    const before = await measure()
+    const expand = page.getByRole('button', { name: 'Expand panel', exact: true })
+    if ((await expand.count()) !== 1 || (await expand.getAttribute('aria-pressed')) !== 'false') bad('there is no "Expand panel" button with aria-pressed=false in the sidebar header')
+    await shot('sidebar-default')
+    await expand.click()
+    await page.waitForTimeout(1000)
+    const after = await measure()
+    const shrink = page.getByRole('button', { name: 'Shrink panel', exact: true })
+    if ((await shrink.count()) !== 1 || (await shrink.getAttribute('aria-pressed')) !== 'true') bad('once expanded the control is not "Shrink panel" with aria-pressed=true')
+    const want = Math.min(760, 0.55 * before.vw)
+    // The sidebar is its column less its 16 px margin.
+    if (after.side < want - 40 || after.side > want + 2) bad(`the expanded sidebar is ${Math.round(after.side)} px wide, want about ${Math.round(want)} (it was ${Math.round(before.side)})`)
+    if (after.center < 400 || after.center > before.center - 300) bad(`the 3D view is ${Math.round(after.center)} px wide expanded and ${Math.round(before.center)} before: it should keep the rest`)
+    if (before.chart > 0 && after.chart < before.chart + 150) bad(`the chart is ${Math.round(after.chart)} px wide expanded and ${Math.round(before.chart)} before: it did not re-render at the new width`)
+    await blankCheck('sidebar-wide')
+    await shot('sidebar-wide')
+    await axeOn(page, 'sidebar-wide', '.app')
+    await page.locator('.results [role=tab]').nth(2).click()
+    await page.waitForTimeout(1200)
+    await shot('sidebar-wide-report')
+    await page.locator('.results [role=tab]').first().click()
+    await shrink.click()
     await page.waitForTimeout(800)
-    const t = await page.locator('#results-panel').innerText()
-    if (!/0\.8 m door/.test(t) || !/Corridor/.test(t) || /EXAMPLE VALUES/.test(t)) problems.push('cred: calibration panel missing 0.8 m door / Corridor, or shows EXAMPLE VALUES')
-    await page.getByText('Known limits').first().scrollIntoViewIfNeeded()
-    await shot('cred-limits')
+    const back = await measure()
+    if (Math.abs(back.side - before.side) > 2 || (await expand.getAttribute('aria-pressed')) !== 'false') bad(`"Shrink panel" left the sidebar ${Math.round(back.side)} px wide, want ${Math.round(before.side)}`)
+    lines.push(`sidebar-wide ok: ${Math.round(before.side)} px to ${Math.round(after.side)} px, the 3D view ${Math.round(before.center)} to ${Math.round(after.center)} px, the chart ${Math.round(before.chart)} to ${Math.round(after.chart)} px`)
   })
   await step('about', async () => {
-    await page.locator('header.topbar button', { hasText: 'About' }).click()
+    await nav(page, true)
+    await page.locator('#topnav .menubar').getByRole('button', { name: 'About', exact: true }).click()
     await page.locator('[role=dialog]').waitFor({ timeout: 10000 })
     await page.waitForTimeout(500)
     await shot('about')
+    const aboutText = await page.locator('.about-card').innerText()
+    if (/Scan to scrub|3-minute demo/.test(aboutText) || (await page.locator('.about-card svg').count()) !== 0) problems.push('about: the QR code, the scan line or the demo button is still in the About card')
     await page.keyboard.press('Escape')
+    await nav(page, false)
   })
   await step('tracer', async () => {
-    await page.locator('.topbar .tabs button', { hasText: 'Tracer' }).click()
+    await nav(page, true)
+    await pickMenu(page, 'File', 'Trace a floor plan')
     await page.locator('.tr-page').waitFor({ timeout: 15000 })
     await page.waitForTimeout(500)
     await shot('tracer')
     cur = 'tracer→replay'
-    await page.locator('.topbar .tabs button', { hasText: 'Replay' }).click()
+    await page.locator('header.topbar button', { hasText: 'Back to 3D replay' }).click()
     await page.locator('main.center canvas').first().waitFor({ timeout: 15000 })
-  })
-  await step('scene4', async () => {
-    await page.evaluate(() => window.__tour.getState().go(3, false))
-    await page.waitForTimeout(4000)
-    await shot('scene4')
-    await blankCheck('scene4')
-    await page.evaluate(() => window.__tour.getState().stop())
+    await nav(page, false)
   })
   await step('deeplink', async () => {
     await page.evaluate(() => {
-      window.__tour.getState().stop()
       const a = window.__app
       a.setState({ split: false, resultsTab: 'risk', explode: 0.5, topView: a.getState().topView + 1 })
       a.setState({ layers: { ...a.getState().layers, heatmap: true, labels: false } })
@@ -244,7 +1585,7 @@ try {
       await p2.goto(url)
       await p2.waitForFunction(() => {
         const g = window.__app?.getState()
-        return g && g.resultsTab === 'risk' && g.activeRunKey && Math.abs(window.__clock.getState().t - 42) < 0.11
+        return g && g.resultsTab === 'risk' && g.sidebarOpen === true && g.activeRunKey && Math.abs(window.__clock.getState().t - 42) < 0.11
       }, null, { timeout: 30000, polling: 250 })
       await p2.waitForTimeout(2000)
       const b = await p2.evaluate(() => ({ pose: { p: [...window.__pose.p], t: [...window.__pose.t] }, explode: window.__app.getState().explode, heat: window.__app.getState().layers.heatmap, labels: window.__app.getState().layers.labels }))
@@ -256,20 +1597,42 @@ try {
     } finally {
       await p2.close()
     }
+    // The floor view travels in the link: v=side, v=ghost with the focus floor f, and f alone for one floor.
+    const bid = await page.evaluate(() => window.__app.getState().building.id)
+    const base = page.url().split('#')[0].split('?')[0] + '?qa#b=' + bid
+    for (const [tail, mode, focus] of [['&v=side', 'side', null], ['&v=ghost&f=F2', 'ghost', 'F2'], ['&f=F2', 'single', 'F2']]) {
+      const pv = await ctx.newPage()
+      pv.on('console', (m) => {
+        if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[deeplink-view] ${m.text()}`)
+      })
+      pv.on('pageerror', (e) => errors.push(`[deeplink-view] ${String(e)}`))
+      try {
+        await pv.goto(base + tail)
+        await pv.waitForFunction((m) => window.__app?.getState().viewMode === m, mode, { timeout: 45000, polling: 250 })
+        const got = await pv.evaluate(() => ({ mode: window.__app.getState().viewMode, focus: window.__app.getState().focusFloor }))
+        if (got.focus !== focus) problems.push(`deeplink: ${tail} restored focusFloor ${got.focus}, want ${focus}`)
+        await pv.waitForTimeout(1500)
+        if (mode !== 'single') {
+          await pv.screenshot({ path: join(out, `deeplink-${mode}.png`) })
+          shots.push(`deeplink-${mode}`)
+        }
+      } catch (e) {
+        problems.push(`deeplink: opening ${tail} did not restore the ${mode} view: ${String(e).split('\n')[0]}`)
+      } finally {
+        await pv.close()
+      }
+    }
     lines.push('deeplink ok')
-  })
-  await step('share', async () => {
-    await page.locator('header.topbar button', { hasText: 'Share' }).click()
-    await page.locator('[role=dialog][aria-label="Share this view"]').waitFor({ timeout: 10000 })
-    await page.waitForTimeout(500)
-    await shot('share')
-    await page.keyboard.press('Escape')
   })
   await step('print', async () => {
     await page.locator('.results [role=tab]').nth(2).click()
     await page.locator('.results button', { hasText: 'Print report' }).first().click()
     await page.locator('.printreport').waitFor({ timeout: 15000 })
     await page.waitForTimeout(1000)
+    // The demo card of the main page has an AI summary only when its markdown does.
+    const demoCard = readFileSync(join(root, 'dist', 'demo', 'report-example-office.md'), 'utf8')
+    const hasSummary = /^#{2,3}[ \t]+AI summary \(Claude\)/m.test(demoCard)
+    if (((await page.locator('.printreport .aisummary').count()) > 0) !== hasSummary) problems.push(`print: the printed card ${hasSummary ? 'lacks' : 'shows'} an AI summary, its markdown ${hasSummary ? 'has' : 'has no'} one`)
     await shot('print-view')
     await page.emulateMedia({ media: 'print' })
     await page.waitForTimeout(500)
@@ -280,68 +1643,118 @@ try {
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !document.querySelector('.printreport'), null, { timeout: 10000 })
   })
-  await step('save-png', async () => {
-    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.locator('.toolbar3d button', { hasText: 'Save PNG' }).click()])
-    const f = join(out, 'save-3d.png')
-    await dl.saveAs(f)
-    const share = await changedShare(readFileSync(f).toString('base64'))
-    lines.push(`save-3d.png: changed ${(share * 100).toFixed(1)}%`)
-    if (share < 0.01) problems.push('blank Save PNG')
+  // The report card's AI summary: a card whose markdown begins with "## AI summary (Claude)" shows it set apart (heading, the text, an "AI-written" note) in the Report
+  // tab and in the printed report. The card of the main page (a template) has none, and prints as before (the print step above checks that).
+  await step('ai-summary', async () => {
+    const bad = (m) => problems.push(`ai-summary: ${m}`)
+    const para = 'The lobby and the east stair exit are where the queues form. Claude wrote this from the simulation numbers. It is three sentences long.'
+    const pa = await ctx.newPage()
+    watchPage(pa, 'ai-summary')
+    try {
+      await pa.route('**/demo/report-example-office.md', async (route) => {
+        const res = await route.fetch()
+        await route.fulfill({ status: 200, contentType: 'text/markdown; charset=utf-8', body: `## AI summary (Claude)\n\n${para}\n\n${await res.text()}` })
+      })
+      await pa.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await pa.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await pa.locator('.results [role=tab]').nth(2).click()
+      const box = pa.locator('.results .aisummary')
+      await box.waitFor({ timeout: 15000 })
+      if ((await box.locator('h4').allInnerTexts()).join('|') !== 'AI summary (Claude)') bad('the Report tab heading is not an h4 "AI summary (Claude)"')
+      // The AI summary comes first: nothing of the pack, the what-ifs or the fixes (the Risk tab's) is in front of it or anywhere in the tab.
+      const first = await pa.locator('.results .report > *').first().getAttribute('class')
+      if (!/\baisummary\b/.test(first ?? '')) bad(`the Report tab starts with class "${first}", want the AI summary first`)
+      const dup = await pa.locator('.results .report').evaluate((el) => ({ pack: !!el.querySelector('.whatif-headline, .fixes, ol.spots'), h4: [...el.querySelectorAll('h4')].map((h) => h.textContent).filter((t) => /Measured fixes/.test(t ?? '')).length }))
+      if (dup.pack || dup.h4) bad(`the Report tab still carries a copy of the Risk tab: ${JSON.stringify(dup)}`)
+      if ((await box.locator('p').first().innerText()) !== para) bad(`the Report tab paragraph reads "${await box.locator('p').first().innerText()}"`)
+      if (!/AI-written/.test(await box.locator('.aisummary-note').innerText())) bad('the Report tab summary lacks the "AI-written" note')
+      if (!(await pa.locator('.results .report').innerText()).includes('Report card: Example office')) bad('the card below the AI summary is gone')
+      await box.scrollIntoViewIfNeeded()
+      await shot('ai-summary', pa)
+      await axeOn(pa, 'ai-summary', '.app')
+      await pa.locator('.results button', { hasText: 'Print report' }).first().click()
+      const pbox = pa.locator('.printreport .aisummary')
+      await pbox.waitFor({ timeout: 15000 })
+      if ((await pbox.locator('h3').allInnerTexts()).join('|') !== 'AI summary (Claude)') bad('the printed heading is not an h3 "AI summary (Claude)"')
+      if ((await pbox.locator('p').first().innerText()) !== para) bad(`the printed paragraph reads "${await pbox.locator('p').first().innerText()}"`)
+      if (!/AI-written/.test(await pbox.locator('.aisummary-note').innerText())) bad('the printed summary lacks the "AI-written" note')
+      await pbox.scrollIntoViewIfNeeded()
+      await shot('ai-summary-print', pa)
+      await axeOn(pa, 'ai-summary-print', '.printreport')
+    } finally {
+      await pa.close()
+    }
   })
   await step('a11y', async () => {
-    const axePath = join(root, 'node_modules', 'axe-core', 'axe.min.js')
-    let haveAxe = existsSync(axePath)
-    if (haveAxe) await page.addScriptTag({ path: axePath })
-    else lines.push('axe skipped: not installed')
-    const runAxe = async (label, sel) => {
-      if (!haveAxe) return
-      const res = await page.evaluate(
-        async (sel) => {
-          const r = await window.axe.run(document.querySelector(sel), { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })
-          return r.violations.map((v) => ({ id: v.id, impact: v.impact, target: String(v.nodes[0]?.target?.[0] ?? ''), n: v.nodes.length }))
-        },
-        sel,
-      )
-      for (const v of res) {
-        if ((v.impact === 'serious' || v.impact === 'critical') && !AXE_ALLOW.includes(v.id)) problems.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
-        else lines.push(`axe ${label}: ${v.id} (${v.impact}) x${v.n}, first ${v.target}`)
-      }
-      lines.push(`axe ${label}: ${res.length} violations`)
-    }
+    const runAxe = (label, sel) => axeOn(page, label, sel)
     await page.evaluate(() => {
-      window.__tour.getState().stop()
       window.__clock.setState({ playing: false })
     })
-    const names = ['results', 'risk', 'report', 'cred']
+    const names = ['results', 'risk', 'report']
     for (let i = 0; i < names.length; i++) {
       await page.locator('.results [role=tab]').nth(i).click()
       await page.waitForTimeout(600)
       await runAxe(`tab ${names[i]}`, '.app')
     }
-    await page.locator('header.topbar button', { hasText: 'About' }).click()
+    await nav(page, true)
+    await page.locator('#topnav .menubar').getByRole('button', { name: 'About', exact: true }).click()
     await page.locator('[role=dialog]').waitFor({ timeout: 10000 })
     await runAxe('about', '[role=dialog]')
     await page.keyboard.press('Escape')
     await page.locator('.results [role=tab]').first().click()
+    // The new surfaces: the nav, two menus, the two cards and Focus mode.
+    await runAxe('nav open', '.app')
+    for (const menu of ['View', 'Simulation']) {
+      await page.locator('#topnav .menus').getByRole('button', { name: menu, exact: true }).click()
+      await page.locator(`[role=menu][aria-label=${menu}]`).waitFor({ timeout: 5000 })
+      await runAxe(`${menu} menu`, '.app')
+      await page.keyboard.press('Escape')
+    }
+    await nav(page, false)
+    for (const card of ['scenario', 'layers', 'visibility']) {
+      await page.evaluate((c) => window.__app.setState({ card: c }), card)
+      await page.waitForTimeout(400)
+      await runAxe(`card ${card}`, '.app')
+    }
+    await page.evaluate(() => window.__app.setState({ card: null, colorBy: 'type' }))
+    await page.waitForTimeout(400)
+    await runAxe('colors by type', '.app')
+    await page.evaluate(() => window.__app.setState({ colorBy: 'status' }))
+    await page.evaluate(() => window.__app.setState({ card: null, navOpen: false, sidebarOpen: false }))
+    await page.waitForTimeout(300)
+    await runAxe('focus mode', '.app')
+    await page.evaluate(() => window.__app.setState({ sidebarOpen: true }))
+    await page.waitForTimeout(300)
 
     await page.evaluate(() => document.body.focus())
     await page.evaluate(() => document.activeElement && document.activeElement.blur())
-    for (let i = 1; i <= 60; i++) {
-      await page.keyboard.press('Tab')
-      const bad = await page.evaluate(() => {
+    const unnamed = () =>
+      page.evaluate(() => {
         const el = document.activeElement
         if (!el || el === document.body) return null
         const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim() || (el.labels && el.labels.length ? el.labels[0].textContent.trim() : '') || (el.getAttribute('aria-labelledby') ? 'x' : '')
         return name ? null : `${el.tagName.toLowerCase()}.${el.className}`
       })
+    for (let i = 1; i <= 60; i++) {
+      await page.keyboard.press('Tab')
+      const bad = await unnamed()
       if (bad) problems.push(`tab ${i}: focused element has no accessible name: ${bad}`)
       if (i === 8) await shot('a11y-focus')
     }
+    // And through the open nav: the menu buttons, the building select and every toolbar button need names too.
+    await nav(page, true)
+    await page.evaluate(() => document.getElementById('nav-toggle').focus())
+    for (let i = 1; i <= 26; i++) {
+      await page.keyboard.press('Tab')
+      const bad = await unnamed()
+      if (bad) problems.push(`nav tab ${i}: focused element has no accessible name: ${bad}`)
+    }
+    await nav(page, false)
 
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.reload()
     await page.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
-    await page.evaluate(() => window.__tour.getState().go(0, false))
+    await page.evaluate(() => window.__app.setState({ autoRotate: true }))
     await page.waitForTimeout(3000)
     const c = page.locator('main.center canvas').first()
     const a = await c.screenshot()
@@ -349,21 +1762,340 @@ try {
     const b = await c.screenshot()
     if (!a.equals(b)) problems.push('motion despite reduced motion')
     await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.evaluate(() => {
-      window.__tour.getState().stop()
-      window.__app.setState({ autoRotate: false })
-    })
+    await page.evaluate(() => window.__app.setState({ autoRotate: false }))
 
-    await page.locator('header.topbar button', { hasText: 'Display' }).click()
-    await page.locator('#display-panel label', { hasText: 'High contrast' }).click()
+    // High contrast through the View menu; the shot is of the collapsed layout.
+    await nav(page, true)
+    await pickMenu(page, 'View', 'High contrast')
+    await nav(page, false)
     await page.waitForTimeout(500)
     await shot('contrast')
-    await page.locator('#display-panel label', { hasText: 'High contrast' }).click()
-    await page.keyboard.press('Escape')
+    await runAxe('high contrast', '.app')
+    await nav(page, true)
+    await pickMenu(page, 'View', 'High contrast')
+    await nav(page, false)
+    if ((await page.evaluate(() => document.documentElement.dataset.contrast)) === 'high') problems.push('High contrast did not turn off')
+  })
+  // The split view and the camera: the building fills the viewer at laptop sizes in every floor view (and again after a resize and after the analytics
+  // panel is hidden), Reset camera resets both panes after one was dragged, each pane says which side it is and what it runs with an Edit button
+  // that opens that side's settings, static mode picks saved runs per side, and the right side can be on another building (and run on it, live).
+  await step('split', async () => {
+    const bad = (m) => problems.push(`split: ${m}`)
+    const before = problems.length
+    const sp = await ctx.newPage()
+    watchPage(sp, 'split', /calibration\.json|status of 4\d\d|status of 5\d\d|ERR_CONNECTION_REFUSED/)
+    try {
+      await sp.setViewportSize({ width: 1366, height: 768 })
+      await sp.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await sp.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await sp.waitForTimeout(2500)
+      // Where the building's outline lands in the viewer, from the camera the page publishes: its box in pixels, and the viewer's own.
+      const outline = () =>
+        sp.evaluate(() => {
+          const s = window.__app.getState()
+          const r = document.querySelector('main.center canvas').getBoundingClientRect()
+          const w = r.width
+          const h = r.height
+          const pts = window.__geo.framePoints(s.building, s.visibleFloors?.length === 1 ? s.visibleFloors : null, s.explode, s.viewMode)
+          const { p, t } = window.__pose
+          let f = [t[0] - p[0], t[1] - p[1], t[2] - p[2]]
+          const fl = Math.hypot(...f)
+          f = f.map((v) => v / fl)
+          let rx = -f[2]
+          let rz = f[0]
+          const rl = Math.hypot(rx, rz)
+          rx /= rl
+          rz /= rl
+          const v = [-rz * f[1], rz * f[0] - rx * f[2], rx * f[1]]
+          const tanV = Math.tan((25 * Math.PI) / 180)
+          const tanH = (tanV * w) / h
+          let x0 = 1e9
+          let x1 = -1e9
+          let y0 = 1e9
+          let y1 = -1e9
+          for (let i = 0; i < pts.length; i += 3) {
+            const px = pts[i] - p[0]
+            const py = pts[i + 1] - p[1]
+            const pz = pts[i + 2] - p[2]
+            const z = px * f[0] + py * f[1] + pz * f[2]
+            const nx = (px * rx + pz * rz) / (z * tanH)
+            const ny = (px * v[0] + py * v[1] + pz * v[2]) / (z * tanV)
+            x0 = Math.min(x0, nx)
+            x1 = Math.max(x1, nx)
+            y0 = Math.min(y0, ny)
+            y1 = Math.max(y1, ny)
+          }
+          const tags = [...document.querySelectorAll('.floortag')].map((e) => e.getBoundingClientRect().left - r.left)
+          return { w, h, x0: ((x0 + 1) / 2) * w, x1: ((x1 + 1) / 2) * w, y0: ((1 - y1) / 2) * h, y1: ((1 - y0) / 2) * h, tagLeft: tags.length ? Math.min(...tags) : null }
+        })
+      const checkFill = async (name) => {
+        // The camera flies for up to two seconds and a slow machine takes a while to notice a resize: wait until it has settled (or nine seconds).
+        let o = await outline()
+        for (let i = 0; i < 22 && (Math.max((o.x1 - o.x0) / (o.w - 80), (o.y1 - o.y0) / o.h) < 0.84 || o.x0 < -2 || o.x1 > o.w + 2 || o.y0 < -2 || o.y1 > o.h + 2 || (o.tagLeft !== null && o.tagLeft < -2)); i++) {
+          await sp.waitForTimeout(400)
+          o = await outline()
+        }
+        // The pills ("Floor 2") hang 80 px left of the building's corner: that much of the viewer is theirs.
+        const fillX = (o.x1 - o.x0) / (o.w - 80)
+        const fillY = (o.y1 - o.y0) / o.h
+        const fill = Math.max(fillX, fillY)
+        lines.push(`split fit ${name}: viewer ${Math.round(o.w)}x${Math.round(o.h)}, the building fills ${(fillX * 100).toFixed(0)}% of the width and ${(fillY * 100).toFixed(0)}% of the height`)
+        if (fill < 0.84) bad(`${name}: the building fills only ${(fill * 100).toFixed(0)}% of the viewer, want about 91%`)
+        if (o.x0 < -2 || o.x1 > o.w + 2 || o.y0 < -2 || o.y1 > o.h + 2) bad(`${name}: the building runs out of the viewer (${Math.round(o.x0)}..${Math.round(o.x1)} of ${Math.round(o.w)}, ${Math.round(o.y0)}..${Math.round(o.y1)} of ${Math.round(o.h)})`)
+        if (o.tagLeft !== null && o.tagLeft < -2) bad(`${name}: a floor pill is cut off at the left edge (${Math.round(o.tagLeft)} px)`)
+      }
+      // 1. Every floor view at 1366x768 and 1920x1080.
+      for (const [w, h] of [[1366, 768], [1920, 1080]]) {
+        await sp.setViewportSize({ width: w, height: h })
+        await sp.waitForTimeout(1200)
+        for (const [mode, floor] of [['stacked'], ['single', 'F2'], ['side'], ['ghost', 'F2']]) {
+          await sp.evaluate(([m, f]) => window.__app.getState().setViewMode(m, f), [mode, floor])
+          await sp.waitForTimeout(3200)
+          await checkFill(`${w}x${h} ${mode}`)
+          if (w === 1366) await shot(`split-fit-${mode}`, sp)
+        }
+      }
+      // 2. A window resize alone (no view change) frames the building again, and so does hiding the analytics panel.
+      await sp.evaluate(() => window.__app.getState().setViewMode('stacked'))
+      await sp.waitForTimeout(3000)
+      await sp.setViewportSize({ width: 1366, height: 768 })
+      await sp.waitForTimeout(1800)
+      await checkFill('after a resize to 1366x768')
+      await sp.getByRole('button', { name: 'Hide analytics' }).click()
+      await sp.waitForTimeout(1800)
+      await checkFill('analytics hidden')
+      await sp.getByRole('button', { name: 'Show analytics' }).click()
+      await sp.waitForTimeout(1800)
+      await checkFill('analytics shown again')
+      // 3. Split: rules against the Claude crowd of the loaded building (a precomputed pair).
+      await sp.evaluate(() => window.__clock.setState({ playing: false }))
+      await sp.evaluate(() => window.__app.getState().showBrainPair())
+      await sp.waitForFunction(() => window.__app.getState().split && window.__app.getState().pairBusy === null && document.querySelectorAll('main.center canvas').length === 2, null, { timeout: 60000 })
+      await sp.waitForTimeout(2500)
+      const heads = await sp.locator('.pane-head').evaluateAll((els) => els.map((e) => ({ side: e.querySelector('.pane-side')?.textContent, what: e.querySelector('.pane-what')?.textContent ?? '', edit: e.querySelector('.pane-edit')?.textContent?.trim() })))
+      if (heads.map((h) => h.side).join('|') !== 'Left|Right') bad(`the panes are headed "${heads.map((h) => h.side).join('|')}", want Left|Right`)
+      if (heads.some((h) => h.edit !== 'Edit')) bad('a pane has no Edit button')
+      for (const h of heads) for (const part of ['Fire in', 'Drywall', 'crowd', 'people']) if (!h.what.includes(part)) bad(`a pane header lacks "${part}": "${h.what}"`)
+      if (!heads[0]?.what.includes('Rules crowd') || !heads[1]?.what.includes('Claude crowd')) bad(`the headers read "${heads.map((h) => h.what).join(' / ')}", want the rules on the left and the Claude crowd on the right`)
+      await shot('split-headers', sp)
+      // 4. Reset camera: drag the left pane, the right follows (they are linked), then Reset camera brings both back.
+      const poses = () => sp.evaluate(() => ({ L: { p: [...window.__panePoses.L.p], t: [...window.__panePoses.L.t] }, R: { p: [...window.__panePoses.R.p], t: [...window.__panePoses.R.t] } }))
+      const gap = (a, b) => Math.hypot(...a.p.map((v, i) => v - b.p[i]), ...a.t.map((v, i) => v - b.t[i]))
+      const ov = await poses()
+      const box = await sp.locator('.pane[data-side=L] canvas').boundingBox()
+      await sp.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await sp.mouse.down()
+      await sp.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 30, { steps: 30 })
+      await sp.mouse.up()
+      // (the camera coasts on for a moment after the drag, and the other pane follows it)
+      await sp.waitForTimeout(5000)
+      const dragged = await poses()
+      const near = 0.025 * Math.hypot(...ov.L.p.map((v, i) => v - ov.L.t[i]))
+      if (gap(dragged.L, ov.L) < 1) bad('dragging the left pane did not move its camera')
+      if (gap(dragged.L, dragged.R) > near) bad(`the panes are not linked: after a drag they are ${gap(dragged.L, dragged.R).toFixed(2)} apart`)
+      await nav(sp, true)
+      await sp.locator('.ctxbar').getByRole('button', { name: 'Reset camera', exact: true }).click()
+      await nav(sp, false)
+      await sp.waitForTimeout(4500)
+      const reset = await poses()
+      if (gap(reset.L, ov.L) > near) bad(`Reset camera left the left pane ${gap(reset.L, ov.L).toFixed(2)} from its overview`)
+      if (gap(reset.R, ov.R) > near) bad(`Reset camera left the right pane ${gap(reset.R, ov.R).toFixed(2)} from its overview (it only reset the left one)`)
+      if (gap(reset.L, reset.R) > near) bad(`after Reset camera the panes are ${gap(reset.L, reset.R).toFixed(2)} apart`)
+      // ... and the pair still follows after a drag in the right pane.
+      const boxR = await sp.locator('.pane[data-side=R] canvas').boundingBox()
+      await sp.mouse.move(boxR.x + boxR.width / 2, boxR.y + boxR.height / 2)
+      await sp.mouse.down()
+      await sp.mouse.move(boxR.x + boxR.width / 2 - 70, boxR.y + boxR.height / 2 + 20, { steps: 30 })
+      await sp.mouse.up()
+      await sp.waitForTimeout(5000)
+      const again = await poses()
+      if (gap(again.R, reset.R) < 1 || gap(again.L, again.R) > near) bad(`after a reset, a drag in the right pane left the panes ${gap(again.L, again.R).toFixed(2)} apart`)
+      // 5. Edit opens that side's settings; static mode picks saved runs per side and says new settings need live mode.
+      await sp.locator('.pane[data-side=L] .pane-edit').click()
+      const card = sp.locator('section#card-scenario')
+      await card.waitFor({ timeout: 5000 })
+      if (!/Left side: fire and scenario/.test((await card.getAttribute('aria-label')) ?? '')) bad(`the left Edit opened "${await card.getAttribute('aria-label')}"`)
+      for (const want of ['Fire size', 'How fast it grows', 'Building material', 'Crowd', 'People in the building', 'Variation', 'Alarm sounds after', 'Saved run (left side)']) if (!(await card.innerText()).includes(want)) bad(`the left card lacks "${want}"`)
+      if (!/Static mode shows saved runs only/.test(await card.innerText())) bad('the side card does not say static mode shows saved runs only (new settings need live mode)')
+      await shot('split-edit-left', sp)
+      await sp.locator('.pane[data-side=R] .pane-edit').click()
+      await sp.waitForFunction(() => /^Right side: fire and scenario/.test(document.querySelector('section#card-scenario')?.getAttribute('aria-label') ?? ''), null, { timeout: 5000 })
+      if (!(await sp.locator('section#card-scenario').getByLabel('Building (right side)').count())) bad('the right card has no building picker')
+      // A saved run for the right side: another fire room, shown in the right pane (not the left run).
+      const sel = sp.locator('section#card-scenario').getByLabel('Saved run (right side)')
+      const opts = await sel.locator('option:not([disabled])').evaluateAll((os) => os.map((o) => ({ v: o.value, t: o.textContent })))
+      const cur = await sel.inputValue()
+      const next = opts.find((o) => o.v !== cur && /L1|kitchen/i.test(o.v + o.t)) ?? opts.find((o) => o.v !== cur)
+      if (!next) bad('the right side lists no other saved run')
+      else {
+        await sel.selectOption(next.v)
+        await sp.waitForFunction((k) => window.__app.getState().splitRight === k, next.v, { timeout: 20000 })
+        const cap = await sp.locator('.pane[data-side=R] .pane-caption').innerText()
+        lines.push(`split: the right side now shows "${cap}"`)
+      }
+      // 6. The right side on another building (example-office-plus when it is there, else the office).
+      const ids = await sp.evaluate(() => window.__app.getState().buildings.map((b) => b.id))
+      const index = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+      const saved = (id) => index.runs.some((r) => r.buildingId === id && r.whatIf === null)
+      const other = ids.find((i) => i === 'example-office-plus' && saved(i)) ?? ids.find((i) => i !== 'example-office' && saved(i))
+      if (!other) bad('the building list has no second building')
+      else {
+        await sp.locator('section#card-scenario').getByLabel('Building (right side)').selectOption(other)
+        await sp.waitForFunction((id) => window.__app.getState().rightBuilding?.id === id && window.__app.getState().pairBusy === null, other, { timeout: 60000 })
+        await sp.waitForTimeout(2500)
+        const st = await sp.evaluate(() => {
+          const a = window.__app.getState()
+          const r = a.runs[a.splitRight]
+          return { right: r?.run.buildingId, left: a.runs[a.splitLeft]?.run.buildingId, order: a.runOrder.length, canvases: document.querySelectorAll('main.center canvas').length, what: document.querySelector('.pane[data-side=R] .pane-what b')?.textContent, floors: a.rightBuilding?.floors.length }
+        })
+        if (st.right !== other) bad(`the right pane's run is on "${st.right}", want ${other}`)
+        if (st.left === other) bad('the left pane moved to the right building too')
+        if (st.canvases !== 2) bad(`${st.canvases} canvases with two buildings, want 2`)
+        const rb = await sp.evaluate(() => window.__app.getState().rightBuilding?.name)
+        if (st.what !== rb) bad(`the right header names "${st.what}", want ${rb}`)
+        await blankCheck('split-two-buildings', sp)
+        await shot('split-two-buildings', sp)
+        lines.push(`split: two buildings, left ${st.left} and right ${st.right} (${st.floors} floors), the loaded building's runs stay at ${st.order}`)
+        // Reset camera still resets both, each to its own overview.
+        await nav(sp, true)
+        await sp.locator('.ctxbar').getByRole('button', { name: 'Reset camera', exact: true }).click()
+        await nav(sp, false)
+        await sp.waitForTimeout(3500)
+        await blankCheck('split-two-buildings-reset', sp)
+        // Live: Run on the right side posts the scenario for the right building, and its run lands in the right pane only.
+        const posts = []
+        await sp.route('**/runs', (r) => {
+          if (r.request().method() !== 'POST') return r.fallback()
+          posts.push(JSON.parse(r.request().postData() ?? '{}'))
+          return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runId: 'qa-split' }) })
+        })
+        const fileOf = readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8')
+        const entry = JSON.parse(fileOf).runs.find((r) => r.buildingId === other && r.whatIf === null)
+        if (!entry) bad(`the demo index has no baseline run for ${other}`)
+        else {
+          await sp.route('**/runs/qa-split', (r) => r.fulfill({ path: join(root, 'dist', 'demo', entry.file), contentType: 'application/json' }))
+          const leftBefore = await sp.evaluate(() => window.__app.getState().splitLeft)
+          await sp.evaluate(() => window.__app.setState({ mode: 'live', running: null }))
+          await sp.locator('.pane[data-side=R] .pane-edit').click()
+          await sp.waitForFunction(() => /^Right side/.test(document.querySelector('section#card-scenario')?.getAttribute('aria-label') ?? ''), null, { timeout: 5000 })
+          const run = sp.locator('section#card-scenario button.run')
+          if (!/Run right side/.test(await run.innerText())) bad(`the card's Run button reads "${await run.innerText()}", want "Run right side"`)
+          if (!(await sp.locator('section#card-scenario').getByLabel('Building material', { exact: false }).first().isEnabled())) bad('the material select is off in live mode')
+          // With no fire on the right side's scenario its Run is off and says to click a room first; once a fire is placed it runs.
+          const rightFire = await sp.evaluate(() => {
+            const a = window.__app.getState()
+            return JSON.parse(JSON.stringify((a.rightDraft ?? a.draft).fire))
+          })
+          await sp.evaluate(() => window.__app.getState().patchRightDraft({ fire: { type: 'kitchen', start: 0 } }))
+          await sp.waitForFunction(() => document.querySelector('section#card-scenario button.run')?.disabled === true, null, { timeout: 5000 }).catch(() => bad('the right side Run stays on with no fire placed'))
+          const rightHint = await sp.locator('section#card-scenario p#sc-hint-run').innerText().catch(() => '')
+          if ((await run.getAttribute('title')) !== 'Click a room to place the fire first' || rightHint !== 'Click a room to place the fire first') bad(`with no fire the right side Run has title "${await run.getAttribute('title')}" and hint "${rightHint}", want "Click a room to place the fire first"`)
+          if (rightFire.floor && rightFire.room) await sp.evaluate((fire) => { window.__app.getState().patchRightDraft({ fire }); window.__app.setState({ placing: false }) }, rightFire)
+          else {
+            // This right building has no batch, so no fire of its own to put back: place one from the room list, as a user would.
+            const list = sp.locator('section#card-scenario details.roompick')
+            await list.locator('summary').click()
+            const pickRoom = await list.locator('select option').evaluateAll((os) => os.map((o) => o.value).find((v) => v.includes('|')))
+            await list.locator('select').selectOption(pickRoom)
+          }
+          await sp.waitForFunction(() => document.querySelector('section#card-scenario button.run')?.disabled === false, null, { timeout: 5000 }).catch(() => bad('the right side Run stays off once its fire is placed'))
+          await run.click()
+          await sp.waitForFunction(() => window.__app.getState().running === null && /^ui-/.test(window.__app.getState().splitRight ?? ''), null, { timeout: 30000 })
+          if (posts.length !== 1 || posts[0].buildingId !== other) bad(`the right Run posted ${JSON.stringify(posts.map((p) => p.buildingId))}, want one scenario for ${other}`)
+          const after = await sp.evaluate(() => {
+            const a = window.__app.getState()
+            return { left: a.splitLeft, order: a.runOrder.length, rb: a.rightBuilding?.id, runBuilding: a.runs[a.splitRight]?.run.buildingId }
+          })
+          if (after.left !== leftBefore) bad(`the right Run changed the left pane (${leftBefore} to ${after.left})`)
+          if (after.rb !== other) bad(`the right pane left ${other} for ${after.rb}`)
+          lines.push(`split: Run right side posted buildingId ${posts[0]?.buildingId}; the left pane kept ${after.left}`)
+        }
+      }
+      // 7. A building with no saved run (example-office-plus until its runs are precomputed): static mode says so, live mode runs it (with the fire it picks).
+      const bare = ids.find((i) => i === 'example-office-plus' && !saved(i))
+      if (bare) {
+        await sp.evaluate(() => window.__app.setState({ mode: 'live', running: null, pairError: null }))
+        const posts2 = []
+        await sp.route('**/runs', (r) => {
+          if (r.request().method() !== 'POST') return r.fallback()
+          posts2.push(JSON.parse(r.request().postData() ?? '{}'))
+          return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runId: 'qa-plus' }) })
+        })
+        const base = index.runs.find((r) => r.buildingId === 'example-office' && r.whatIf === null)
+        await sp.route('**/runs/qa-plus', (r) => r.fulfill({ path: join(root, 'dist', 'demo', base.file), contentType: 'application/json' }))
+        await sp.locator('.pane[data-side=R] .pane-edit').click()
+        await sp.waitForFunction(() => /^Right side/.test(document.querySelector('section#card-scenario')?.getAttribute('aria-label') ?? ''), null, { timeout: 5000 })
+        await sp.locator('section#card-scenario').getByLabel('Building (right side)').selectOption(bare)
+        await sp.waitForFunction((id) => window.__app.getState().rightBuilding?.id === id && window.__app.getState().running === null, bare, { timeout: 60000 })
+        if (posts2.length !== 1 || posts2[0].buildingId !== bare || !posts2[0].fire?.floor) bad(`choosing ${bare} (no saved run) in live mode posted ${JSON.stringify(posts2.map((p) => [p.buildingId, p.fire?.floor]))}, want one scenario for it with a fire room`)
+        await sp.waitForTimeout(2000)
+        await blankCheck('split-plus', sp)
+        await shot('split-plus', sp)
+        lines.push(`split: ${bare} has no saved run: live mode ran one (${posts2[0]?.fire?.room}) and moved the right pane to it`)
+        await sp.evaluate(() => window.__app.setState({ mode: 'static' }))
+      }
+      await axeOn(sp, 'split', '.app')
+      if (problems.length === before) lines.push('split ok: both cameras reset and stay linked, the building fills the viewer, each side has headers, Edit, its own settings and building')
+    } finally {
+      await sp.close()
+    }
+  })
+  await step('phone', async () => {
+    // A 390 x 844 phone with the same init script: panels overlay the viewer, the floor strip scrolls, the timeline stays usable.
+    const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+    await pctx.addInitScript(() => {
+      try {
+        localStorage['fes.aboutSeen'] = '1'
+      } catch {
+        /* ignore */
+      }
+    })
+    const ph = await pctx.newPage()
+    ph.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[phone] ${m.text()}`)
+    })
+    ph.on('pageerror', (e) => errors.push(`[phone] ${String(e)}`))
+    try {
+      await ph.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await ph.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await ph.waitForTimeout(2000)
+      const bad = (m) => problems.push(`phone: ${m}`)
+      if (!(await ph.getByRole('button', { name: 'Show analytics' }).isVisible())) bad('the sidebar does not start collapsed ("Show analytics" is missing)')
+      if (!(await ph.locator('#play').isVisible())) bad('#play is not visible')
+      const strip = await ph.locator('nav.floorstrip').evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, shown: el.getBoundingClientRect().height > 0 }))
+      if (!strip.shown) bad('the floor strip is not visible')
+      if (strip.sw < strip.cw) bad(`the floor strip's scrollWidth ${strip.sw} is under its clientWidth ${strip.cw}`)
+      const tl = await ph.locator('.timeline').evaluate((el) => ({ right: el.getBoundingClientRect().right, w: window.innerWidth, scroll: document.documentElement.scrollWidth }))
+      if (tl.right > tl.w + 1 || tl.scroll > tl.w + 1) bad(`the timeline or page overflows sideways (timeline right ${Math.round(tl.right)}, page scrollWidth ${tl.scroll}, window ${tl.w})`)
+      await ph.screenshot({ path: join(out, 'phone.png') })
+      shots.push('phone')
+      const before = await ph.locator('main.center').boundingBox()
+      await ph.getByRole('button', { name: 'Show analytics' }).click()
+      await ph.waitForTimeout(1500)
+      const after = await ph.locator('main.center').boundingBox()
+      const side = await ph.locator('#analytics').boundingBox()
+      if (!before || !after || !side) bad('could not measure main.center and the sidebar')
+      else {
+        if (Math.abs(after.width - before.width) > 1 || Math.abs(after.height - before.height) > 1) bad(`opening the sidebar resized the viewer (${Math.round(before.width)}x${Math.round(before.height)} to ${Math.round(after.width)}x${Math.round(after.height)})`)
+        if (side.x < after.x - 1 || side.x + side.width > after.x + after.width + 1 || side.y + side.height > after.y + after.height + 1) bad('the open sidebar is not inside the viewer box')
+      }
+      await ph.screenshot({ path: join(out, 'phone-sidebar.png') })
+      shots.push('phone-sidebar')
+      if (await ph.getByRole('button', { name: 'Expand panel', exact: true }).isVisible()) bad('the phone shows the "Expand panel" control: a phone keeps its full-width overlay')
+      await axeOn(ph, 'phone', '.app')
+      await ph.evaluate(() => window.__app.setState({ sidebarOpen: false }))
+      await ph.locator('#nav-toggle').click()
+      await ph.waitForTimeout(400)
+      await ph.screenshot({ path: join(out, 'phone-nav.png') })
+      shots.push('phone-nav')
+      await axeOn(ph, 'phone nav', '.app')
+    } finally {
+      await pctx.close()
+    }
   })
   for (let n = 0; n < opens.length; n++) {
     await step(`open-${n + 1}`, async () => {
-      await page.locator('header.topbar label.file input').setInputFiles(opens[n])
+      await page.locator('#open-file').setInputFiles(opens[n])
       await page.waitForTimeout(500)
       await page.waitForFunction(() => window.__app.getState().loading === null, null, { timeout: 60000 })
     })
@@ -376,13 +2108,6 @@ try {
       await shot('open-about')
       await page.keyboard.press('Escape')
     })
-    for (const [scene, name] of [[3, 'open-scene4'], [4, 'open-scene5']])
-      await step(name, async () => {
-        await page.evaluate((i) => window.__tour.getState().go(i, false), scene)
-        await page.waitForTimeout(3000)
-        await shot(name)
-      })
-    await page.evaluate(() => window.__tour.getState().stop())
   }
   if (opens.length > 0)
     await step('fixes', async () => {
@@ -392,6 +2117,16 @@ try {
       if ((await list.count()) === 0) return
       await list.first().scrollIntoViewIfNeeded()
       await shot('fixes-list')
+      if ((await page.evaluate(() => window.__app.getState().batch?.id)) === 'fixes') {
+        // The fixture holds one trade-off judged from its numbers and one the batch flags (D22): both badged, costs after "; but",
+        // and no spot named by its raw id. Demo batches skip the id check: their D-written labels keep IFC ids until D23 and the precompute rerun.
+        const trades = await list.first().locator('.badge.trade').allTextContents()
+        if (trades.length !== 2 || trades.some((t) => t.trim() !== 'trade-off')) problems.push(`fixes: want two "trade-off" badges, got ${JSON.stringify(trades)}`)
+        if (!(await list.first().innerText()).includes('; but +1.3 trapped per fire')) problems.push('fixes: the list lacks "; but +1.3 trapped per fire"')
+        const named = await page.locator('.fixes .target, .spots button b').allInnerTexts()
+        for (const w of ['DSB2', 'DSA2', 'DSA1', 'E1', 'E2'])
+          if (named.some((t) => new RegExp(`\\b${w}\\b`).test(t))) problems.push(`fixes: raw id ${w} in a fix target or weak-spot heading`)
+      }
       const btn = list.locator('button.spot').first()
       const id = await btn.getAttribute('data-spot')
       await btn.click()
@@ -400,6 +2135,94 @@ try {
       if (st.a !== id || !st.v || st.v.length !== 1) problems.push(`fixes: activeSpot ${st.a} (want ${id}), visibleFloors ${JSON.stringify(st.v)}`)
       await shot('fixes-fly')
     })
+  await step('live-fallback', async () => {
+    // qa has no backend, so a fresh page (the main page's runs stay as they are) is put in live mode by hand and the API answered by routes.
+    // Every way a live run can fail must end on the nearest precomputed fire with the note; with none for the building, the live error stays.
+    const p3 = await ctx.newPage()
+    const before = problems.length
+    p3.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json|status of 500|ERR_CONNECTION_REFUSED/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[live-fallback] ${m.text()}`)
+    })
+    p3.on('pageerror', (e) => errors.push(`[live-fallback] ${String(e)}`))
+    try {
+      let how = 'http'
+      const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+      await p3.route('**/runs', (r) => (how === 'down' ? r.abort('connectionrefused') : how === 'http' ? json(r, { detail: 'qa: backend error' }, 500) : json(r, { runId: 'qa-run' })))
+      await p3.route('**/runs/qa-run', (r) => json(r, how === 'failed' ? { status: 'error', error: 'qa: run failed' } : { status: 'running' }))
+      await p3.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await p3.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      const first = await p3.evaluate(() => {
+        // pollRun's wait is 600 s of Date.now: this lets the page's clock jump over it
+        const real = Date.now.bind(Date)
+        let skew = 0
+        Date.now = () => real() + skew
+        window.__skew = (ms) => (skew += ms)
+        return window.__app.getState().activeRunKey
+      })
+      // A precomputed fire other than the one on screen: the last run of this building (no what-if) whose spot no other run shares.
+      const t = await p3.evaluate(async (first) => {
+        const st = window.__app.getState()
+        const idx = await (await fetch('demo/index.json')).json()
+        const base = idx.runs.filter((r) => r.buildingId === st.building.id && r.whatIf === null)
+        const lone = base.filter((r) => r.id !== first && base.filter((o) => o.fire.x === r.fire.x && o.fire.y === r.fire.y).length === 1)
+        return lone.length ? lone[lone.length - 1] : null
+      }, first)
+      if (!t) return void problems.push('live-fallback: no second precomputed fire to fall back to in the demo index')
+      await p3.evaluate((fire) => {
+        const d = window.__app.getState().draft
+        window.__app.getState().patchDraft({ fire: { ...d.fire, floor: fire.floor, room: fire.room, x: fire.x, y: fire.y } })
+      }, t.fire)
+      await p3.evaluate(() => window.__app.setState({ card: 'scenario' }))
+      const runButton = p3.locator('.scenario > button.run')
+      const read = () =>
+        p3.evaluate(() => {
+          const a = window.__app.getState()
+          return { key: a.activeRunKey, note: a.runNote, fallback: a.runFallback, err: a.runError, mode: a.mode, notice: a.notice, running: a.running }
+        })
+      const settle = () => p3.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
+      const note = `Live run unavailable: showing the nearest precomputed fire (room ${t.fire.room}).`
+      for (const name of ['http', 'failed', 'slow', 'down']) {
+        how = name
+        await p3.evaluate((first) => {
+          window.__app.getState().switchRun(first)
+          window.__app.setState({ mode: 'live', notice: null })
+        }, first)
+        await runButton.click()
+        if (name === 'slow') {
+          await p3.waitForFunction(() => /Running… \d+ s/.test(window.__app.getState().running ?? ''), null, { timeout: 15000 })
+          await p3.evaluate(() => window.__skew(700000))
+        }
+        await settle()
+        const s = await read()
+        const dom = await p3.locator('.scenario p.warn').allInnerTexts()
+        const wantMode = name === 'down' ? 'static' : 'live'
+        if (s.key !== t.id) problems.push(`live-fallback (${name}): active run ${s.key}, want ${t.id}`)
+        if (s.note !== note || !s.fallback || dom.length !== 1 || dom[0] !== note) problems.push(`live-fallback (${name}): note "${s.note}", on screen ${JSON.stringify(dom)}, want "${note}"`)
+        if (s.err) problems.push(`live-fallback (${name}): runError "${s.err}" beside a precomputed run`)
+        if (s.mode !== wantMode) problems.push(`live-fallback (${name}): mode ${s.mode}, want ${wantMode}`)
+        if (name === 'down' && s.notice !== 'Backend unreachable: precomputed runs only') problems.push(`live-fallback (down): notice "${s.notice}"`)
+        if (name === 'http') {
+          await p3.locator('.scenario p.warn').scrollIntoViewIfNeeded()
+          await p3.screenshot({ path: join(out, 'live-fallback.png') })
+          shots.push('live-fallback')
+        }
+      }
+      // No precomputed run for the building: today's error, and no note.
+      how = 'http'
+      await p3.evaluate(() => {
+        const a = window.__app
+        a.setState({ mode: 'live', notice: null, building: { ...a.getState().building, id: 'qa-none' } })
+      })
+      await runButton.click()
+      await settle()
+      const s = await read()
+      if (s.err !== 'Request failed (500): qa: backend error' || s.note || s.fallback) problems.push(`live-fallback (none): runError "${s.err}", note "${s.note}"`)
+      if (!(await p3.locator('.scenario p.err').allInnerTexts()).includes('Request failed (500): qa: backend error')) problems.push('live-fallback (none): the error is not on screen')
+      if (problems.length === before) lines.push('live-fallback ok: http, failed, slow and down end on the nearest precomputed fire; none keeps the error')
+    } finally {
+      await p3.close()
+    }
+  })
   if (FPS && opens.length > 0)
     await step('fps', async () => {
       await page.locator('.results [role=tab]').first().click()
@@ -411,7 +2234,6 @@ try {
       for (const [name, flags] of cases) {
         await page.evaluate((f) => {
           window.__app.setState(f)
-          window.__tour?.getState().stop()
           window.__app.setState(f)
           window.__clock.getState().seek?.(0)
           window.__clock.setState({ t: 0, speed: 10, playing: true })

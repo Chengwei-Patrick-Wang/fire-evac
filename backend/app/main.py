@@ -7,6 +7,7 @@ registered once at the bottom of this file.
 """
 import io
 import json
+import math
 import sys
 import threading
 import uuid
@@ -17,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..llm import client as llm_client
 from . import batch, jobs, report, trace
 from .store import (
     BUILDINGS_DIR,
@@ -33,6 +35,8 @@ WARNING_PREFIX = "WARNING (normalize):"  # what buildings.normalize prints to st
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # the model SDK takes seconds to import: do it now, in the background, not inside the first report card
+    threading.Thread(target=llm_client.warm_up, name="llm-warm-up", daemon=True).start()
     yield
     batch.shutdown()
     jobs.shutdown()
@@ -140,13 +144,34 @@ def building_from_plan(
 # --------------------------------------------------------------------- runs
 
 
+def _check_fire(building: dict, scenario: dict) -> None:
+    """422, in plain words, unless the scenario's fire is placed in one of the building's rooms.
+
+    The fire model reads fire.floor, fire.x and fire.y, so a scenario without them would only fail inside the
+    worker, and the run's status would hand the user a bare "KeyError: 'floor'"."""
+    fire = scenario.get("fire")
+    if not isinstance(fire, dict):
+        raise HTTPException(422, "The scenario has no fire: click a room to place the fire first (scenario.fire needs a floor and a room).")
+    floor_id, room_id = fire.get("floor"), fire.get("room")
+    if not (isinstance(floor_id, str) and floor_id and isinstance(room_id, str) and room_id):
+        raise HTTPException(422, "The fire is not placed yet: click a room to place the fire first (scenario.fire needs a floor and a room).")
+    floor = next((f for f in building["floors"] if f.get("id") == floor_id), None)
+    if floor is None or not any(r.get("id") == room_id for r in floor.get("rooms", [])):
+        raise HTTPException(422, f"Building {building['id']!r} has no room {room_id!r} on floor {floor_id!r}: place the fire in one of its rooms.")
+    for axis in ("x", "y"):
+        value = fire.get(axis)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise HTTPException(422, f"The fire needs a spot in its room: scenario.fire.{axis} must be a number.")
+
+
 @router.post("/runs")
 def post_run(scenario: dict[str, Any] = Body(...)):
-    """Body is a scenario/v0 whose buildingId names a listed building."""
+    """Body is a scenario/v0 whose buildingId names a listed building and whose fire is placed in one of its rooms."""
     building_id = scenario.get("buildingId")
     if not building_id:
         raise HTTPException(422, "scenario.buildingId is required")
     building = building_or_404(str(building_id))
+    _check_fire(building, scenario)
     return {"runId": jobs.submit(building, scenario)}
 
 

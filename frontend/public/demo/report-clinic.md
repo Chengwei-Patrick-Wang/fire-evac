@@ -1,31 +1,35 @@
+## AI summary (Claude)
+
+Across 75 simulated fires in the NIBS Medical-Dental Clinic, no one was trapped and 90% of people got out in a median of 126 s. Queues formed mainly at the Door between TOILET (R1C12) and CORRIDOR (R1CC3) and the Door between PHYSICAL EXAM and CORRIDOR, single doorways where people leaving a room must merge into corridor traffic already heading out. The building leans heavily on the Exit Corridor (north). A likely fix to check is a second exit route that does not depend on that corridor.
+
 ### Report card: NIBS Medical-Dental Clinic
 
-**Stair doors propped open: smoke exposure +10% (+43 person-seconds in smoke per fire), while 90% out 0.0 s later on average (slower in 0 of 9 fires).**
+**Blocking the Exit Corridor (north) raised smoke exposure by 74% and made 90% evacuation 8.5 s slower in every compared fire.**
 
-75 fires simulated (25 rooms × 3 seeds). Smoke: 239 person-seconds in smoke per fire on average; 0.3 people per fire at an illustrative smoke dose of 1 (in 7 of 75 fires). 90% out: median 136 s, worst 144 s. No one trapped in any fire.
+75 fires simulated (25 rooms × 3 seeds). Smoke: 142 person-seconds in smoke per fire on average; 0.0 people per fire at an illustrative smoke dose of 1 (in 2 of 75 fires). 90% out: median 126 s, worst 131 s. No one trapped in any fire. Fire spread at illustrative drywall speeds: 5.9 other rooms per fire on average by 400 s, at most 30 rooms (fire in CENTRAL WAITING (R1AC1)).
 
 #### Top weak spots
 
-1. **Door between PHYSICAL EXAM (R1C18a) and PROVIDER CUBICLES (R1D16)** · F1
-   - Door between PHYSICAL EXAM (R1C18a) and PROVIDER CUBICLES (R1D16): 6 people queued at peak; 32 person-seconds of waiting on average, 17 of them in smoke, across 75 fires.
-   - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
-2. **Door between CHIEF AERO MED. (R1C17) and PHYSICAL EXAM (R1C18a)** · F1
-   - Door between CHIEF AERO MED. (R1C17) and PHYSICAL EXAM (R1C18a): 6 people queued at peak; 32 person-seconds of waiting on average, 17 of them in smoke, across 75 fires.
-   - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
-3. **Door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1)** · F2
-   - Door between DENTAL WAITING (R2A11) and CORRIDOR (R2AC1): 3 people queued at peak; 39 person-seconds of waiting on average across 75 fires.
-   - **Fix:** Test a wider door or a second opening here, so fewer people funnel through one doorway on the way out.
+1. **Door between TOILET (R1C12) and CORRIDOR (R1CC3)** · F1
+   - Door between TOILET (R1C12) and CORRIDOR (R1CC3): 6 people queued at peak; 14 person-seconds of waiting on average across 75 fires.
+   - **Fix:** Widen the toilet doorway and make it open outward into the corridor so occupants can step out without blocking passing corridor traffic.
+2. **Door between PHYSICAL EXAM and CORRIDOR** · F1
+   - Door between PHYSICAL EXAM and CORRIDOR: 6 people queued at peak; 13 person-seconds of waiting on average across 75 fires.
+   - **Fix:** Replace the physical exam room door with a wider or double door, or add a second door to a different corridor section.
+3. **Door between CORRIDOR (R1AC2) and CORRIDOR (R1AC3)** · F1
+   - Door between CORRIDOR (R1AC2) and CORRIDOR (R1AC3): 4 people queued at peak; 6 person-seconds of waiting on average across 75 fires.
+   - **Fix:** Widen the opening between the two corridors and add exit signs steering people toward a less-used exit away from the north corridor.
 
 Queues mark where the building runs short of capacity, not how people behave.
 
 #### What-ifs
 
-- **Stair doors propped open:** smoke exposure +10% (+43 person-seconds in smoke per fire); +0.1 people per fire at an illustrative smoke dose of 1; 90% out 0.0 s later on average (slower in 0 of 9 fires); trapped +0.0 per fire.
-- **Exit Corridor (north) blocked:** smoke exposure -27% (-114 person-seconds in smoke per fire); -1.1 people per fire at an illustrative smoke dose of 1; 90% out 4.5 s later on average (slower in 5 of 9 fires); trapped +0.2 per fire.
+- **Stair doors propped open:** smoke exposure +6% (+32 person-seconds in smoke per fire); +0.0 people per fire at an illustrative smoke dose of 1; 90% out 0.0 s later on average (slower in 0 of 9 fires); trapped +0.0 per fire.
+- **Exit Corridor (north) blocked:** smoke exposure +74% (+378 person-seconds in smoke per fire); +2.3 people per fire at an illustrative smoke dose of 1; 90% out 8.5 s later on average (slower in 9 of 9 fires); trapped +0.0 per fire.
 - **Sprinklers on:** no change in people trapped; 90% out 0.3 s sooner on average (slower in 0 of 9 fires); smoke time is not compared: people who become trapped drop out of the frames.
 
 ---
 
 *Numbers come from the simulation, not the model. Illustrative fire model; rule-based agents; fixes are ideas to check with a fire protection engineer, not a compliance result.*
 
-*Template summary (AI unavailable)*
+*Written by Claude*

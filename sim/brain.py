@@ -12,6 +12,10 @@ MIN_DWELL = 15
 COMMIT_DIST = 3.0
 TABU = 30
 MAX_SWITCHES = 3
+# How long the sim waits for one round of model decisions before the agents that have not been answered use the rules.
+# backend.llm.features.decide_batch asks the model in parallel chunks (Haiku answers a chunk in about 1-3 s) and hands
+# back what has landed after its own DECIDE_WAIT of 25 s, so this longer wait only cuts off a provider that hangs.
+LLM_WAIT_S = 30.0
 ROUTING_MODE = "RoutingEngine" if (hasattr(jps, "RoutingEngine") and
     hasattr(jps.RoutingEngine, "compute_waypoints")) else "straight line"
 
@@ -55,9 +59,13 @@ def visible_smoke(points, sight, vis):
 
 
 def option_cost(o, speed, beta=SMOKE_BETA, gamma=UNFAMILIAR_GAMMA):
-    return (o.get("dist", 0) / max(speed, 0.2) +
+    cost = (o.get("dist", 0) / max(speed, 0.2) +
             o.get("queue", 0) / o.get("flow", 1) + o.get("tail", 0) +
-            beta * o.get("smoke", 0) + gamma * o.get("unfamiliar", False))
+            beta * o.get("smoke", 0) + gamma * o.get("unfamiliar", False) +
+            o.get("firePenalty", 0))
+    # C28: seconds off an option that people in view are walking to. sim.run gives it only to a route with no smoke and
+    # no fire penalty, and never to one it dropped (blocked, no route), so it only tips a choice between open routes.
+    return cost - min(o.get("herd", 0.0), cost)
 
 
 def main_entrance(building, scenario):
@@ -126,8 +134,10 @@ class RuleBrain:
         description = "estimated travel and queue time"
         if self.beta * chosen.get("smoke", 0) or self.gamma * chosen.get("unfamiliar", False):
             description = "estimated travel, queue, smoke and familiarity cost"
-        return {"target": chosen["id"], "action": "go" if current is None else "reroute",
-                "reason": f"{obs['trigger']}: {description} {costs[candidate]:.1f} s"}
+        reason = f"{obs['trigger']}: {description} {costs[candidate]:.1f} s"
+        if chosen.get("herd"):
+            reason += " (others heading there)"
+        return {"target": chosen["id"], "action": "go" if current is None else "reroute", "reason": reason}
 
 
 class LLMBrain:
@@ -136,7 +146,7 @@ class LLMBrain:
     Python cannot interrupt a running thread. The backend must also enforce its
     network timeout; shutdown here never waits for a slow provider.
     """
-    def __init__(self, rule, decide=None, timeout=60.0, decide_batch=None):
+    def __init__(self, rule, decide=None, timeout=LLM_WAIT_S, decide_batch=None):
         self.rule = rule
         self.provider = decide
         self.batch_provider = decide_batch
@@ -189,10 +199,21 @@ class LLMBrain:
                                "reason": "rules: keep current target"}, fallback=True)
 
 
+def _warm_up():
+    """Import the model SDK before the first decision round: anthropic takes up to 20 s, which would otherwise be spent
+    inside that round's wait and cost its agents their decisions."""
+    try:
+        from backend.llm import client
+        client.warm_up()
+    except Exception:  # noqa: BLE001 - optional; the first call imports it instead
+        pass
+
+
 def load_llm_decider():
     """Optional backend dependency, imported only for showcase runs."""
     try:
         from backend.llm.features import decide
+        _warm_up()
         return decide
     except ImportError:
         import warnings
@@ -204,6 +225,7 @@ def load_llm_batch_decider():
     """Optional batch provider, never imported by rule-only runs."""
     try:
         from backend.llm.features import decide_batch
+        _warm_up()
         return decide_batch
     except ImportError:
         import warnings

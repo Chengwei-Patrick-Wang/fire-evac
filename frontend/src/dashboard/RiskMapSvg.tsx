@@ -1,9 +1,10 @@
 import { useApp } from '../store/app'
 import { buildingBounds } from '../scene/geometry'
 import { centroidOf, rampColor, riskRange, roomRiskColor, spotPosition, stairScore } from '../model/spots'
+import { floorName } from '../model/floors'
 import type { Vec2 } from '../data/types'
 
-/** One floor of the risk map as SVG in plan meters (prints sharp, no WebGL). */
+/** One floor of the risk map as SVG in plan meters (prints sharp, no WebGL): in the Risk tab and in the printed report. The pins are the weak spots, numbered as in their list. */
 export default function RiskMapSvg({ floor }: { floor: string }) {
   const building = useApp((s) => s.building)
   const batch = useApp((s) => s.batch)
@@ -21,7 +22,7 @@ export default function RiskMapSvg({ floor }: { floor: string }) {
   const vb = `${b.minX - pad} ${b.minY - pad} ${b.maxX - b.minX + 2 * pad} ${b.maxY - b.minY + 2 * pad}`
   return (
     <figure className="riskmap">
-      <svg viewBox={vb} role="img" aria-label={`Risk map of floor ${floor}`}>
+      <svg viewBox={vb} role="img" aria-label={`Risk map of ${floorName(building, floor)}`}>
         <path d={walk} fill="#f8fafc" stroke="#334155" strokeWidth={0.15} fillRule="evenodd" />
         {f.rooms
           .filter((r) => r.type !== 'stair' && !stairRooms.has(r.id))
@@ -49,7 +50,7 @@ export default function RiskMapSvg({ floor }: { floor: string }) {
           )
         })}
       </svg>
-      <figcaption>{floor}</figcaption>
+      <figcaption>{floorName(building, floor)}</figcaption>
     </figure>
   )
 }

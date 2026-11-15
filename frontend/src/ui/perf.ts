@@ -1,4 +1,4 @@
-// Frame-rate probe: `await __fps(10)` in the console (dev build, ?perf or ?qa).
+// Frame-rate probe: `await __fps(10)` in the console (?perf or ?qa; ?perf also shows the Stats overlay).
 // `__perf()` returns the last frame's draw calls, triangles, drei <Html> labels and the GL renderer string.
 export function measureFps(seconds = 5): Promise<{ avg: number; low1: number }> {
   return new Promise((resolve) => {
@@ -21,7 +21,8 @@ export function measureFps(seconds = 5): Promise<{ avg: number; low1: number }> 
   })
 }
 
-export const perfOn = () => import.meta.env.DEV || new URLSearchParams(location.search).has('perf')
+/** The frame-rate overlay (drei Stats) shows only with ?perf in the URL, never by default, not even on the dev server. */
+export const perfOn = () => new URLSearchParams(location.search).has('perf')
 const qaOn = () => new URLSearchParams(location.search).has('qa')
 
 export const perfStats = { calls: 0, triangles: 0 }

@@ -1,10 +1,8 @@
 import { useEffect } from 'react'
-import { useApp } from '../store/app'
+import { DEFAULT_EXPLODE, useApp } from '../store/app'
 import type { Layers, ResultsTab } from '../store/app'
 import { useClock } from '../store/clock'
 import { loadIndex } from '../data/loader'
-
-export const SITE_URL = (import.meta.env.VITE_SITE_URL as string | undefined) ?? ''
 
 export interface LinkState {
   b: string
@@ -13,8 +11,12 @@ export interface LinkState {
   tab?: ResultsTab
   m?: 'riskT90' | 'riskTrapped'
   l?: string[]
+  /** the floor gap, written only when it differs from the default */
   x?: number
+  /** the focus floor of the single and ghost views */
   f?: string
+  /** the floor view when it is side or ghost (single is `f` alone, stacked is neither) */
+  v?: 'side' | 'ghost'
   split?: boolean
   cam?: number[]
   ff?: string
@@ -22,7 +24,7 @@ export interface LinkState {
   fy?: number
 }
 
-const TABS: ResultsTab[] = ['results', 'risk', 'report', 'cred']
+const TABS: ResultsTab[] = ['results', 'risk', 'report']
 const LAYER_KEYS: (keyof Layers)[] = ['rooms', 'labels', 'smoke', 'fire', 'heatmap', 'queues', 'risk']
 
 const r1 = (n: number) => n.toFixed(1)
@@ -33,10 +35,12 @@ export function encodeLink(s: LinkState): string {
   if (s.r) p.set('r', s.r)
   if (s.t !== undefined) p.set('t', r1(s.t))
   if (s.tab) p.set('tab', s.tab)
-  if (s.m === 'riskTrapped') p.set('m', s.m)
+  // The default metric is people trapped: a link says so only for the other one (an old link with m=riskTrapped still decodes).
+  if (s.m === 'riskT90') p.set('m', s.m)
   if (s.l) p.set('l', s.l.join('_'))
-  if (s.x) p.set('x', s.x.toFixed(2))
+  if (s.x !== undefined) p.set('x', s.x.toFixed(2))
   if (s.f) p.set('f', s.f)
+  if (s.v) p.set('v', s.v)
   if (s.split) p.set('split', '1')
   if (s.cam) p.set('cam', s.cam.map(r1).join('_'))
   if (s.ff) p.set('ff', s.ff)
@@ -62,6 +66,8 @@ export function decodeLink(hash: string): LinkState | null {
   if (t !== undefined && t >= 0) out.t = t
   const tab = p.get('tab')
   if (tab && (TABS as string[]).includes(tab)) out.tab = tab as ResultsTab
+  // The Credibility tab is gone: an old link to it (tab=cred, or tab=credibility) opens the Overview.
+  else if (tab === 'cred' || tab === 'credibility') out.tab = 'results'
   const m = p.get('m')
   if (m === 'riskT90' || m === 'riskTrapped') out.m = m
   const l = p.get('l')
@@ -70,6 +76,8 @@ export function decodeLink(hash: string): LinkState | null {
   if (x !== undefined && x >= 0 && x <= 1) out.x = x
   const f = p.get('f')
   if (f) out.f = f
+  const v = p.get('v')
+  if (v === 'side' || v === 'ghost') out.v = v
   if (p.get('split') === '1') out.split = true
   const cam = p.get('cam')
   if (cam) {
@@ -87,6 +95,8 @@ export function decodeLink(hash: string): LinkState | null {
 
 /** Live camera pose, overwritten in place by CameraRig. */
 export const cameraPose = { p: [0, 0, 0], t: [0, 0, 0] }
+/** The same for each pane of the split view, by side (the link carries no camera while the view is split; the QA reads these). */
+export const panePoses: Record<string, { p: number[]; t: number[] }> = {}
 
 /** True from decoding a link until restoreLink returns. */
 export const linkCtl = { restoring: false }
@@ -98,7 +108,6 @@ export function loadIndexIds() {
 }
 let ids: { buildings: Set<string>; runs: Set<string> } | null = null
 void loadIndexIds().then((v) => (ids = v))
-export const cachedIndexIds = () => ids
 
 export function readLinkState(): LinkState | null {
   const s = useApp.getState()
@@ -110,10 +119,11 @@ export function readLinkState(): LinkState | null {
   out.tab = s.resultsTab
   out.m = s.riskMetric
   out.l = LAYER_KEYS.filter((k) => s.layers[k])
-  out.x = s.explode
-  if (s.visibleFloors?.length === 1) out.f = s.visibleFloors[0]
+  if (s.explode !== DEFAULT_EXPLODE) out.x = s.explode
+  if ((s.viewMode === 'single' || s.viewMode === 'ghost') && s.focusFloor) out.f = s.focusFloor
+  if (s.viewMode === 'side' || s.viewMode === 'ghost') out.v = s.viewMode
   if (s.split) out.split = true
-  if (s.follow === null && !s.split) out.cam = [...cameraPose.p, ...cameraPose.t]
+  if (!s.split) out.cam = [...cameraPose.p, ...cameraPose.t]
   const fire = active?.run.fire
   if (fire) {
     out.ff = fire.floor
@@ -121,19 +131,6 @@ export function readLinkState(): LinkState | null {
     out.fy = fire.y
   }
   return out
-}
-
-export function phoneReachable(): boolean {
-  return !!SITE_URL || !['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname)
-}
-
-export function shareUrl(): string | null {
-  const s = useApp.getState()
-  if (!s.building || s.building.private) return null
-  const st = readLinkState()
-  if (!st) return null
-  const base = SITE_URL ? SITE_URL.replace(/#.*$/, '').replace(/\/?$/, '/') : location.origin + location.pathname
-  return base + '#' + encodeLink(st)
 }
 
 export function useLinkSync() {

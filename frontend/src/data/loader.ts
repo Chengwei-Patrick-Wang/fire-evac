@@ -114,7 +114,7 @@ function isPending(o: unknown): o is Pending {
   return !!o && typeof o === 'object' && !('version' in o)
 }
 
-export async function pollRun(runId: string, onTick?: (elapsedS: number) => void, maxS = 180): Promise<Run> {
+export async function pollRun(runId: string, onTick?: (elapsedS: number) => void, maxS = 600): Promise<Run> {
   const t0 = Date.now()
   for (;;) {
     const r = await fetchJson<Run | Pending>(`${API}/runs/${encodeURIComponent(runId)}`, {}, 60000)
@@ -156,7 +156,7 @@ export async function fetchReport(ref: { runId: string } | { batchId: string }, 
     const r = await fetchJson<{ markdown: string }>(
       `${API}/report${refresh ? '?refresh=1' : ''}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
-      20000,
+      150000, // the model writes the card: Claude Opus took 28 to 37 s, and the first request after a start waits for its SDK to load
     )
     if (typeof r?.markdown !== 'string') throw new ApiError('Report unavailable')
     return r.markdown

@@ -1,19 +1,14 @@
 import { useApp } from '../store/app'
 import type { ResultsTab } from '../store/app'
-import EvacCurve from '../dashboard/EvacCurve'
-import ExitBars from '../dashboard/ExitBars'
-import RunStats from '../dashboard/RunStats'
-import AccessStats from '../dashboard/AccessStats'
-
+import Overview from '../dashboard/Overview'
 import ReportCard from '../dashboard/ReportCard'
-import Credibility from '../dashboard/Credibility'
 import WeakSpots from '../dashboard/WeakSpots'
 
+// The tab ids stay (links and the store use them): results is "This fire" (the run on screen), risk is "All fires" (the batch), report is the written report.
 const TABS: { id: ResultsTab; label: string }[] = [
-  { id: 'results', label: 'Results' },
-  { id: 'risk', label: 'Risk map' },
+  { id: 'results', label: 'This fire' },
+  { id: 'risk', label: 'All fires' },
   { id: 'report', label: 'Report' },
-  { id: 'cred', label: 'Credibility' },
 ]
 
 export default function ResultsPanel() {
@@ -50,20 +45,9 @@ export default function ResultsPanel() {
         ))}
       </div>
       <div role="tabpanel" id="results-panel" aria-labelledby={`tab-${tab}`}>
-      {tab === 'results' && (
-        <>
-          <h4>Evacuation curve</h4>
-          <EvacCurve />
-          <h4>Exit use</h4>
-          <ExitBars />
-          <h4>Run</h4>
-          <RunStats />
-          <AccessStats />
-        </>
-      )}
+      {tab === 'results' && <Overview />}
       {tab === 'risk' && <WeakSpots />}
       {tab === 'report' && <ReportCard />}
-      {tab === 'cred' && <Credibility />}
       </div>
       <p className="dim foot">Illustrative fire model. Not a compliance tool. One seed is one possible night.</p>
     </div>

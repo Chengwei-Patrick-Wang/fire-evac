@@ -1,4 +1,4 @@
-import type { Building, Vec2 } from '../data/types'
+import type { Building, Door, Room, Vec2 } from '../data/types'
 
 export function centroidOf(poly: Vec2[]): Vec2 {
   const n = poly.length || 1
@@ -27,6 +27,96 @@ export function spotPosition(building: Building, spot: { id: string; floor?: str
   return null
 }
 
+/** Anything a list can name: a batch `top[]` entry, a headline-pack weak spot. */
+export interface SpotLike {
+  id: string
+  floor?: string
+  kind?: string
+  label?: string
+  why?: string
+}
+
+/**
+ * A weak spot in words, never as its raw id. Batch `top[]` entries carry no `label`, but each `why` starts with it
+ * ("<label>: ..."); room ids read well, so a room may show its own.
+ */
+export function spotLabel(e: SpotLike): string {
+  const label = typeof e.label === 'string' ? e.label.trim() : ''
+  if (label) return label
+  const why = typeof e.why === 'string' ? e.why : ''
+  const at = why.indexOf(': ')
+  const lead = at > 0 ? why.slice(0, at).trim() : ''
+  if (lead) return lead
+  if (e.kind === 'room') return `Room ${e.id}`
+  const kind = e.kind ? e.kind.charAt(0).toUpperCase() + e.kind.slice(1) : 'Spot'
+  return e.floor ? `${kind} on ${e.floor}` : kind
+}
+
+export interface DoorName {
+  label: string
+  floor: string
+}
+
+const mid = (d: Door): Vec2 => [(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2]
+
+const doorCache = new WeakMap<Building, Map<string, DoorName>>()
+
+/**
+ * Every door in words, by id, for pickers: exits and stair doors by name, a plain door by the rooms it joins (the rule of
+ * fire/batch.py `door_label`, with D23's plain-door wording). Two doors never read the same on a floor. The id stays the key.
+ */
+export function doorLabels(building: Building): Map<string, DoorName> {
+  let m = doorCache.get(building)
+  if (!m) doorCache.set(building, (m = buildDoorLabels(building)))
+  return m
+}
+
+function buildDoorLabels(building: Building): Map<string, DoorName> {
+  const out = new Map<string, DoorName>()
+  const nm = (r: Room) => r.name || r.id
+  for (const f of building.floors) {
+    const rows: { d: Door; label: string; plain?: [Room, Room] }[] = []
+    for (const d of f.doors) {
+      const rooms = f.rooms.filter((r) => d.connects.includes(r.id))
+      const stair = rooms.find((r) => r.type === 'stair')
+      if (d.connects.includes('outside')) {
+        const name = (f.exits ?? []).find((e) => e.door === d.id)?.name ?? ''
+        const first = rooms[0]
+        const label =
+          name && !name.includes(':') && name.length <= 30
+            ? `Exit ${name}`
+            : stair
+              ? `Stair ${stair.group ?? stair.id} exit`
+              : first
+                ? `Exit from ${nm(first)} (${first.id})`
+                : `Exit ${d.id}`
+        rows.push({ d, label })
+      } else if (stair) rows.push({ d, label: `Stair ${stair.group ?? stair.id} door` })
+      else if (rooms.length < 2) rows.push({ d, label: rooms.length ? `Door from ${nm(rooms[0])}` : `Door ${d.id}` })
+      else rows.push({ d, label: '', plain: [rooms[0], rooms[1]] })
+    }
+    // A plain door reads "Door between A and B"; room ids join the names when another door on the floor joins the same names (or the names are equal).
+    const nameKey = ([a, b]: [Room, Room]) => [nm(a), nm(b)].sort().join('\0')
+    const joins = new Map<string, number>()
+    for (const r of rows) if (r.plain) joins.set(nameKey(r.plain), (joins.get(nameKey(r.plain)) ?? 0) + 1)
+    for (const r of rows) {
+      if (!r.plain) continue
+      const [a, b] = r.plain
+      const ids = nm(a) === nm(b) || (joins.get(nameKey(r.plain)) ?? 0) > 1
+      r.label = ids ? `Door between ${nm(a)} (${a.id}) and ${nm(b)} (${b.id})` : `Door between ${nm(a)} and ${nm(b)}`
+    }
+    // Doors that still read the same (two doors between the same rooms, two into one stair) are numbered by position: x, then y.
+    const same = new Map<string, Door[]>()
+    for (const r of rows) same.set(r.label, [...(same.get(r.label) ?? []), r.d])
+    for (const r of rows) {
+      const twins = same.get(r.label) ?? []
+      const k = twins.length > 1 ? [...twins].sort((p, q) => mid(p)[0] - mid(q)[0] || mid(p)[1] - mid(q)[1]).indexOf(r.d) + 1 : 0
+      if (!out.has(r.d.id)) out.set(r.d.id, { label: k ? `${r.label}, ${k} of ${twins.length}` : r.label, floor: f.id })
+    }
+  }
+  return out
+}
+
 const RAMP: [number, number, number][] = [
   [0x22, 0xc5, 0x5e],
   [0xea, 0xb3, 0x08],
@@ -47,6 +137,9 @@ export const NODATA_COLOR = '#475569'
 import type { Batch } from '../data/types'
 
 export type RiskMetric = 'riskT90' | 'riskTrapped'
+
+/** The two risk metrics in words, for the select, the legend and the room tooltip (the ids are for the batch file and links only). */
+export const RISK_NAMES: Record<RiskMetric, string> = { riskT90: 'Time to get 90% out', riskTrapped: 'People trapped' }
 
 /** Min and max of the metric over rooms that have data (n > 0, non-null). */
 export function riskRange(batch: Batch, metric: RiskMetric): { min: number; max: number } | null {
