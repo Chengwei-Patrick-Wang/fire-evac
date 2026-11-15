@@ -12,6 +12,10 @@ MIN_DWELL = 15
 COMMIT_DIST = 3.0
 TABU = 30
 MAX_SWITCHES = 3
+# How long the sim waits for one round of model decisions before the agents that have not been answered use the rules.
+# backend.llm.features.decide_batch asks the model in parallel chunks (Haiku answers a chunk in about 1-3 s) and hands
+# back what has landed after its own DECIDE_WAIT of 25 s, so this longer wait only cuts off a provider that hangs.
+LLM_WAIT_S = 30.0
 ROUTING_MODE = "RoutingEngine" if (hasattr(jps, "RoutingEngine") and
     hasattr(jps.RoutingEngine, "compute_waypoints")) else "straight line"
 
@@ -136,7 +140,7 @@ class LLMBrain:
     Python cannot interrupt a running thread. The backend must also enforce its
     network timeout; shutdown here never waits for a slow provider.
     """
-    def __init__(self, rule, decide=None, timeout=60.0, decide_batch=None):
+    def __init__(self, rule, decide=None, timeout=LLM_WAIT_S, decide_batch=None):
         self.rule = rule
         self.provider = decide
         self.batch_provider = decide_batch
@@ -189,10 +193,21 @@ class LLMBrain:
                                "reason": "rules: keep current target"}, fallback=True)
 
 
+def _warm_up():
+    """Import the model SDK before the first decision round: anthropic takes up to 20 s, which would otherwise be spent
+    inside that round's wait and cost its agents their decisions."""
+    try:
+        from backend.llm import client
+        client.warm_up()
+    except Exception:  # noqa: BLE001 - optional; the first call imports it instead
+        pass
+
+
 def load_llm_decider():
     """Optional backend dependency, imported only for showcase runs."""
     try:
         from backend.llm.features import decide
+        _warm_up()
         return decide
     except ImportError:
         import warnings
@@ -204,6 +219,7 @@ def load_llm_batch_decider():
     """Optional batch provider, never imported by rule-only runs."""
     try:
         from backend.llm.features import decide_batch
+        _warm_up()
         return decide_batch
     except ImportError:
         import warnings

@@ -57,6 +57,7 @@ from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair
 DT = 0.01
 FRAME_EVERY = 50     # steps (0.5 s)
 FIRE_EVERY = 100     # steps (1 s)
+LLM_MAX_AGENTS = 200  # most people in an all-LLM (brain "llm") showcase run; each decision round asks the model for all pending ones
 SMOKE_EVERY = 200    # steps (2 s)
 FRAME_INTERVAL = 0.5
 SMOKE_INTERVAL = 2
@@ -539,8 +540,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         count = min(n, max(10, min(20, round(0.08 * n))))
         flagged = set(np.random.default_rng([seed, 2]).choice(n, count, replace=False).tolist())
     elif mode == "llm":
-        if n > 150:
-            raise ValueError("all-LLM showcase supports at most 150 agents")
+        if n > LLM_MAX_AGENTS:
+            raise ValueError(f"all-LLM showcase supports at most {LLM_MAX_AGENTS} agents")
         flagged = set(range(n))
     llm = (LLMBrain(brain, decide_batch=load_llm_batch_decider()) if mode == "llm"
            else LLMBrain(brain, load_llm_decider()) if flagged else None)
