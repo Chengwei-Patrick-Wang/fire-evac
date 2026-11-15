@@ -1557,33 +1557,65 @@ compliance results.
 `FireModel` spreads the fire from the ignition room to its neighbors on a schedule set by a building-material setting,
 `fire.material`: `concrete`, `drywall` (the default) or `wood`. A room that catches fire closes its doors to routing and
 adds its own heat release, so the smoke grows with every burning room. The spread is a shortest-path schedule over a room
-graph: deterministic, cheap and easy to explain, not a cell-by-cell fire front. **The presets are illustrative: round
-numbers picked for a legible demo. They are not engineering values, not validated and not for compliance.**
+graph: deterministic, cheap and easy to explain, not a cell-by-cell fire front. Since D26 it also climbs through the
+floor to the rooms above. **The presets are illustrative: round numbers picked for a legible demo. They are not
+engineering values, not validated and not for compliance.**
 
 ### Presets (illustrative)
 
 Seconds, from `fire.spread.MATERIALS`:
 
-| Material | Flashover | Door link | Wall link |
-| --- | --- | --- | --- |
-| `concrete` | 600 | 300 | 1200 |
-| `drywall` (default) | 300 | 180 | 600 |
-| `wood` | 150 | 90 | 240 |
+| Material | Flashover | Door link | Wall link | Floor link (D26) |
+| --- | --- | --- | --- | --- |
+| `concrete` | 600 | 300 | 1200 | 3600 |
+| `drywall` (default) | 300 | 180 | 600 | 900 |
+| `wood` | 150 | 90 | 240 | 300 |
 
 - **Flashover:** a room is fully involved this long after it ignites.
 - **Door link, wall link:** the delay before a burning room ignites a neighbor across a door (or a stair link), or across
   a shared wall.
+- **Floor link:** the delay before a burning room ignites a room right above it, through the floor between them (next
+  section). Illustrative like the rest: a concrete slab practically never passes fire within a run, so concrete's 3600 s
+  is out of reach of any `maxTime` the app uses.
 - **Two orders hold, and tuning may not break them:** wood < drywall < concrete in every column, and door < wall in
-  every row. `check_spread` pins both. It also pins the example's schedule numbers below, so tune the presets there too.
+  every row, and a floor is slower than a door in every row (`floor` > `door`; it is also slower than a wall in all three
+  presets, which is not pinned). `check_spread` and `check_floor_spread` pin them. `check_spread` also pins the example's
+  schedule numbers below, so tune the presets there too.
 - `material_name(fire)` gives `drywall` when the key is missing. Anything but the exact names (`"Wood"`, `"steel"`,
   `None`, `3`) raises `ValueError("Unknown fire material 'steel'; valid names: concrete, drywall, wood")`, and
   `FireModel` fails the run with that message.
+
+### Floor links (D26)
+
+Fire also spreads from one floor to the next through the floor itself, at the material's `floor` delay above. **This is
+illustrative, like every number in this section: round values for a legible demo, not an engineering result and not for
+compliance.**
+
+- **Link:** `fire.spread.floor_links(building)` joins a room to each room on the next level up whose plan polygon overlaps
+  its own by at least `FLOOR_MIN_M2` = 2 m² (the area of the `shapely` intersection of the `buffer(0)` polygons). A big
+  room under several small ones, or the reverse, links to each of them. The ignition schedule runs Dijkstra over these
+  links together with the door and wall links: `ignite(upper) = ignite(lower) + MATERIALS[material]["floor"]`.
+- **Upward only.** Heat rises, and fire passing down through a floor is much slower and rare, so the model leaves it out:
+  a room never ignites the room below it through the floor, whatever the material or the horizon. (A fire upstairs can
+  still reach the floor below the way it did before, through the stairs.) `floor_links` holds only the upward direction;
+  `room_links` stays symmetric and lists no floor link.
+- **One level at a time.** Levels are taken in order like the stair links, two floors on one level never link, and a room
+  two floors up burns after the room between them (two floor delays).
+- **Stair rooms are left out** on both levels (a room a stair names, or typed `stair`): stair links already join them,
+  at the door delay.
+- **Not modelled: window-to-window spread.** Fire leaping out of a window and in at the window above (or across a
+  courtyard), shafts, ducts and other openings through a floor, and a slab that fails. The floor is one number per
+  material.
+- **Effect.** With drywall (900 s) and concrete (3600 s) no floor link fires inside the app's 400 to 600 s runs, so their
+  schedules, heat and doors are as D25 made them (and the checks that pin those numbers did not move). Wood (300 s) lights
+  rooms upstairs from 300 s: the room right over the ignition room at 300 s, the rooms over its neighbors from 390 s.
 
 ### The rule
 
 **Room graph.** `room_links(building)` returns `{(floor, room): {(floor, room): "door" | "wall"}}`, symmetric, for every
 room in building order. It is cached by object identity like `get_graph`, so treat a building as immutable after its
-first lookup.
+first lookup. `floor_links(building)` (the previous section) returns `{(floor, room): {(floor, room): "floor"}}` for every
+room, one way (lower room to the rooms above), from the same cache entry.
 
 - **Door link:** a door whose `connects` holds two different rooms of its floor. An exterior door joins a room to
   `"outside"`, which is no room.
@@ -1592,16 +1624,18 @@ first lookup.
   `min((a.boundary & b.buffer(0.25)).length, (b.boundary & a.buffer(0.25)).length) >= 1.0`. The candidates come from an
   `STRtree` `dwithin` query on the `buffer(0)` polygons.
 - **Stair link** (counts as a door link): for consecutive floors by `level`, each stair room of a group on the lower floor
-  and each stair room of the same group on the upper floor. No other link crosses floors.
+  and each stair room of the same group on the upper floor. No other room-graph link crosses floors; the one-way floor
+  links of D26 are `floor_links`' and cross floors upward only.
 - A pair with both a door and a wall keeps `"door"`.
 
 **Schedule.** `ignition_schedule(building, scenario)` is pure.
 
 - **Origin:** `(fire.floor, fire.room)` when that room exists, else the room whose polygon covers `(x, y)` on
   `fire.floor`, else none, and the schedule is empty.
-- **Dijkstra** from the origin at `fire.start` (default 0): `ignite(n) = ignite(r) + MATERIALS[material][kind]`. The heap
-  key is `(time, floor index, room index)` in building order, so ties come out the same every time. The search keeps
-  times relative to the start, so a fractional start adds no float noise to the ties.
+- **Dijkstra** from the origin at `fire.start` (default 0): `ignite(n) = ignite(r) + MATERIALS[material][kind]`, with
+  `kind` `door`, `wall` or (D26, upward only) `floor`. The heap key is `(time, floor index, room index)` in building
+  order, so ties come out the same every time. The search keeps times relative to the start, so a fractional start adds
+  no float noise to the ties.
 - **Horizon:** only rooms with `ignite <= scenario.maxTime` (default 600, the sim's) are listed. The ignition room is
   always listed, and first.
 - **Entries:** `{"room": id, "floor": id, "ignite": round(t, 2)}`, sorted by the heap key.
@@ -1628,37 +1662,45 @@ first lookup.
 
 CLI: `python -m fire.spread BUILDING SCENARIO [--material NAME]` prints one `<ignite> s  <floor> <room> (<name>)` line per
 room and ends `<n> rooms by <maxTime> s (<material>)`. On the example, `--material drywall` ends `12 rooms by 400 s (drywall)`
-and `--material wood` ends `15 rooms by 400 s (wood)`.
+and `--material wood` ends `16 rooms by 400 s (wood)` (15 before the floor links).
 
 ### Measured
 
-On the lead's Windows laptop. Links are unordered pairs:
+On the lead's Windows laptop. Links are unordered pairs; floor links (D26) are one-way, so each is counted once:
 
-| Building | Rooms | Door links (stair links) | Wall-only links | Built in |
-| --- | --- | --- | --- | --- |
-| example | 24 | 24 (2) | 22 | 0.02 s |
-| office | 109 | 91 | 176 | 0.1 s |
-| clinic | 252 | 222 | 347 | 0.27 s |
+| Building | Rooms | Door links (stair links) | Wall-only links | Floor links | Built in |
+| --- | --- | --- | --- | --- | --- |
+| example | 24 | 24 (2) | 22 | 10 | 0.02 s |
+| office | 109 | 91 | 176 | 117 | 0.13 s |
+| clinic | 252 | 222 | 347 | 215 | 0.24 s |
 
-Rooms on fire by 400 s, the ignition room included:
+The office's 117 floor links join 60 rooms of F1 to a room above and 41 rooms of F2 to a room below; the clinic's 215 join
+103 and 99. The times include the floor links.
+
+Rooms on fire by 400 s, the ignition room included. Floor links change only the wood column, and only for a fire that can
+climb (an F2 fire has no floor above it in these buildings; D25's numbers were: example R101 15, office R143 37, clinic
+R1AC1 75 with wood):
 
 | Fire in | Concrete | Drywall | Wood |
 | --- | --- | --- | --- |
-| example R101 | 2 | 12 | 15 |
-| office R143 | 9 | 21 | 37 |
+| example R101 | 2 | 12 | 16 |
+| office R143 | 9 | 21 | 46 |
 | office R203c | 5 | 6 | 36 |
 | office R237b | 4 | 4 | 14 |
-| clinic R1AC1 | 6 | 31 | 75 |
+| clinic R1AC1 | 6 | 31 | 94 |
 
-The plan's prototype counted 74 for the clinic with wood; every other number here, and the link counts, agree with it.
+The plan's prototype counted 74 for the clinic with wood before the floor links (D25 counted 75); every other D25
+number and the link counts agreed with it.
 
 Over every batch room (no corridors or stairs: 99 in the office, 206 in the clinic), the other rooms reached by 400 s
-average 1.3 (concrete), 6.5 (drywall) and 19.6 (wood) in the office, and 1.2, 6.3 and 21.2 in the clinic.
+average 1.3 (concrete), 6.5 (drywall) and 24.0 (wood) in the office, and 1.2, 6.3 and 24.7 in the clinic. With wood that
+was 19.6 and 21.2 before the floor links.
 
 The example's drywall schedule from the kitchen R101 (`python -m fire.spread contracts/building.example.json
 contracts/scenario.example.json`): R101 at 0 s, Corridor C1 at 180 s, then R102, L1, R103 to R108, SA1 and SB1 at 360 s.
-With wood: C1 at 90 s, those ten at 180 s, SA2 and SB2 (floor 2) at 270 s, C2 at 360 s. The office's drywall schedule from
-R143 starts with R143 at 0 s, then eight rooms at 180 s (R121, R143A, R144 to R149) and twelve at 360 s.
+With wood: C1 at 90 s, those ten at 180 s, SA2 and SB2 (floor 2) at 270 s, R201 (the floor-2 office over R101, through
+the floor) at 300 s, C2 at 360 s. The office's drywall schedule from R143 starts with R143 at 0 s, then eight rooms at
+180 s (R121, R143A, R144 to R149) and twelve at 360 s.
 
 **Smoke.** A kitchen fire reaches 1 MW at 146 s and 1.5 MW at 179 s, and there the smoke density and front speed
 saturate. So drywall's first spread (180 s) leaves a kitchen's smoke exactly as it was and changes only `hrr` and
@@ -1676,9 +1718,20 @@ corridor at 300 s) out of its fires and all its assertions as they were. With dr
 fire traps one more person once E1 is blocked, so the net 16 is less than the lobby's 17 and `trapped_note` writes no
 "(N of N in fires in ...)" note. Every other slow check passes unchanged.
 
+**What D26 changed.** Only values the floor links move: the example's wood schedule gained R201 at 300 s (`check_spread`,
+16 rooms by 400 s, was 15) and the office's wood count from R143 is 46 (was 37). Every drywall and concrete number is as
+it was, because 900 s and 3600 s are past the 400 s horizon.
+
 **Risk.** Wood traps many people. From office R143 the corridor R121, R143A and R146 ignite at 90 s, while more than half
-the occupants are still inside (t50 is 97 s). The presets stay as pinned unless the lead asks to tune them within the two
+the occupants are still inside (t50 is 97 s). The presets stay as pinned unless the lead asks to tune them within the
 orders.
+
+**The sim with floor links.** The sim needed no change: C27 already traps the people still inside any room that catches
+fire and closes that room's doors, on any floor. Seed 1, the demo's scenario (250 people, kitchen fire in R143, door
+D$77xsW closed; `maxTime` 400 s): with wood 217 out and 33 trapped before and after, 23 of them "burning room" and 10 "no
+route", and 46 rooms burned instead of 37 (F2 13, was 4); with drywall 250 out, 0 trapped, 21 rooms, as before. The example's
+kitchen fire R101 with wood: 124 out and 36 trapped (25 "burning room", 11 "no route") before and after, 16 rooms instead
+of 15. No one is trapped by the new rooms because the floors above ignite from 300 s, after their occupants have left.
 
 ### Verification
 
@@ -1694,10 +1747,30 @@ orders.
   second to 179 s, door D blocked at 180 s only in the spread model, `hrr(330)` 375 kW and `hrr(480)` 1500 kW higher, the
   flame footprint equal to 400 s, `burning_rooms` and `ignition_times` as the schedule says, and a trash fire with wood
   where the second room adds smoke from 90 s;
-- the example's three schedules and the lobby fire, its 24 door and 22 wall-only links, only stairs linking floors, equal
-  ignition per room with the floors reversed, and `NoFire`;
-- the office, when its file is there: 91 door and 176 wall-only links built in under 2 s, and from R143 9, 21 and 37
+- the example's three schedules and the lobby fire, its 24 door and 22 wall-only links, only stairs linking floors in
+  `room_links`, equal ignition per room with the floors reversed, and `NoFire`;
+- the office, when its file is there: 91 door and 176 wall-only links built in under 2 s, and from R143 9, 21 and 46
   rooms by 400 s (concrete, drywall, wood). A rebuilt office gets the checks that hold for any building.
+
+The new `check_floor_spread` (fast) pins D26 on `two_floor_fixture()` (the fixture under a floor F2: room C right over B,
+room E beside C, door DC between them), a fire in A:
+
+- wood: B at 90 s, C at B's ignite time plus the floor delay (390 s), E at 480 s; a fire in B lights C at 300 s; start 50
+  shifts all of it; `maxTime` 389 and 390 cut at the floor link; sprinklers keep the fire in A; drywall gives C at 1080 s;
+- concrete: no upward spread within 600 s (nor within 3899 s; C at 3900 s);
+- upward only: a fire in C or E (F2) lists no F1 room, for every material and a 20,000 s horizon, and `floor_links` of
+  the fixture holds B to C and nothing downward;
+- the model: with wood C is in `burning_rooms` and DC in `blocked_doors()` from 390 s and not at 389 s, the heat is one
+  room's peak plus C's ramp above the smoke-only twin at 400 s; with concrete nothing on F2 burns to 600 s;
+- the rule: overlap of exactly 2 m² links and 1.9 m² does not (measured, not the upper room's own area), a room beside
+  another is no link, two floors on one level do not link, the next level up links whatever its number and the listing
+  order of the floors, a tower of three floors burns floor by floor (wood: 0, 300, 600 s), stair rooms (typed or named by
+  a stair) and degenerate rooms link to nothing;
+- the example: exactly its 10 links (C1-C2, L1-R203, and R101 to R108 under R201, R202 and R204 to R209), stair links as
+  before, the floor delay slower than the door delay for every material;
+- the office, when its file is there: for every link the upper room is on a higher level, neither room is a stair room and
+  the overlap is at least 2 m²; 117 links for the demo's file, and from R143 13 rooms of F2 with wood and none with
+  drywall or concrete.
 
 `check_spread_slow` runs the example's kitchen fire with drywall for 400 s (160 occupants). The corridor's 11 doors close
 by 180 s: D101 at 174 s by smoke, the other ten at exactly 180 s by the spread. By 400 s 1 of 160 is trapped (reason
@@ -1706,13 +1779,15 @@ lobby and Stair B ignite at 360 s, so the exits E1 and E2 are in `blocked_doors(
 
 ### Handoffs
 
-- **C27:** the API above. The doors of rooms that catch fire already come through `blocked_doors()`. The first
+- **C27:** the API above; nothing to change for the floor links (D26): a room on any floor that catches fire already
+  traps the people still inside it (`burning_rooms()`) and closes its doors (`blocked_doors()`). The first
   `ignition_times()` entry is the ignition room, which keeps today's doors, keep-out and heat curve. `NoFire` has both
   methods; `tools/toy_fire.ToyFire` has neither. `run()` writes `run["fire"]["rooms"] = fire.ignition_times()` and
   `run["fire"]["material"] = fire.material`, only for a model that has a `material`.
 - **A11:** `fire.spread.ignition_schedule(building, scenario)` is pure and takes milliseconds after the first `room_links`
   call; the report card uses it. `material_name` validates. Every demo number changes, so rerun the precompute without
-  `--resume`.
+  `--resume`. The floor links (D26) change only wood: its schedules list more rooms upstairs (the demo's R143 wood
+  pair, 46 rooms instead of 37), and nothing for drywall or concrete.
 - **E:** a room is fully involved `flashover` seconds after it ignites (600, 300 or 150 s). That makes a natural
   orange-to-red ramp.
 

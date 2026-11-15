@@ -48,6 +48,20 @@ def fixture_building() -> dict:
          "walkable": [{"outer": _ring(walkable), "holes": []}]}]}
 
 
+def two_floor_fixture() -> dict:
+    """fixture_building() under a floor F2 (level 1): room C stands right over B, room E beside C over nothing, and door
+    DC joins C and E."""
+    building = fixture_building()
+    c, e, door = box(10.2, 0, 20.2, 6), box(20.4, 0, 30.4, 6), box(20.0, 0.5, 20.6, 1.4)
+    building["floors"].append(
+        {"id": "F2", "level": 1, "stairs": [], "exits": [],
+         "rooms": [{"id": "C", "polygon": _ring(c)}, {"id": "E", "polygon": _ring(e)}],
+         "doors": [{"id": "DC", "rect": _ring(door), "connects": ["C", "E"],
+                    "a": [20.3, 0.5], "b": [20.3, 1.4], "state": "closed"}],
+         "walkable": [{"outer": _ring(shapely.union_all([c, e, door])), "holes": []}]})
+    return building
+
+
 def big_fixture() -> dict:
     ring = _ring(box(0, 0, 300, 200))
     return {"version": "building/v0", "id": "big-fixture", "floors": [
@@ -2495,10 +2509,11 @@ def check_spread():
     from fire.spread import DEFAULT_MATERIAL, MATERIALS, ignition_schedule, material_name, room_hrr_kw, room_links
     from fire.stub import NoFire
 
-    # Presets: wood is faster than drywall, which is faster than concrete, in every column; a door beats a wall.
-    for column in ("flashover", "door", "wall"):
+    # Presets: wood is faster than drywall, which is faster than concrete, in every column; a door beats a wall, and the
+    # floor (D26) is slower than a door.
+    for column in ("flashover", "door", "wall", "floor"):
         assert MATERIALS["wood"][column] < MATERIALS["drywall"][column] < MATERIALS["concrete"][column], column
-    assert all(preset["door"] < preset["wall"] for preset in MATERIALS.values())
+    assert all(preset["door"] < preset["wall"] and preset["door"] < preset["floor"] for preset in MATERIALS.values())
     assert DEFAULT_MATERIAL == "drywall" and list(MATERIALS) == ["concrete", "drywall", "wood"]
     assert room_hrr_kw(1500.0, 300.0, -1) == 0.0 and room_hrr_kw(1500.0, 300.0, 0) == 0.0
     assert room_hrr_kw(1500.0, 300.0, 150) == 375.0 and room_hrr_kw(1500.0, 300.0, 300) == 1500.0
@@ -2611,7 +2626,8 @@ def check_spread():
     ten = ("R102", "L1", "R103", "R104", "R105", "R106", "R107", "R108", "SA1", "SB1")
     expected = {"drywall": [("F1", "R101", 0.0), ("F1", "C1", 180.0)] + [("F1", r, 360.0) for r in ten],
                 "wood": ([("F1", "R101", 0.0), ("F1", "C1", 90.0)] + [("F1", r, 180.0) for r in ten]
-                         + [("F2", "SA2", 270.0), ("F2", "SB2", 270.0), ("F2", "C2", 360.0)]),
+                         + [("F2", "SA2", 270.0), ("F2", "SB2", 270.0), ("F2", "R201", 300.0), ("F2", "C2", 360.0)]),
+                # D26: R201 stands over the kitchen R101, so with wood it ignites through the floor at 300 s
                 "concrete": [("F1", "R101", 0.0), ("F1", "C1", 300.0)]}
     for material, want in expected.items():
         got = ignition_schedule(example, burn(material))
@@ -2667,11 +2683,154 @@ def check_spread():
     if pinned:
         assert (office_scenario["fire"]["floor"], office_scenario["fire"]["room"]) == ("F1", "R143")
         assert (pairs["door"], pairs["wall"]) == (91, 176), pairs
-        assert [reached[m] for m in ("concrete", "drywall", "wood")] == [9, 21, 37], reached
-    print(f"spread: fixture and example (12 rooms by 400 s with drywall, 15 with wood, 2 with concrete) and "
+        assert [reached[m] for m in ("concrete", "drywall", "wood")] == [9, 21, 46], reached  # wood was 37 before D26
+    print(f"spread: fixture and example (12 rooms by 400 s with drywall, 16 with wood, 2 with concrete) and "
           f"{'the office' if pinned else 'a rebuilt office'}: {pairs['door']} door and {pairs['wall']} wall-only links in "
           f"{built:.2f} s, rooms on fire by 400 s (concrete/drywall/wood) {reached['concrete']}/{reached['drywall']}/"
           f"{reached['wood']}", flush=True)
+
+
+def check_floor_spread():
+    """D26: fire climbs through the floor to the rooms right above, never down; stair links and the room graph stay as
+    they were."""
+    from copy import deepcopy
+    from fire.model import FireModel
+    from fire.spread import FLOOR_MIN_M2, MATERIALS, floor_links, ignition_schedule, room_hrr_kw, room_links
+
+    # The material order holds for the floor delay too, and a floor is slower than a door.
+    assert MATERIALS["wood"]["floor"] < MATERIALS["drywall"]["floor"] < MATERIALS["concrete"]["floor"]
+    assert all(preset["floor"] > preset["door"] for preset in MATERIALS.values())
+    assert FLOOR_MIN_M2 == 2.0
+
+    # The two-floor fixture: F1 holds A and B (door D), F2 holds C right over B and E beside C (door DC). Fire in A.
+    building = two_floor_fixture()
+    base = {"fire": {"floor": "F1", "room": "A", "x": 8, "y": 5, "type": "kitchen", "start": 0},
+            "sprinklers": False, "doors": {}, "maxTime": 1300}
+
+    def schedule(material, room="A", floor="F1", b=None, start=0, **changes):
+        fire = {**base["fire"], "floor": floor, "room": room, "material": material, "start": start}
+        return ignition_schedule(b or building, {**base, "fire": fire, **changes})
+
+    rises = floor_links(building)
+    assert rises[("F1", "B")] == {("F2", "C"): "floor"}
+    assert rises[("F1", "A")] == {} and rises[("F2", "C")] == {} and rises[("F2", "E")] == {}  # one way: nothing links down
+    assert list(rises) == list(room_links(building))  # every room, in building order
+    assert all(kind in ("door", "wall") for near in room_links(building).values() for kind in near.values())
+
+    # Wood: B through door D at 90 s, C through the floor at B's own ignite time plus the floor delay, E through door DC.
+    got = _rows(schedule("wood"))
+    assert got == [("F1", "A", 0.0), ("F1", "B", 90.0), ("F2", "C", 390.0), ("F2", "E", 480.0)], got
+    ignite = {room: t for _, room, t in got}
+    assert ignite["C"] == ignite["B"] + MATERIALS["wood"]["floor"] and ignite["E"] == ignite["C"] + MATERIALS["wood"]["door"]
+    assert _rows(schedule("wood", room="B")) == [("F1", "B", 0.0), ("F1", "A", 90.0), ("F2", "C", 300.0), ("F2", "E", 390.0)]
+    assert _rows(schedule("wood", start=50)) == [("F1", "A", 50.0), ("F1", "B", 140.0), ("F2", "C", 440.0), ("F2", "E", 530.0)]
+    assert _rows(schedule("wood", maxTime=389)) == [("F1", "A", 0.0), ("F1", "B", 90.0)]
+    assert _rows(schedule("wood", maxTime=390)) == [("F1", "A", 0.0), ("F1", "B", 90.0), ("F2", "C", 390.0)]
+    assert _rows(schedule("wood", sprinklers=True)) == [("F1", "A", 0.0)]  # sprinklers keep the fire in its room
+    assert _rows(schedule("drywall")) == [("F1", "A", 0.0), ("F1", "B", 180.0), ("F2", "C", 1080.0), ("F2", "E", 1260.0)]
+    # Concrete: the slab holds. No upward spread within 600 s, nor before B's 300 s plus the floor's 3600 s.
+    assert _rows(schedule("concrete", maxTime=600)) == [("F1", "A", 0.0), ("F1", "B", 300.0)]
+    assert _rows(schedule("concrete", maxTime=3899)) == [("F1", "A", 0.0), ("F1", "B", 300.0)]
+    assert _rows(schedule("concrete", maxTime=3900)) == [("F1", "A", 0.0), ("F1", "B", 300.0), ("F2", "C", 3900.0)]
+    # Upward only: a fire on F2 never reaches F1, whatever the material or the horizon.
+    for material, door in (("wood", 90.0), ("drywall", 180.0), ("concrete", 300.0)):
+        assert _rows(schedule(material, room="C", floor="F2", maxTime=20000)) == [("F2", "C", 0.0), ("F2", "E", door)], material
+        assert {floor for floor, _, _ in _rows(schedule(material, room="E", floor="F2", maxTime=20000))} == {"F2"}, material
+    # Deterministic: the same schedule per room with the floors listed in the other order.
+    flipped = {**building, "floors": list(reversed(building["floors"]))}
+    assert {(e["floor"], e["room"]): e["ignite"] for e in schedule("wood", b=flipped)} == {
+        (f, r): t for f, r, t in got}
+
+    # The model: C ignites at 390 s with wood and closes its door DC; with concrete nothing on F2 burns within 600 s.
+    wood = {**base, "fire": {**base["fire"], "material": "wood"}}
+    model, twin = FireModel(building, wood), FireModel(building, wood, spread=False)
+    assert [(e["floor"], e["room"], e["ignite"]) for e in model.ignition_times()] == got and len(twin.ignition_times()) == 1
+    model.step(389)
+    assert model.burning_rooms(389) == {("F1", "A"), ("F1", "B")} and "DC" not in model.blocked_doors()
+    model.step(390)
+    assert model.burning_rooms(390) == {("F1", "A"), ("F1", "B"), ("F2", "C")} and "DC" in model.blocked_doors()
+    twin.step(400)
+    model.step(400)
+    assert "DC" not in twin.blocked_doors()
+    peak = model.params["peakKw"]
+    assert abs(model.hrr(400) - twin.hrr(400) - (peak + room_hrr_kw(peak, MATERIALS["wood"]["flashover"], 10))) < 1e-6
+    model = FireModel(building, {**base, "fire": {**base["fire"], "material": "concrete"}})
+    model.step(600)
+    assert model.burning_rooms(600) == {("F1", "A"), ("F1", "B")} and "DC" not in model.blocked_doors()
+    assert not any(floor == "F2" for floor, _ in model.burning_rooms(600))
+
+    # The rule: at least 2 m2 of overlap (measured, not the upper room's own area), the next level up, no stair rooms.
+    def stack(floors, levels=(0, 1)):
+        return {"version": "building/v0", "id": "stack", "floors": [
+            {"id": f"F{n + 1}", "level": level, "stairs": [], "exits": [], "doors": [], "walkable": [],
+             "rooms": [{"id": room, "polygon": _ring(polygon)} for room, polygon in rooms.items()]}
+            for n, (rooms, level) in enumerate(zip(floors, levels))]}
+
+    big = box(0, 0, 10, 6)
+
+    def over(polygon, **more):
+        return floor_links(stack([{"P": big}, {"Q": polygon}], **more))[("F1", "P")]
+
+    assert over(box(0, 0, 2, 1)) == {("F2", "Q"): "floor"}  # exactly 2 m2
+    assert over(box(0, 0, 1.9, 1)) == {} and over(box(9, 0, 13, 1.9)) == {}  # 1.9 m2, one of them in a 7.6 m2 room
+    assert over(box(8, 0, 12, 1)) == {("F2", "Q"): "floor"}  # 2 m2 over the room, 2 m2 beyond its wall
+    assert over(box(20, 0, 30, 6)) == {}  # beside it, not above it
+    assert over(big, levels=(0, 0)) == {}  # two floors on one level are not one above the other
+    assert over(big, levels=(0, 2)) == {("F2", "Q"): "floor"}  # the next level up, whatever the numbers
+    upside = floor_links(stack([{"Q": big}, {"P": big}], levels=(1, 0)))  # F1 is the upper floor: levels decide, not order
+    assert upside[("F2", "P")] == {("F1", "Q"): "floor"} and upside[("F1", "Q")] == {}
+    tower = stack([{"P": big}, {"Q": big}, {"R": big}], levels=(0, 1, 2))
+    assert floor_links(tower)[("F1", "P")] == {("F2", "Q"): "floor"} and floor_links(tower)[("F2", "Q")] == {("F3", "R"): "floor"}
+    assert _rows(ignition_schedule(tower, {**base, "fire": {**base["fire"], "room": "P", "material": "wood"}})) == [
+        ("F1", "P", 0.0), ("F2", "Q", 300.0), ("F3", "R", 600.0)]  # two floors up burns after the floor between
+    typed = stack([{"P": big}, {"Q": big}])
+    typed["floors"][0]["rooms"][0]["type"] = "stair"
+    assert floor_links(typed)[("F1", "P")] == {}  # a room typed stair
+    named = stack([{"P": big}, {"Q": big}])
+    named["floors"][1]["stairs"] = [{"id": "S", "room": "Q", "group": "G"}]
+    assert floor_links(named)[("F1", "P")] == {}  # a room a stair names
+    odd = deepcopy(stack([{"P": big}, {"Q": big}]))  # a degenerate room links to nothing and breaks nothing
+    odd["floors"][1]["rooms"].append({"id": "Z", "polygon": [[0, 0], [1, 1]]})
+    assert floor_links(odd)[("F1", "P")] == {("F2", "Q"): "floor"} and floor_links(odd)[("F2", "Z")] == {}
+
+    # The example: ten links, none of them a stair room's, and the stairs are the only room-graph links across floors.
+    example = json.loads((ROOT / "contracts/building.example.json").read_text(encoding="utf-8"))
+    pairs = sorted((a[1], b[1]) for a, near in floor_links(example).items() for b in near)
+    assert pairs == [("C1", "C2"), ("L1", "R203"), ("R101", "R201"), ("R102", "R202"), ("R103", "R204"), ("R104", "R205"),
+                     ("R105", "R206"), ("R106", "R207"), ("R107", "R208"), ("R108", "R209")], pairs
+    across = {frozenset((a[1], b[1])) for a, near in room_links(example).items() for b in near if a[0] != b[0]}
+    assert across == {frozenset(("SA1", "SA2")), frozenset(("SB1", "SB2"))}, across
+    assert all(kind == "door" for a, near in room_links(example).items() for b, kind in near.items() if a[0] != b[0])
+
+    # The office, when its file is there: the rule holds for every link, whatever the building.
+    path = office_path()
+    if not path.is_file():
+        print(f"floor spread: {path.name} missing, skipped the office part", flush=True)
+        return
+    office = load_office(path)
+    levels = {f["id"]: f["level"] for f in office["floors"]}
+    polygons = {(f["id"], r["id"]): shapely.Polygon(r["polygon"]).buffer(0) for f in office["floors"] for r in f["rooms"]}
+    stairs = {(f["id"], r["id"]) for f in office["floors"] for r in f["rooms"] if r.get("type") == "stair"}
+    stairs |= {(f["id"], s["room"]) for f in office["floors"] for s in f.get("stairs", [])}
+    ups = floor_links(office)
+    count = sum(len(near) for near in ups.values())
+    for low, near in ups.items():
+        for high, kind in near.items():
+            assert kind == "floor" and levels[high[0]] > levels[low[0]], (low, high)
+            assert low not in stairs and high not in stairs, (low, high)
+            assert polygons[low].intersection(polygons[high]).area >= FLOOR_MIN_M2, (low, high)
+    rooms = [(f["id"], r["id"]) for f in office["floors"] for r in f["rooms"]]
+    pinned = ("F1", "R143") in rooms and ("F1", "R143A") in rooms
+    scenario = json.loads((ROOT / "data/buildings/office.scenario.json").read_text(encoding="utf-8"))
+    scenario.update(maxTime=400, sprinklers=False)
+    if pinned:
+        assert count == 117, count  # 60 rooms with a room above them, 41 with a room below
+        up = {m: ignition_schedule(office, {**scenario, "fire": {**scenario["fire"], "material": m}}) for m in MATERIALS}
+        assert [len(up[m]) for m in ("concrete", "drywall", "wood")] == [9, 21, 46]
+        assert {e["floor"] for e in up["drywall"]} == {"F1"}  # a drywall floor (900 s) holds past 400 s
+        assert sum(e["floor"] == "F2" for e in up["wood"]) == 13 and {e["floor"] for e in up["concrete"]} == {"F1"}
+    print(f"floor spread: fixture (wood C at 390 s, concrete holds 600 s, upward only), the rule and the example's 10 links, "
+          f"{'the office' if pinned else 'a rebuilt office'}: {count} floor links", flush=True)
 
 
 def check_spread_slow():

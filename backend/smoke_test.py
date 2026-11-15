@@ -412,14 +412,15 @@ def check_report_run(client):
                 hand["base"]["fire"]["material"] = material
             return hand
 
-        wood = ("Fire spread at illustrative wood speeds: 14.0 other rooms per fire on average by 400 s, "
-                "at most 14 rooms (fire in Kitchen (R101))")
+        # D26: with wood the rooms over R101 and L1 catch fire through the floor (300 s), so 15 each, not 14
+        wood = ("Fire spread at illustrative wood speeds: 15.0 other rooms per fire on average by 400 s, "
+                "at most 15 rooms (fire in Kitchen (R101))")
         md_wood = features.report(hand_batch("R101", "L1"), building)
         assert f". {wood}." in md_wood and md_wood.index("90% out:") < md_wood.index(wood), md_wood
         lobby = names.room_label("F1", "L1")
         assert f"(fire in {lobby})" in features.report(hand_batch("L1", "R101"), building)  # a tie: the first one wins
         md_mixed = features.report(hand_batch("R101", "L1", "SA1"), building)  # the stair reaches all 23 other rooms
-        assert ("Fire spread at illustrative wood speeds: 17.0 other rooms per fire on average by 400 s, "
+        assert ("Fire spread at illustrative wood speeds: 17.7 other rooms per fire on average by 400 s, "  # was 17.0
                 f"at most 23 rooms (fire in {names.room_label('F1', 'SA1')})") in md_mixed, md_mixed
         md_default = features.report(hand_batch("R101", "L1", material=None), building)  # no fire.material: drywall
         assert ("Fire spread at illustrative drywall speeds: 11.0 other rooms per fire on average by 400 s, "
