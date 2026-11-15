@@ -8,6 +8,7 @@ import { SPEEDS, useClock } from '../store/clock'
 import type { ViewMode } from '../scene/geometry'
 import { useA11y } from './a11y'
 import { claudeCrowdLimit, crowdTooBig } from '../model/brain'
+import { PLACE_FIRE_FIRST, firePlaced } from '../model/scenarioDraft'
 import MenuBar from './Menu'
 import type { MenuDef } from './Menu'
 
@@ -22,7 +23,8 @@ function openScenario(placing = false) {
 function runSimulation() {
   const s = app()
   s.setCard('scenario')
-  if (s.draft && !s.running) void s.runScenario(s.draft)
+  // A run needs the fire placed in a room: the Run buttons are off until it is (the scenario card is open to place it).
+  if (s.draft && !s.running && firePlaced(s.draft)) void s.runScenario(s.draft)
 }
 
 function restart() {
@@ -104,7 +106,10 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
   const set = useApp.setState
   // Everyone asks Claude holds up to 200 people: with more, a live run is refused, and so the Run buttons are off (the scenario card says why).
   const tooMany = crowdTooBig(draft, mode === 'live')
-  const runTitle = tooMany && draft ? claudeCrowdLimit(draft.occupants.total) : undefined
+  // And a run needs the fire placed in a room (the backend refuses one without): the Run buttons say to click a room first.
+  const noFire = !!draft && !firePlaced(draft)
+  const runTitle = tooMany && draft ? claudeCrowdLimit(draft.occupants.total) : noFire ? PLACE_FIRE_FIRST : undefined
+  const runOff = !draft || !!running || tooMany || noFire
   // Side by side and Ghost need a second floor to lay out or to fade.
   const oneFloor = (building?.floors.length ?? 0) < 2
 
@@ -161,7 +166,7 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
           sepAbove: true,
         },
         { kind: 'item', label: 'Scenario setup…', onSelect: () => openScenario(), sepAbove: true },
-        { kind: 'item', label: 'Run simulation', onSelect: runSimulation, disabled: !draft || !!running || tooMany, title: runTitle },
+        { kind: 'item', label: 'Run simulation', onSelect: runSimulation, disabled: runOff, title: runTitle },
       ],
     },
     {
@@ -186,7 +191,7 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
   const tools: Tool[] = [
     { id: 'open', label: 'Open file', icon: Upload, onClick: openFile },
     { id: 'fire', label: 'Set fire', icon: Flame, onClick: () => openScenario(true) },
-    { id: 'run', label: 'Run simulation', icon: Play, onClick: runSimulation, disabled: !draft || !!running || tooMany, primary: true, title: runTitle },
+    { id: 'run', label: 'Run simulation', icon: Play, onClick: runSimulation, disabled: runOff, primary: true, title: runTitle },
     { id: 'layers', label: 'Layers', icon: Layers3, onClick: () => s.setCard(card === 'layers' ? null : 'layers'), expanded: card === 'layers' },
     { id: 'visibility', label: 'Visibility', icon: Eye, onClick: () => s.setCard(card === 'visibility' ? null : 'visibility'), expanded: card === 'visibility', title: 'Fire and smoke visibility' },
     { id: 'top', label: 'Top view', icon: Camera, onClick: () => set((st) => ({ topView: st.topView + 1 })) },

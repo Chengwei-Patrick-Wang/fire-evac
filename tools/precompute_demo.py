@@ -129,7 +129,7 @@ PRESETS = {
     # own room and the best what-if story (the stair door next to it), R203c the worst fire (most people trapped) and R237b
     # the OPEN OFFICE fire the team quotes (D15); "--top 4" (the 4 highest-risk plus R143) or "--rooms" replaces them.
     # material_pair (A11): R143's baseline again with wood-speed fire spread (illustrative), the app's wood-against-drywall
-    # what-if. R143 is the tour's first room; from it drywall reaches 21 rooms by 400 s and wood 37.
+    # what-if. R143 is the tour's first room; from it drywall reaches 21 rooms by 400 s and wood 46 (the fire rises through floors too).
     "office": {"occupants": 250, "fire_type": "kitchen", "rooms": ["R143", "R203c", "R237b"], "sweep_rooms": 8,
                "material_pair": {"room": "R143", "material": "wood"}},
     # the clinic's design occupancy (D21: 3,910 m2 of walkable floor / 13.9 m2 per person, rounded to 10) and the same

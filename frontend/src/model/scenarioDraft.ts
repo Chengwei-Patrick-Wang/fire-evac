@@ -19,6 +19,12 @@ export function makeDraft(building: Building, base?: Scenario | null): Scenario 
   return d
 }
 
+/** What a Run button says while the scenario has no fire yet (the backend refuses a run with no fire floor and room). */
+export const PLACE_FIRE_FIRST = 'Click a room to place the fire first'
+
+/** True once the scenario's fire sits in a room: a click on a room, or the room list, writes the fire's floor, room and spot. */
+export const firePlaced = (s: Pick<Scenario, 'fire'> | null | undefined): boolean => !!s?.fire.floor && !!s.fire.room
+
 /** The room containing floor-local point (x, y), or null for stairs, outside or no room. */
 export function roomAt(building: Building, floorId: string, x: number, y: number) {
   const floor = building.floors.find((f) => f.id === floorId)

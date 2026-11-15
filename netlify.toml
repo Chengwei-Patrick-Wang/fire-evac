@@ -4,14 +4,13 @@
 
 [build]
   base = "frontend"
-  # An empty VITE_SITE_URL (below) falls back to Netlify's own $URL, so the About overlay's QR code points at this site.
+  # An empty VITE_SITE_URL (below) falls back to Netlify's own $URL. The app no longer reads it: the About overlay's QR code was removed.
   command = "VITE_SITE_URL=\"${VITE_SITE_URL:-$URL}\" npm run build"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "22"
-  # Placeholder: the site's public URL (https://NAME.netlify.app). The About overlay draws a QR code for it.
-  # Leave it empty to use Netlify's $URL; set it only for a custom domain.
+  # The site's public URL (https://NAME.netlify.app). Nothing uses it now that the About overlay has no QR code; leave it empty.
   VITE_SITE_URL = ""
 
 # Single-page app: any path that is not a file gets the app. Files that exist (/demo/*.json) are served as they are.

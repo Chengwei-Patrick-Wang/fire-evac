@@ -176,9 +176,9 @@ a { color: var(--primary-text); }
 .sw.ring { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #FB923C; border-radius: 50%; background: transparent; }
 .sw.ring.red { border-color: #DC2626; }
 .sw.ring.claude { border-color: #E879F9; }
-/* The spread's rows: a burning room (orange turning red), the cone that marks it, and the door the fire closed (a plain swatch). */
+/* The spread's rows: a burning room (orange turning red), the flame that marks it (a small flame icon, like the flame sprites in the viewer), and the door the fire closed (a plain swatch). */
 .sw.ramp { border-radius: 2px; background: linear-gradient(135deg, #F97316, #DC2626); }
-.sw.cone { background: #F97316; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.sw-flame { flex: none; margin: 0 -1px; color: #F97316; fill: rgba(249, 115, 22, 0.35); }
 .lc-note { margin: 6px 0 0; font-size: var(--fs-xs); color: var(--text-2); }
 .lc-switch { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 0; font-size: var(--fs-sm); }
 .lc-track { position: relative; width: 28px; height: 16px; flex: none; border-radius: 8px; background: var(--border-strong); }
