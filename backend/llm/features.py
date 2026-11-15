@@ -10,10 +10,13 @@ tracer's first pass (A8).
 
 Report card. Every number is built here, in code, from the batch/v0 or run/v0 (and the building, for
 names). The model sees only the weak spots, the headline numbers and door and room names, and
-writes just the headline and one fix per spot: {headline, fixes: [{id, fix}]}. A headline with a
+writes just the headline, a summary and one fix per spot: {headline, summary, fixes: [{id, fix}]}. A headline with a
 number that is not in those facts (or the word "panic") gives way to the template headline; a fix
 for an unknown id is ignored, a missing or bad one is the per-kind template fix, and a long one is
-cut to 25 words. With the model off, down or slow the whole card is the template. Spots are
+cut to 25 words. The summary (3 to 4 sentences: what happened, where people got stuck and why, the best fix) is
+checked as the headline is (every number in the facts, no door id, no "panic", at most 120 words) and dropped alone
+when it fails; when it stands the card opens with it, under "## AI summary (Claude)" ("(Gemini)" for Gemini),
+and a template card has none. With the model off, down or slow the whole card is the template. Spots are
 batch.top[:3], or for a run the 3 doors with the most person-seconds of waiting. Smoke exposure
 (D10: run metrics.exposure, batch runs[].smokeSeconds and dosed; D11: batch whatIf[]) leads when
 present, evacuation time second: propping the stair doors moved t90 by +0.2 s on average but smoke
@@ -42,10 +45,14 @@ model's card share it.
 Decisions. `obs` is sim/brain.py's: {idx, t, floor, x, y, profile, visibility, speed, current,
 trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?}]}. A decision is
 {target: one of the obs's option ids, action: "go" | "reroute" | "wait", reason: str}, or None,
-which means "use the rules". decide_batch makes one model call for the whole list (same length
-and order back); decide(obs) is decide_batch([obs])[0]. Actions are normalized to the obs: "go"
+which means "use the rules". decide_batch asks the model in chunks of at most 20 observations
+(balanced, and no fewer than 5 unless the list is shorter: a call takes about a second whatever its size, plus the
+time to write its answer), up to 8 calls at once in threads, and merges the answers by index (same length and order
+back); a chunk that fails or has not answered after DECIDE_WAIT (25 s) leaves its agents on the rules and the other
+chunks stand. decide(obs) is decide_batch([obs])[0]. Actions are normalized to the obs: "go"
 when there is no current target, "wait" when the target is the current one, else "reroute". Each
-call uses thinking "minimal" (1-5 s on gemini-3.5-flash against 5-13 s at its default) and the
+call uses thinking "minimal" on Gemini (1-5 s on gemini-3.5-flash against 5-13 s at its default), role "agent" on Claude
+(claude-haiku-5-5 at effort low: 1.5-2 s for 5 observations, 4-5 s for 20, measured Sat), and the
 client's timeout, retry and fallback rules; anything that fails is None.
 
 First pass. propose_plan(image, hints) sends a PNG, JPEG or WebP floor plan with hints
@@ -57,8 +64,9 @@ doors: []} in floor meters, y up, from the image's bottom-left corner: (px * s, 
 It snaps every vertex to 0.25 m and drops polygons with fewer than 3 points, a point that is not
 two numbers, a vertex outside the image, no single clear shape after shapely.make_valid (a
 bow-tie), or under 1 m2; an unknown type becomes other; at most 60 rooms. Timeout 60 s per model
-(vision calls took 5-20 s, once 57 s). The call walks the client's chain with Gemini 2.x moved to
-the end (GEMINI_MODEL stays first): on the test floor (contracts/plan.example.json F1 drawn at
+(vision calls took 5-20 s, once 57 s; Claude's tracer role has its own longer least, see client.py). The call walks the
+client's Gemini chain with Gemini 2.x moved to the end (GEMINI_MODEL stays first), or with LLM_PROVIDER=claude asks
+claude-opus-5-5 at effort high (role "tracer"): on the test floor (contracts/plan.example.json F1 drawn at
 30 px/m) gemini-3.6-flash gave all 12 rooms at IoU 1.00 in 7 s, gemini-2.5-flash the right 12
 rooms but squeezed toward the image center, mean IoU 0.39, in 40 s (measured Sat 4 AM).
 propose_plan is None when the model gives nothing usable.
@@ -75,6 +83,7 @@ import re
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 
 from . import client
@@ -112,6 +121,7 @@ REPORT_SCHEMA = {
     "type": "object",
     "properties": {
         "headline": {"type": "string"},
+        "summary": {"type": "string"},
         "fixes": {
             "type": "array",
             "items": {
@@ -121,8 +131,11 @@ REPORT_SCHEMA = {
             },
         },
     },
-    "required": ["headline", "fixes"],
+    "required": ["headline", "summary", "fixes"],
 }
+SUMMARY_WORDS = 120  # the prompt asks for 3 to 4 sentences; a summary that runs past this is dropped
+SUMMARY_HEADING = "## AI summary"  # "(Claude)" or "(Gemini)" follows, from the provider that wrote it
+WRITER_NAMES = {"gemini": "Gemini", "claude": "Claude"}
 
 _NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
 _LENGTH_UNIT = re.compile(r"\s?(?:m|cm|mm|ft|in|meters?|metres?|feet|foot|inch(?:es)?)\b", re.I)
@@ -676,6 +689,25 @@ def _good_headline(text: str, known: set[float], names: _Names | None = None) ->
             and all(_known(v, known) for v in _numbers(text)))
 
 
+def _summary_problem(text: str, known: set[float], names: _Names | None = None) -> str | None:
+    """Why a summary cannot be used, or None. The headline's check for a longer text: every number is in the facts,
+    no door id, never "panic", and not longer than SUMMARY_WORDS."""
+    if not text:
+        return "empty"
+    if len(text.split()) > SUMMARY_WORDS:
+        return f"over {SUMMARY_WORDS} words"
+    if "panic" in text.lower():
+        return "the word panic"
+    if names and names.mentions_id(text):
+        return "a door id"
+    unknown = [v for v in _numbers(text) if not _known(v, known)]
+    return f"numbers not in the facts: {', '.join(f'{v:g}' for v in unknown)}" if unknown else None
+
+
+def _good_summary(text: str, known: set[float], names: _Names | None = None) -> bool:
+    return _summary_problem(text, known, names) is None
+
+
 def _good_fix(text: str, known: set[float], names: _Names | None = None) -> bool:
     """No invented statistics: each number is in the facts, a length (1.2 m), or a small count. No door id either."""
     if not text or "panic" in text.lower() or (names and names.mentions_id(text)):
@@ -719,13 +751,18 @@ def _prompt(facts: dict) -> tuple[str, str]:
     else:
         focus = f"{first_spot}."
     prompt = (
-        f'You write two parts of a report card for a fire evacuation simulation of the building "{facts["building"]}". '
+        f'You write three parts of a report card for a fire evacuation simulation of the building "{facts["building"]}". '
         "The facts below come from the simulation and are already shown to the reader next to your text.\n\n"
         "Write:\n"
         f"1. headline: one sentence of at most 25 words. {focus} "
         "Use only numbers that appear in the facts, copied exactly; no number is fine too. Keep each "
         "number with what it describes: a building-wide number is not about one spot.\n"
-        f"2. fixes: one per spot id, at most {FIX_WORDS} words each: a concrete change to the building "
+        "2. summary: 3 to 4 plain sentences (at most 90 words) for a reader who has not seen the numbers: what "
+        "happened in this simulation, where people got stuck and why (what about that spot's width, position or "
+        "the rooms it joins makes it slow), and the single best fix, the one change that would help most. Same "
+        "number rule as the headline: only numbers from the facts, copied exactly, or none; name each spot by its "
+        "name.\n"
+        f"3. fixes: one per spot id, at most {FIX_WORDS} words each: a concrete change to the building "
         "at that spot, for example a wider or double door, a second door or stair route, signs that "
         "steer people to a less-used exit or stair, a layout change, or faster alarm and detection "
         "coverage. Fit each fix to its own spot instead of repeating one idea. No statistics and no "
@@ -742,12 +779,15 @@ def _prompt(facts: dict) -> tuple[str, str]:
     return prompt, text
 
 
-def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
-    """The model's headline (or None) and fixes by spot id, each checked; ({} and None) on failure."""
+def _ask(facts: dict) -> tuple[str | None, dict[str, str], str | None]:
+    """The model's headline (or None), its fixes by spot id and its summary (or None), each checked; (None, {}, None)
+    on failure. A summary with a number that is not in the facts, a door id, "panic" or too many words is dropped
+    alone: the headline and the fixes it came with stand."""
     prompt, text = _prompt(facts)
-    answer = client.complete(prompt, schema=REPORT_SCHEMA, timeout=REPORT_TIMEOUT, thinking=REPORT_THINKING)
+    answer = client.complete(prompt, schema=REPORT_SCHEMA, timeout=REPORT_TIMEOUT, thinking=REPORT_THINKING,
+                             role="report")
     if not isinstance(answer, dict):
-        return None, {}
+        return None, {}, None
     known = set(_numbers(text))
     names = facts.get("names")  # a door id in the model's text is as bad as an invented number
     headline = _clean(answer.get("headline"))
@@ -764,11 +804,20 @@ def _ask(facts: dict) -> tuple[str | None, dict[str, str]]:
         fix = _cut(_clean(item.get("fix")), FIX_WORDS)
         if sid in ids and sid not in fixes and _good_fix(fix, known, names):
             fixes[sid] = fix
-    return headline or None, fixes
+    summary = _clean(answer.get("summary"))
+    problem = _summary_problem(summary, known, names) if summary else None
+    if problem:
+        print(f"LLM report: summary dropped ({problem}): {summary[:120]!r}", file=sys.stderr)
+        summary = ""
+    return headline or None, fixes, summary or None
 
 
-def _render(facts: dict, headline: str, fixes: dict[str, str], writer: str) -> str:
-    lines = [f"### Report card: {facts['building']}", "", f"**{headline}**", ""]
+def _render(facts: dict, headline: str, fixes: dict[str, str], writer: str, summary: str | None = None) -> str:
+    lines: list[str] = []
+    if summary:  # the model's own paragraph leads the card; a template card has none
+        by = WRITER_NAMES.get(client.provider())
+        lines += [f"{SUMMARY_HEADING} ({by})" if by else SUMMARY_HEADING, "", summary, ""]
+    lines += [f"### Report card: {facts['building']}", "", f"**{headline}**", ""]
     if facts["placeholder"]:
         lines += ["*Placeholder data: these numbers are not from a simulation.*", ""]
     lines += [facts["numbers"], ""]
@@ -800,18 +849,18 @@ def report_card(batch_or_run: dict, building: dict, allow_llm: bool = True) -> t
             text = ("### Report card\n\nThis result has neither batch nor run numbers to report.\n\n"
                     f"---\n\n*{LIMITS}*\n\n*{TEMPLATE_WRITER}*\n")
             return text, False
-        headline, fixes = None, {}
+        headline, fixes, summary = None, {}, None
         if allow_llm:
             try:
-                headline, fixes = _ask(facts)
+                headline, fixes, summary = _ask(facts)
             except Exception as e:  # a bug in the checks above: keep the template
                 print(f"LLM report: model answer unusable ({type(e).__name__}: {e})", file=sys.stderr)
-        ai = bool(headline or fixes)
+        ai = bool(headline or fixes or summary)
         if ai:
             writer = WRITTEN_BY.get(client.provider(), "Written by AI")
         else:
             writer = TEMPLATE_WRITER if allow_llm else PRIVATE_WRITER
-        return _render(facts, headline or facts["headline"], fixes, writer), ai
+        return _render(facts, headline or facts["headline"], fixes, writer, summary), ai
     except Exception as e:
         print(f"LLM report: template fallback ({type(e).__name__}: {e})", file=sys.stderr)
         return (f"### Report card\n\nThe report could not be built for this result.\n\n---\n\n*{LIMITS}*\n\n"
@@ -825,8 +874,13 @@ def report(batch_or_run: dict, building: dict, allow_llm: bool = True) -> str:
 
 # ------------------------------------------------------------------ decisions
 
-DECIDE_TIMEOUT = 30.0  # s per model call; sim.brain.LLMBrain stops waiting sooner (4 s, C8: 12 s)
-DECIDE_THINKING = "minimal"
+DECIDE_TIMEOUT = 30.0  # s per model call (the client's own timeout, retries aside)
+DECIDE_THINKING = "minimal"  # Gemini; Claude's effort for the agent role is low (client.CLAUDE_ROLES)
+DECIDE_CHUNK = 20  # observations per model call, at most: decide_batch splits a longer list
+DECIDE_MIN_CHUNK = 5  # ... and does not split into calls of fewer than this many (a call costs about a second whatever its size)
+DECIDE_WORKERS = 8  # model calls in flight at once, at most
+DECIDE_WAIT = 25.0  # s decide_batch waits for all its calls; what landed by then is used, the rest is None (the rules).
+#                     sim.brain.LLM_WAIT_S, the sim's own wait for decide_batch, is longer than this
 REASON_CHARS = 160
 DECISION_SCHEMA = {
     "type": "object",
@@ -923,9 +977,51 @@ def _decision(item, compact: dict, obs: dict) -> dict | None:
     return {"target": target, "action": action, "reason": reason}
 
 
+def _chunks(items: list) -> list[list]:
+    """The list in order as evenly sized chunks, one per worker where that keeps each between DECIDE_MIN_CHUNK and
+    DECIDE_CHUNK items: a call's time is mostly the answer it writes, so 11 observations go as 3 calls at once (about
+    2 s) and not as one (about 4 s), and 160 as 8 calls of 20. Never more than DECIDE_CHUNK in a chunk."""
+    n = len(items)
+    size = min(DECIDE_CHUNK, max(DECIDE_MIN_CHUNK, -(-n // DECIDE_WORKERS)))
+    count = max(1, -(-n // size))
+    base, extra = divmod(n, count)
+    out, start = [], 0
+    for k in range(count):
+        end = start + base + (1 if k < extra else 0)
+        out.append(items[start:end])
+        start = end
+    return out
+
+
+def _ask_chunk(chunk: list[dict]) -> dict | None:
+    """One model call for up to DECIDE_CHUNK compact observations: the parsed answer, or None. Never raises."""
+    try:
+        answer = client.complete(_decide_prompt(chunk), schema=DECISION_SCHEMA, timeout=DECIDE_TIMEOUT,
+                                 thinking=DECIDE_THINKING, role="agent")
+    except Exception as e:
+        print(f"LLM decide: a call failed ({type(e).__name__}: {e})", file=sys.stderr)
+        return None
+    return answer if isinstance(answer, dict) else None
+
+
+def _ask_chunks(chunks: list[list[dict]]) -> list[dict | None]:
+    """The model's answers to the chunks, in their order, asked at once in threads, DECIDE_WORKERS at a time. An answer
+    that has not landed DECIDE_WAIT s after the start is None (its thread is left to finish on its own: Python cannot stop
+    it, and the client's timeout will). A single chunk goes through a thread too, so the wait bounds it the same way."""
+    pool = ThreadPoolExecutor(max_workers=min(DECIDE_WORKERS, len(chunks)))
+    try:
+        futures = [pool.submit(_ask_chunk, chunk) for chunk in chunks]
+        wait(futures, timeout=DECIDE_WAIT)
+        return [f.result() if f.done() and not f.cancelled() and f.exception() is None else None for f in futures]
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def decide_batch(observations: list[dict]) -> list[dict | None]:
-    """One model call for every obs in the list; returns a list of the same length and order, each
-    a decision {target, action, reason} or None (use the rules). Never raises."""
+    """Decisions for every obs in the list; returns a list of the same length and order, each a decision
+    {target, action, reason} or None (use the rules). The observations go to the model in chunks of at most
+    DECIDE_CHUNK (see _chunks), up to DECIDE_WORKERS calls at once, and the answers are merged by index; a chunk that
+    fails or is late (DECIDE_WAIT) leaves its entries None and the others stand. Never raises."""
     global _off_noted
     try:
         observations = list(observations)
@@ -944,18 +1040,19 @@ def decide_batch(observations: list[dict]) -> list[dict | None]:
         asked = [c for c in compact if c is not None]
         if not asked:
             return out
-        answer = client.complete(_decide_prompt(asked), schema=DECISION_SCHEMA,
-                                 timeout=DECIDE_TIMEOUT, thinking=DECIDE_THINKING)
-        if not isinstance(answer, dict):
-            return out
-        for item in answer.get("decisions") or []:
-            if not isinstance(item, dict):
+        chunks = _chunks(asked)
+        for chunk, answer in zip(chunks, _ask_chunks(chunks)):
+            if answer is None:
                 continue
-            i = item.get("i")
-            if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(out):
-                continue
-            if out[i] is None and compact[i] is not None:
-                out[i] = _decision(item, compact[i], observations[i])
+            ours = {c["i"] for c in chunk}  # a decision for an observation of another chunk is not this answer's to give
+            for item in answer.get("decisions") or []:
+                if not isinstance(item, dict):
+                    continue
+                i = item.get("i")
+                if isinstance(i, bool) or not isinstance(i, int) or i not in ours:
+                    continue
+                if out[i] is None:
+                    out[i] = _decision(item, compact[i], observations[i])
         return out
     except Exception as e:
         print(f"LLM decide: no decisions ({type(e).__name__}: {e})", file=sys.stderr)
@@ -1184,7 +1281,7 @@ def propose_plan(image: bytes, hints: dict) -> dict | None:
         t0 = time.time()
         answer = client.complete(_propose_prompt(width, height, name), image=bytes(image), image_mime=mime,
                                  schema=PROPOSE_SCHEMA, timeout=PROPOSE_TIMEOUT, thinking=PROPOSE_THINKING,
-                                 models=_vision_chain())
+                                 models=_vision_chain(), role="tracer")
         if not isinstance(answer, dict):
             return None
         floor, dropped = _sanitize(answer, hints)

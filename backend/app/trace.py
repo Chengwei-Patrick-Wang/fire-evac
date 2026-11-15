@@ -11,10 +11,10 @@ person tracing adds them. `model` names the model that answered; `notes` are B's
 (empty until buildings/tidy.py is on main, see _tidy). Errors: 413 above 8 MB, 415 for
 another file type, 422 for bad hints (or a width and height that are not the image's), and 503
 {"detail": "AI first pass unavailable"} when the model gives nothing: LLM_PROVIDER=off, no key,
-every model out of quota or busy, a timeout. The model call can take a while (60 s per model in
-the chain, at most 130 s in all), so the tracer waits up to 150 s. Only public plans may go to
-Gemini (spec 12): the tracer asks before it sends a private trace and refuses one that mentions
-UMass.
+every model out of quota or busy, a refusal, a timeout. The model call can take a while (Gemini: 60 s per
+model in the chain, at most 130 s in all; Claude Opus at high effort: about 35 s for 12 rooms, and at least
+150 s allowed), so the tracer waits up to 180 s. Only public plans may go to the model (spec 12): the tracer
+asks before it sends a private trace and refuses one that mentions UMass.
 """
 import io
 import json

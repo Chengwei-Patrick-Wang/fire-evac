@@ -60,7 +60,7 @@ Shared files (`contracts/`, `AGENTS.md`, `requirements.txt`, `frontend/src/data/
 - **Secrets:**
   - `.env` holds `GEMINI_API_KEY` (see `.env.example`).
   - Never export `ANTHROPIC_API_KEY` in a shell where Claude Code runs: Claude Code would bill that key instead of your plan.
-  - The app's Claude key, if ever used, is `APP_ANTHROPIC_API_KEY`.
+  - The app's Claude key is `APP_ANTHROPIC_API_KEY` (with `LLM_PROVIDER=claude`; see `.env.example`). Calls are priced and capped by `CLAUDE_BUDGET_USD`.
 - **Ethics:**
   - This is not a compliance tool, and the fire model is labeled illustrative.
   - No "panic" mode.
