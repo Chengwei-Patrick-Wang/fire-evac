@@ -92,6 +92,25 @@ def check_llm(building, scenario, baseline):
     print(f"mixed LLM OK: {len(flagged)} flagged, {len(logs)} decisions; timeout and rules fallback OK")
 
 
+def arrival_waits(result) -> list[float]:
+    """Seconds from each stair flight's `arrive` to the first frame in which its person is placed and moving again
+    (status 1 on the floor they came to); frames are 0.5 s apart, so a person placed at once reads 0 to 0.5 s."""
+    floors = result["floors"]
+    moving: dict[int, list] = {}
+    for frame in result["frames"]:
+        for idx, _, _, floor, state in frame["a"]:
+            if state == 1:
+                moving.setdefault(idx, []).append((frame["t"], floor))
+    waits = []
+    for e in result["events"]:
+        if e["type"] == "stair":
+            placed = next((t for t, floor in moving.get(e["idx"], ())
+                           if t >= e["arrive"] - 1e-9 and floor == floors.index(e["to"])), None)
+            if placed is not None:
+                waits.append(placed - e["arrive"])
+    return waits
+
+
 def check_llm_batch(building, scenario):
     from unittest.mock import patch
     from sim.brain import LLMBrain
@@ -109,6 +128,10 @@ def check_llm_batch(building, scenario):
     logs = [e for e in result["events"] if e["type"] == "llm"]
     assert all(a.get("llm") for a in result["agents"])
     assert result["metrics"]["evacuated"] == 24
+    # A stair arrival is placed at once, as in rules mode (0.26 s on average at 0.5 s frames); waiting for the 1 s round
+    # let one person per second through each stair: 0.91 s on average here, over 4 s on a corridor fire.
+    waits = arrival_waits(result)
+    assert len(waits) >= 8 and sum(waits) / len(waits) < 0.5 and max(waits) <= 1.0, waits
     assert any(len(call) > 1 for call in calls)
     assert len(calls) == len({e["t"] for e in logs})
     assert len(calls) <= int(result["frames"][-1]["t"]) + 1

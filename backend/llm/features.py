@@ -53,7 +53,12 @@ chunks stand. decide(obs) is decide_batch([obs])[0]. Actions are normalized to t
 when there is no current target, "wait" when the target is the current one, else "reroute". Each
 call uses thinking "minimal" on Gemini (1-5 s on gemini-3.5-flash against 5-13 s at its default), role "agent" on Claude
 (claude-haiku-5-5 at effort low: 1.5-2 s for 5 observations, 4-5 s for 20, measured Sat), and the
-client's timeout, retry and fallback rules; anything that fails is None.
+client's timeout, retry and fallback rules; anything that fails is None. An obs with exactly one usable option is not
+sent: it is decided in code (go to it, or keep it) with the reason "Only one way out from here" (65% of the calls of the
+first all-Claude run on a corridor fire). Every reason is made plain in code (_clean_reason): a field name (estS, queueWaitS,
+distM, visibilityM) becomes plain words ("estimated time"); one about age, walking pace, ability, other traits or panic, or
+one that argues with itself ("?", "No,"), is replaced by a reason built from the option numbers ("Shortest estimated
+time", "Shorter queue, a bit farther"); and it is cut to 12 words.
 
 First pass. propose_plan(image, hints) sends a PNG, JPEG or WebP floor plan with hints
 {metersPerPixel, width, height, name?, level?} for the image as sent, and asks for rooms only
@@ -883,6 +888,31 @@ DECIDE_WORKERS = 8  # model calls in flight at once, at most
 DECIDE_WAIT = 25.0  # s decide_batch waits for all its calls; what landed by then is used, the rest is None (the rules).
 #                     sim.brain.LLM_WAIT_S, the sim's own wait for decide_batch, is longer than this
 REASON_CHARS = 160
+REASON_WORDS = 12  # a reason is cut to this many words
+ONLY_OPTION_REASON = "Only one way out from here"  # an obs with one usable option is decided here, not by the model
+# The model's field names, in plain words; "estS" is the one it leaks (6% of the reasons of the first all-Claude run).
+_FIELD_WORDS = (
+    (re.compile(r"\bqueue_?wait_?s\b", re.I), "queue wait"),
+    (re.compile(r"\bvisibility_?m\b", re.I), "visibility"),
+    (re.compile(r"\bdist_?m\b", re.I), "distance"),
+    (re.compile(r"\best_?s\b", re.I), "estimated time"),
+)
+# A reason is about the route, never about the person (spec 12): age, walking pace, ability or other traits, panic.
+_PERSONAL = re.compile(
+    r"\b(?:ages?|aged|aging|ageing|elderly|older|oldest|old|seniors?|young\w*|adults?|child\w*|kids?|teen\w*|"
+    r"man|men|woman|women|male|female|boys?|girls?|he|she|him|his|hers?|they|them|their|"
+    r"visitors?|guests?|strangers?|tourists?|newcomers?|unfamiliar|familiar\w*|typical|profile|"
+    r"pace|paced|speeds?|walkers?|walks?\s+slow\w*|slow\s+walking|slow\w*\s+(?:walk\w*|movers?|persons?|people|occupants?)|"
+    r"abilit\w+|able-bodied|capab\w+|mobility|disab\w*|wheelchairs?|impair\w*|handicap\w*|frail\w*|tired|"
+    r"assist\w*|helps?|helped|helping|"
+    r"calm|cautious|confident|brave|"
+    r"panic\w*|scared|afraid|fear\w*|terrif\w*|frighten\w*|nervous\w*|anxi\w*|hysteri\w*|freak\w*|stress\w*|worr\w*)\b",
+    re.I)
+# A reason that argues with itself ("... lower than E1? No, E1 is lower") is dropped, not shown.
+_SELF_CONTRADICTION = re.compile(r"\?|\bno,|\b(?:actually|wait,|hmm+|oops|correction|mistake|sorry)\b", re.I)
+_DANGLING = frozenset(("a", "an", "the", "and", "or", "but", "so", "with", "by", "for", "of", "to", "than", "as", "is",
+                       "are", "has", "have", "in", "on", "at", "over", "versus", "vs", "despite", "though",
+                       "although", "while", "from", "into", "about"))
 DECISION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -952,9 +982,67 @@ def _decide_prompt(compact: list[dict]) -> str:
         "prefer nearer options.\n"
         "Reply with one decision per observation: i; action (go when current is null, reroute to "
         "switch, wait to keep the current target); target (an option id of that observation); reason "
-        "(at most 12 words, about the route: distance, queue, smoke; never about panic).\n"
+        "(at most 12 plain words about distance, queue or smoke, stated once: no questions, no corrections). "
+        "Never use field names in a reason (estS, queueWaitS, distM, visibilityM): say estimated time, queue "
+        "wait, distance, visibility. Never mention age, walking pace, ability or any other trait of the "
+        "person, or panic.\n"
         "Observations:\n" + "\n".join(json.dumps(c, separators=(",", ":"), ensure_ascii=False) for c in compact)
     )
+
+
+def _cut_words(text: str, limit: int) -> str:
+    """text cut to at most `limit` words: at the end of a clause (, ; : .) when one falls within the words kept, and
+    never ending on a dangling word ("... 24.3 by over")."""
+    words = text.split()
+    if len(words) <= limit:
+        return text
+    head = words[:limit]
+    for k in range(len(head) - 2, 2, -1):
+        if head[k].endswith((",", ";", ":", ".")):
+            head = head[:k + 1]
+            break
+    while len(head) > 1 and head[-1].strip(",;:.") in _DANGLING:  # case counts: the "A" of "Stair A" is a name
+        head.pop()
+    return " ".join(head).rstrip(",;:- ")
+
+
+def _plain_reason(compact: dict, target: str, current: str | None) -> str:
+    """A reason from the option numbers alone, for a model reason that had to be dropped: plain words about
+    estimated time, queue and distance, never about the person."""
+    options = compact["options"]
+    if len(options) == 1:
+        return ONLY_OPTION_REASON
+    chosen = next((o for o in options if o["id"] == target), None)
+    best = min(options, key=lambda o: o["estS"])
+    if chosen is None or chosen["estS"] <= best["estS"] + 1e-9:
+        return "Shortest estimated time"
+    nearer, farther = chosen["distM"] < best["distM"] - 1e-9, chosen["distM"] > best["distM"] + 1e-9
+    shorter_queue = chosen["queueWaitS"] < best["queueWaitS"] - 1e-9
+    longer_queue = chosen["queueWaitS"] > best["queueWaitS"] + 1e-9
+    if shorter_queue and farther:
+        return "Shorter queue, a bit farther"
+    if nearer and longer_queue:
+        return "Closer, though the queue is longer"
+    if nearer:
+        return "Closer way out"
+    if shorter_queue:
+        return "Shorter queue"
+    return "Keeps the current way out" if target == current else "Estimated times are close"
+
+
+def _clean_reason(text, compact: dict, target: str, current: str | None) -> str:
+    """The model's reason made fit to show. Field names become plain words (estS: "estimated time"); a reason about
+    the person (age, walking pace, ability, panic) or one that argues with itself ("?", "No,") is dropped for the plain
+    reason from the option numbers; the rest is cut to REASON_WORDS words."""
+    original = " ".join(str(text or "").split())
+    reason = original
+    for pattern, plain in _FIELD_WORDS:
+        reason = pattern.sub(plain, reason)
+    if reason != original and original[:1].isupper():
+        reason = reason[:1].upper() + reason[1:]
+    if not reason or _PERSONAL.search(reason) or _SELF_CONTRADICTION.search(reason):
+        return _plain_reason(compact, target, current)
+    return _cut_words(reason, REASON_WORDS)[:REASON_CHARS] or _plain_reason(compact, target, current)
 
 
 def _decision(item, compact: dict, obs: dict) -> dict | None:
@@ -974,8 +1062,7 @@ def _decision(item, compact: dict, obs: dict) -> dict | None:
         action = "wait"
     else:
         action = "reroute"
-    reason = " ".join(str(item.get("reason") or "").split())[:REASON_CHARS] or "model gave no reason"
-    return {"target": target, "action": action, "reason": reason}
+    return {"target": target, "action": action, "reason": _clean_reason(item.get("reason"), compact, target, current)}
 
 
 def _chunks(items: list) -> list[list]:
@@ -1020,9 +1107,11 @@ def _ask_chunks(chunks: list[list[dict]]) -> list[dict | None]:
 
 def decide_batch(observations: list[dict]) -> list[dict | None]:
     """Decisions for every obs in the list; returns a list of the same length and order, each a decision
-    {target, action, reason} or None (use the rules). The observations go to the model in chunks of at most
+    {target, action, reason} or None (use the rules). An obs with exactly one usable option is decided here, without
+    the model (go to it, or keep it: "Only one way out from here"). The others go to the model in chunks of at most
     DECIDE_CHUNK (see _chunks), up to DECIDE_WORKERS calls at once, and the answers are merged by index; a chunk that
-    fails or is late (DECIDE_WAIT) leaves its entries None and the others stand. Never raises."""
+    fails or is late (DECIDE_WAIT) leaves its entries None and the others stand. Every reason is made plain by
+    _clean_reason. Never raises."""
     global _off_noted
     try:
         observations = list(observations)
@@ -1038,7 +1127,17 @@ def decide_batch(observations: list[dict]) -> list[dict | None]:
                 print("LLM: LLM_PROVIDER=off; agent decisions use the rules", file=sys.stderr)
             return out
         compact = [_compact(i, o) for i, o in enumerate(observations)]
-        asked = [c for c in compact if c is not None]
+        asked = []
+        for c in compact:
+            if c is None:
+                continue
+            if len({o["id"] for o in c["options"]}) == 1:
+                # One way out: there is nothing to choose, so the model is not asked (65% of the calls of the first
+                # all-Claude run on a corridor fire were like this). Go to it, or keep it: _decision tells which.
+                out[c["i"]] = _decision({"target": c["options"][0]["id"], "reason": ONLY_OPTION_REASON}, c,
+                                        observations[c["i"]])
+            else:
+                asked.append(c)
         if not asked:
             return out
         chunks = _chunks(asked)

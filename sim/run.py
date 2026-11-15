@@ -9,7 +9,8 @@ Behavior:
   scenario.occupants.perRoom; profile, v0 and startDelay come from sim.profiles.
 - One CollisionFreeSpeedModel sim per floor. Stages: every exit on the floor, plus
   connected stairs (bidirectional for building-wide fire routing). Assistance waits leave earlier admission slots free;
-  arrivals re-enter in arrival-time order once a clear spot is available.
+  arrivals re-enter in arrival-time order once a clear spot is available. With brain llm an arrival is placed at once
+  on the rules' pick, as in rules mode, and the model's answer replaces it at the next 1 s round.
 - Each agent chooses a route using travel time and queues, and stands still
   (desired_speed 0) until alarmTime + startDelay, or an earlier cue countdown.
 - Fire in the same room, or visibility below 10 m, starts a separate 0–10 s
@@ -772,9 +773,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             if llm_trigger is None and t - last_llm.get(i, -math.inf) >= 15:
                 llm_trigger = trigger
             if llm_trigger and t - last_llm.get(i, -math.inf) >= 10:
-                obs["trigger"] = llm_trigger
-                pending_llm[i] = (obs, fs)
-            return target[i] if current is not None else None
+                waiting = pending_llm.get(i)
+                # A placed arrival keeps its own question (go, no current target) until the round, not a routine tick's.
+                if not (trigger == "tick" and waiting and waiting[0]["trigger"] == "arrive"):
+                    obs["trigger"] = llm_trigger
+                    pending_llm[i] = (obs, fs)
+            if trigger != "arrive":
+                return target[i] if current is not None else None
+            # A stair arrival is placed at once, as in rules mode, on the rules' first pick; the model's answer comes
+            # with the next 1 s round and replaces it. Holding the arrival for that round let one person through each
+            # stair per second: a 2-5 s wait on average against 0.25 s, and people lost on a busy fire.
+            return apply_choice(i, t, fs, current, trigger, brain.decide(obs))
         if i in flagged and llm_trigger and t - last_llm.get(i, -math.inf) >= 10:
             obs["trigger"] = llm_trigger
             last_llm[i] = t
@@ -825,6 +834,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             status[i] = 1
 
     def enter_stair(i, t, fs, st):
+        pending_llm.pop(i, None)  # a question about the floor they are leaving (an arrival that walked on) is stale
         profile = PROFILES.get(agents[i]["profile"], PROFILES["typical"])
         until = None
         if not profile["stairs"] and i not in assisted:
