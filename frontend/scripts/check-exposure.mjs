@@ -21,7 +21,7 @@ if (p?.main !== 'Propping DSA1 open: +22% person-seconds in smoke, Stair A on F1
   console.error('FAIL pairHeadline')
   ok = false
 }
-if (b?.main !== 'Stair doors propped open: +22% person-seconds in smoke') {
+if (b?.main !== 'Stair doors propped open: +22% more time in smoke') {
   console.error('FAIL batchHeadline')
   ok = false
 }

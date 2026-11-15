@@ -17,6 +17,8 @@ export interface WhatIfEntry {
   dTrapped?: number
   dDosed?: number
   dSmokeSeconds?: number
+  /** the change in person-seconds in smoke, in percent of the paired baselines (D's `smokePct`; null when it cannot be computed) */
+  smokePct?: number | null
 }
 export interface Headline {
   main: string
@@ -117,14 +119,16 @@ export function batchHeadline(batch: Batch | null | undefined): (Headline & { n:
     `90% out ${sgn0(e.dT90)} s on average` +
     (isNum(e.slower) ? ` (slower in ${e.slower} of ${e.n} fires)` : '') +
     (isNum(e.dTrapped) ? `, trapped ${sgn0(e.dTrapped)} per fire` : '')
-  if (!isNum(e.dSmokeSeconds)) return { main: `${e.label}: 90% out ${sgn0(e.dT90)} s on average`, secondary, n: e.n }
-  const runs = batch.runs as unknown as { smokeSeconds?: unknown }[]
-  const vals = runs.map((r) => r.smokeSeconds)
-  const mean = vals.length && vals.every(isNum) ? (vals as number[]).reduce((s, v) => s + v, 0) / vals.length : 0
-  let main =
-    mean > 0 && e.n === runs.length
-      ? `${e.label}: ${sgn((e.dSmokeSeconds / mean) * 100)}% person-seconds in smoke`
-      : `${e.label}: ${sgn(e.dSmokeSeconds)} person-seconds in smoke per fire`
-  if (isNum(e.dDosed) && Math.abs(e.dDosed) >= 0.05) main += `, ${sgn(e.dDosed, 1)} people at an illustrative smoke dose of 1`
-  return { main, secondary, n: e.n }
+  // The relative change leads, as the Report tab says it ("+69% more time in smoke"): D's own percent, else person-seconds against the mean of the
+  // batch's runs (only when the pairs are all of them). Never raw person-seconds and never the smoke dose: with no percent to give, the 90% out line leads.
+  let pct: number | null = isNum(e.smokePct) ? e.smokePct : null
+  if (pct === null && isNum(e.dSmokeSeconds)) {
+    const runs = batch.runs as unknown as { smokeSeconds?: unknown }[]
+    const vals = runs.map((r) => r.smokeSeconds)
+    const mean = vals.length && vals.every(isNum) ? (vals as number[]).reduce((s, v) => s + v, 0) / vals.length : 0
+    if (mean > 0 && e.n === runs.length) pct = (e.dSmokeSeconds / mean) * 100
+  }
+  if (pct === null) return { main: `${e.label}: 90% out ${sgn0(e.dT90)} s on average`, secondary, n: e.n }
+  const rounded = Math.round(pct)
+  return { main: `${e.label}: ${rounded > 0 ? `+${rounded}% more` : rounded < 0 ? `${-rounded}% less` : 'no change in'} time in smoke`, secondary, n: e.n }
 }

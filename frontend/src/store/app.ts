@@ -212,7 +212,8 @@ export const useApp = create<AppState>((set) => ({
   runNote: null,
   runFallback: false,
   fromTracer: null,
-  riskMetric: 'riskT90',
+  // People trapped: it paints the worst fires red where the time to get 90% out spans a narrow range (and one outlier) and reads green.
+  riskMetric: 'riskTrapped',
   crowding: false,
   lens: [true, true, true, true, true, true],
   trails: false,

@@ -173,8 +173,8 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
           label: 'Analytics',
           value: resultsTab,
           options: [
-            { label: 'Overview', value: 'results' },
-            { label: 'Risk', value: 'risk' },
+            { label: 'This fire', value: 'results' },
+            { label: 'All fires', value: 'risk' },
             { label: 'Report', value: 'report' },
           ],
           onSelect: (v) => set({ resultsTab: v as ResultsTab, sidebarOpen: true }),

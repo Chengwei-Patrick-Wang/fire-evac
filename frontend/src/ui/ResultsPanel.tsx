@@ -4,9 +4,10 @@ import Overview from '../dashboard/Overview'
 import ReportCard from '../dashboard/ReportCard'
 import WeakSpots from '../dashboard/WeakSpots'
 
+// The tab ids stay (links and the store use them): results is "This fire" (the run on screen), risk is "All fires" (the batch), report is the written report.
 const TABS: { id: ResultsTab; label: string }[] = [
-  { id: 'results', label: 'Overview' },
-  { id: 'risk', label: 'Risk' },
+  { id: 'results', label: 'This fire' },
+  { id: 'risk', label: 'All fires' },
   { id: 'report', label: 'Report' },
 ]
 
