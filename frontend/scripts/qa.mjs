@@ -31,7 +31,8 @@ const lines = []
 let webgl = false
 let playSecs = 0
 
-const server = await preview({ root, preview: { port: 4317 }, logLevel: 'warn' })
+// QA_PORT lets two worktrees run qa side by side (default 4317).
+const server = await preview({ root, preview: { port: Number(process.env.QA_PORT) || 4317 }, logLevel: 'warn' })
 let browser
 try {
   try {
