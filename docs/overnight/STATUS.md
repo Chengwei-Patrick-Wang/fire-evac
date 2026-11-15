@@ -1,5 +1,12 @@
 # Overnight status
 
+## Sat 19:45: E38 merged; Netlify builds stopped
+
+- **E38 is merged** (on screen, burning rooms tint orange to red, fire markers appear, and closed doors turn red; the material setting works in live mode), so every UI task in the Ember plan is on main.
+- **Netlify builds are stopped** to save the team's free credits (the lead's call). The public site keeps the 7:33 PM deploy: the full Fireproof UI with the old demo data. Pushes to main no longer update it; the lead publishes the final version by hand.
+- **Netlify's free plan deploys only commits by one Git contributor on a private repo.** Commits from other accounts (such as web uploads) fail to deploy.
+- **The A11 demo rerun is running:** example building done, clinic in progress, office last. Data expected around 9 PM.
+
 ## Sat 18:50: E37, C27 and most of A11 part 2 merged; the demo rerun is running
 
 **Merged:**
