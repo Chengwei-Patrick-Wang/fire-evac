@@ -620,7 +620,8 @@ def check_core(building, scenario) -> dict:
     m = r["metrics"]
     events = r["events"]
     assert set(r["fire"]) == {"floor", "x", "y", "hrr"}, "a model without a material writes no rooms or material"
-    assert not any(e["type"] == "start" for e in events)
+    # No fire here, so no fire or smoke cue; the only early starts are people who saw others leaving (C28).
+    assert all(e["cue"] == "others" and e["reason"] == "saw others leaving" for e in events if e["type"] == "start")
     check_reroutes(r)
 
     assert r["version"] == "run/v0" and r["frameInterval"] == 0.5
@@ -822,6 +823,8 @@ def check_keepout(building, scenario, slow=False):
 
 
 def check_cues(building, scenario, slow=False):
+    # These cases isolate the fire and smoke cues from people following others (C28), which check_social covers.
+    scenario = dict(scenario, socialFollowing=False)
     if slow:
         try:
             from fire.model import FireModel
@@ -893,6 +896,68 @@ def check_cues(building, scenario, slow=False):
         else:
             raise AssertionError(f"invalid premovement accepted: {invalid}")
     print(f"fire/smoke cues and room-type delays OK: {len(kitchen)} kitchen, {len(occupants)} office occupants")
+
+
+def check_social(building, scenario):
+    """C28: someone still waiting starts a few seconds after seeing two or more people walk to a way out (same floor and
+    region, within 8 m, no wall between); another floor sees nothing; and the way most of them take is worth a few seconds
+    in the exit choice, only on a route with no smoke or fire penalty."""
+    from unittest.mock import patch
+    from sim.brain import option_cost
+    from sim.profiles import HERD_MAX_S, SOCIAL_DELAY, SOCIAL_MIN_MOVERS
+
+    assert option_cost({"dist": 10}, 1.0) == 10.0
+    assert option_cost({"dist": 10, "herd": 3.0}, 1.0) == 7.0
+    assert option_cost({"dist": 1, "herd": 3.0}, 1.0) == 0.0, "a bonus never takes a cost below zero"
+    assert option_cost({"dist": 10, "smoke": 1, "herd": 3.0}, 1.0, beta=4.0) == 11.0
+    assert option_cost({"dist": float("inf"), "herd": 3.0}, 1.0) == float("inf"), "a bonus never reopens a route"
+
+    # Six people in R102 leave at the alarm; four more in R102, and four on F2, would wait 100 s.
+    real = place_occupants
+
+    def delays(b, s, rng, walkable=None):
+        agents = real(b, s, rng, walkable)
+        for a in agents:
+            a["startDelay"] = 0.0 if a["idx"] < 6 else 100.0
+        return agents
+
+    sc = dict(scenario, alarmTime=0, maxTime=60,
+              occupants={"perRoom": {"R102": 10, "R201": 4}, "mix": {"typical": 1}})
+    with patch("sim.run.place_occupants", delays):
+        result = run(building, sc, NoFire(building, sc))
+    starts = [e for e in result["events"] if e["type"] == "start"]
+    assert {e["idx"] for e in starts} == {6, 7, 8, 9}, starts  # the room's waiters; F2's saw nobody
+    assert all(e["cue"] == "others" and e["reason"] == "saw others leaving" and e["floor"] == "F1" for e in starts)
+    assert all(1 + SOCIAL_DELAY[0] <= e["t"] <= 20 for e in starts), starts  # seen from the first 1 s tick, 2-5 s to react
+    premovement = result["metrics"]["premovement"]
+    assert premovement["social"] == 4 and premovement["started"] == 10
+    assert abs(premovement["meanS"] - sum(e["t"] for e in starts) / 10) < 0.011, premovement
+    off = dict(sc, socialFollowing=False)
+    with patch("sim.run.place_occupants", delays):
+        result = run(building, off, NoFire(building, off))
+    assert not any(e["type"] == "start" for e in result["events"]), "socialFollowing false starts nobody early"
+    assert result["metrics"]["premovement"] == {"meanS": 0.0, "started": 6, "social": 0}
+
+    # Herding: a crowd that all walks at once. Whoever gets the bonus has a clear plurality of at least two people in
+    # view heading there, and no smoke or fire penalty on that route.
+    crowd = dict(scenario, alarmTime=0, maxTime=40, premovement={"office": [0, 0], "lounge": [0, 0]},
+                 occupants={"perRoom": {"R106": 20, "R102": 12}, "mix": {"typical": 1}})
+    seen = []
+    decide = RuleBrain.decide
+
+    def spy(self, obs):
+        seen.append(deepcopy(obs))
+        return decide(self, obs)
+
+    with patch.object(RuleBrain, "decide", spy):
+        run(building, crowd, NoFire(building, crowd))
+    leaning = [(obs, o) for obs in seen for o in obs["options"] if o.get("herd")]
+    assert leaning, "nobody ever leaned toward the way others take"
+    for obs, o in leaning:
+        assert 0 < o["herd"] <= HERD_MAX_S and o["nearby"] >= SOCIAL_MIN_MOVERS and not o["smoke"] and not o["firePenalty"]
+        assert [p["id"] for p in obs["options"] if p.get("herd")] == [o["id"]]
+        assert all(o["nearby"] > p.get("nearby", 0) for p in obs["options"] if p is not o), "a tie gets no bonus"
+    print(f"social following OK: {len(starts)} saw others leave; {len(leaning)} choices leaned toward the crowd")
 
 
 def check_recording(building, scenario):
@@ -1945,6 +2010,7 @@ def main(argv=None) -> int:
     timed("run size", check_runsize, building, fast, core)
     timed("exit choice", check_exit_choice, building, fast)
     timed("fast cues", check_cues, building, fast)
+    timed("social", check_social, building, fast)
     timed("office keep-out", check_office_keepout)
     timed("keep-out fallback", check_keepout_fallback)
     timed("burning stair", check_stair_fire, building, fast)

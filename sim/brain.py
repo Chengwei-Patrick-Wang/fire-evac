@@ -59,10 +59,13 @@ def visible_smoke(points, sight, vis):
 
 
 def option_cost(o, speed, beta=SMOKE_BETA, gamma=UNFAMILIAR_GAMMA):
-    return (o.get("dist", 0) / max(speed, 0.2) +
+    cost = (o.get("dist", 0) / max(speed, 0.2) +
             o.get("queue", 0) / o.get("flow", 1) + o.get("tail", 0) +
             beta * o.get("smoke", 0) + gamma * o.get("unfamiliar", False) +
             o.get("firePenalty", 0))
+    # C28: seconds off an option that people in view are walking to. sim.run gives it only to a route with no smoke and
+    # no fire penalty, and never to one it dropped (blocked, no route), so it only tips a choice between open routes.
+    return cost - min(o.get("herd", 0.0), cost)
 
 
 def main_entrance(building, scenario):
@@ -131,8 +134,10 @@ class RuleBrain:
         description = "estimated travel and queue time"
         if self.beta * chosen.get("smoke", 0) or self.gamma * chosen.get("unfamiliar", False):
             description = "estimated travel, queue, smoke and familiarity cost"
-        return {"target": chosen["id"], "action": "go" if current is None else "reroute",
-                "reason": f"{obs['trigger']}: {description} {costs[candidate]:.1f} s"}
+        reason = f"{obs['trigger']}: {description} {costs[candidate]:.1f} s"
+        if chosen.get("herd"):
+            reason += " (others heading there)"
+        return {"target": chosen["id"], "action": "go" if current is None else "reroute", "reason": reason}
 
 
 class LLMBrain:

@@ -43,7 +43,7 @@ door id is dropped like a bad number. One heading is built in _render, so the te
 model's card share it.
 
 Decisions. `obs` is sim/brain.py's: {idx, t, floor, x, y, profile, visibility, speed, current,
-trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?}]}. A decision is
+trigger, options: [{id, kind, name, dist, queue, flow, tail, assist?, nearby?}]}. A decision is
 {target: one of the obs's option ids, action: "go" | "reroute" | "wait", reason: str}, or None,
 which means "use the rules". decide_batch asks the model in chunks of at most 20 observations
 (balanced, and no fewer than 5 unless the list is shorter: a call takes about a second whatever its size, plus the
@@ -958,6 +958,9 @@ def _compact(i: int, obs) -> dict | None:
                "queue": round(queue), "queueWaitS": round(wait, 1), "estS": round(est, 1)}
         if o.get("assist"):
             opt["assist"] = True
+        nearby = _num(o.get("nearby"))  # C28: people in view walking to this option (sim.run); left out when none
+        if nearby and nearby > 0:
+            opt["nearby"] = round(nearby)
         options.append(opt)
     if not options:
         return None
@@ -976,13 +979,15 @@ def _decide_prompt(compact: list[dict]) -> str:
         "queue at their target, tick = routine check); visibilityM = how far they can see (30 = clear "
         "air); speed in m/s; current = their current target id or null; per option: distM walking "
         "distance, queue = people waiting there, queueWaitS = expected wait, estS = estimated seconds "
-        "to get through (walk + wait), assist = they need help on the stairs there.\n"
+        "to get through (walk + wait), assist = they need help on the stairs there, nearby (only when "
+        "present) = how many people in view are walking to that option.\n"
         "Choose as a sensible person would: usually the lowest estS; keep the current target unless "
         "another is clearly faster (about 20%) or the current one is smoky or blocked; in thick smoke "
-        "prefer nearer options.\n"
+        "prefer nearer options. When estimated times are close, following the people nearby is "
+        "reasonable, but never toward a blocked or smoky route.\n"
         "Reply with one decision per observation: i; action (go when current is null, reroute to "
         "switch, wait to keep the current target); target (an option id of that observation); reason "
-        "(at most 12 plain words about distance, queue or smoke, stated once: no questions, no corrections). "
+        "(at most 12 plain words about distance, queue, smoke or people heading there, stated once: no questions, no corrections). "
         "Never use field names in a reason (estS, queueWaitS, distM, visibilityM): say estimated time, queue "
         "wait, distance, visibility. Never mention age, walking pace, ability or any other trait of the "
         "person, or panic.\n"
