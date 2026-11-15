@@ -1,5 +1,23 @@
 # Overnight status
 
+## Sat 22:00: everything is merged and live; Netlify builds stopped again
+
+**Merged since 21:05:**
+- **E39:**
+  - The Crowd setting (rules, some people ask Claude, everyone asks Claude) and Claude's reasons in the person readout.
+  - The rules-vs-Claude comparison and the AI summary in the Report tab.
+  - The Fire and scenario card review: plain labels, fire size and speed instead of the fire type, click to place the fire, no door overrides. Comparison headlines now lead with the trapped count when it changes.
+- **A12, the Claude switch:**
+  - Opus 5.5 writes the report cards, with an AI summary whose fix is worded as an idea to check, and does the tracer first pass (12 of 12 rooms exact on the example plan).
+  - Haiku 5.5 drives the LLM crowd: 160 people take 4 to 5 minutes and about $0.03.
+  - JSON comes through structured outputs, there is a spend cap (CLAUDE_BUDGET_USD, default 25), and the all-LLM crowd cap is now 200.
+- **Final demo data:**
+  - The rules-vs-Claude pair on the example building: Claude made all 395 decisions; 90% out in 122.6 s against the rules' 120.7 s, 1 trapped in both.
+  - All three report cards rewritten by Claude.
+  - Claude API spend tonight is about $0.20 of the user's $101.
+
+**Netlify:** the one approved deploy went out at 21:56 (main@f5c5d07, built in 16 s). The live site shows the Fireproof UI, spreading fire, the wood-vs-drywall and rules-vs-Claude comparisons, and the Claude report cards. Builds are stopped again, so later pushes don't deploy.
+
 ## Sat 21:05: new demo data merged; the app's AI is switching to Claude
 
 **Merged:**
