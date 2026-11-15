@@ -208,7 +208,7 @@ export const useApp = create<AppState>((set) => ({
   topView: 0,
   split: false,
   draft: null,
-  placing: true,
+  placing: false,
   running: null,
   runError: null,
   whatIfBusy: null,
@@ -280,7 +280,8 @@ export const useApp = create<AppState>((set) => ({
       set({ batchRunning: null })
     }
   },
-  setDraft: (draft) => set({ draft }),
+  // A draft with no fire yet starts in placing mode: the first click on a room puts the fire there (the scenario card and the new-building card both say so).
+  setDraft: (draft) => set(draft && !draft.fire.floor ? { draft, placing: true } : { draft }),
   patchDraft: (p) => set((s) => (s.draft ? { draft: { ...s.draft, ...p } } : {})),
   setPlacing: (placing) => set({ placing }),
   runScenario: async (scenario) => {
@@ -445,7 +446,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, whatIfNote: null, whatIfFallback: false, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, placing: false, fromTracer: null, runNote: null, runFallback: false, runError: null, whatIfNote: null, whatIfFallback: false, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {

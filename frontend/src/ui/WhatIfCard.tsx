@@ -11,6 +11,8 @@ import { listDemoRuns } from '../data/loader'
 import type { DoorState } from '../data/types'
 
 const STATES: DoorState[] = ['propped', 'open', 'closed', 'blocked']
+/** The states in plain words (the option's value stays the state). */
+const STATE_WORDS: Record<DoorState, string> = { propped: 'propped open', open: 'open', closed: 'closed', blocked: 'blocked' }
 const fmt = (v: number | null) => (v == null ? 'not reached' : `${v.toFixed(0)} s`)
 const signed = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(0)} s`
 
@@ -98,21 +100,28 @@ export default function WhatIfCard() {
     ? active
     : order.map((k) => runs[k]).reverse().find((r) => r.whatIf?.baselineKey === active?.key)
   const cmp = variant && base ? compareRuns(base.run, variant.run) : null
-  // A material variant reads "Wood instead of drywall", a crowd variant "Claude crowd instead of rules"; a door variant names the door.
+  // A material variant reads "Wood instead of drywall", a crowd variant "Claude crowd instead of rules"; a door variant names the door. The headline
+  // leads with the people trapped when the two runs differ in them, with the smoke line (`smoke`) second; else the smoke leads.
   const material = variant?.whatIf?.material
   const brain = variant?.whatIf?.brain
-  const head =
+  const what =
     variant?.whatIf && base
       ? brain
-        ? { main: pairHeadline(base.run, variant.run, CLAUDE_WORDS)?.main ?? CLAUDE_WORDS }
+        ? CLAUDE_WORDS
         : material
-          ? { main: pairHeadline(base.run, variant.run, materialWords(material, runMaterial(base.run)))?.main ?? materialWords(material, runMaterial(base.run)) }
-          : pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${nameOf(variant.whatIf.door)} open` : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`)
+          ? materialWords(material, runMaterial(base.run))
+          : variant.whatIf.state === 'propped'
+            ? `Propping ${nameOf(variant.whatIf.door)} open`
+            : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`
       : null
+  const headline = what && variant && base ? pairHeadline(base.run, variant.run, what) : null
+  // A crowd or material variant still names itself when there are no numbers to add; a door variant shows nothing then.
+  const head = headline ?? (what && (brain || material) ? { main: what, smoke: null } : null)
 
   return (
     <div className="whatif">
       <h4>What if…</h4>
+      <p className="dim hint">Change one door and compare it with this run.</p>
       <div className="doorrow">
         <select value={chosen} onChange={(e) => setDoor(e.target.value)} aria-label="Door" title={optionText(chosen)}>
           <optgroup label="Stair doors">
@@ -128,7 +137,7 @@ export default function WhatIfCard() {
         </select>
         <select value={state} onChange={(e) => setState(e.target.value as DoorState)} aria-label="State">
           {STATES.map((s) => (
-            <option key={s}>{s}</option>
+            <option key={s} value={s}>{STATE_WORDS[s]}</option>
           ))}
         </select>
       </div>
@@ -181,6 +190,7 @@ export default function WhatIfCard() {
         </div>
       )}
       {head && <p className="whatif-card"><b>{head.main}</b></p>}
+      {head?.smoke && <p className="whatif-card">{head.smoke}</p>}
       {cmp && variant && (
         <p className={'whatif-card' + (cmp.dT90 != null ? (cmp.dT90 > 0 || cmp.dTrapped > 0 ? ' worse' : ' better') : cmp.dTrapped > 0 ? ' worse' : '')}>
           t90 {fmt(cmp.t90[0])} → {fmt(cmp.t90[1])}

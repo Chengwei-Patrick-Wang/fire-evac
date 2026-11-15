@@ -314,6 +314,17 @@ a { color: var(--primary-text); }
 .scenario .err, .weak .err { color: var(--danger); }
 .scenario .warn { color: var(--warn); }
 .whatif .note, .scenario > .note { margin: 2px 0 6px; font-size: var(--fs-xs); }
+/* One plain line under a field says what it is; the people mix is a fieldset of percentages; the fire is placed by clicking, with a list as the other way. */
+.scenario .hint, .whatif .hint { margin: -4px 0 4px; font-size: var(--fs-xs); }
+.scenario fieldset.mix { border: 0; padding: 0; margin: 2px 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.scenario fieldset.mix legend { padding: 0; margin-bottom: 4px; font-size: var(--fs-sm); font-weight: 600; }
+.scenario fieldset.mix .note { margin: 0; font-size: var(--fs-xs); }
+.scenario .pct { display: inline-flex; align-items: center; gap: 4px; }
+.scenario .fireplace { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.scenario .fireplace .where { margin: 0; flex: 1; min-width: 0; }
+.scenario .fireplace button { flex: none; }
+.scenario details.roompick summary { cursor: pointer; color: var(--primary-text); font-size: var(--fs-sm); }
+.scenario details.roompick label { margin-top: 6px; }
 .whatif .material, .whatif .claudepair { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: var(--s2); }
 .whatif .material h5, .whatif .claudepair h5 { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
 .whatif .material .note, .whatif .claudepair .note { margin: 0; }

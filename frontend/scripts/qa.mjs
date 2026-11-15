@@ -723,9 +723,12 @@ try {
     const who = baseRun.agents[0].idx
     const floor = baseRun.agents[0].floor
     const reason = 'The east stair is clear and close, so I go there.'
+    // Claude's run traps three more people than the rules' and never gets 90% out: the headline must lead with that, and put the smoke line second.
+    const trappedMore = baseRun.metrics.trapped + 3
     const claudeRun = {
       ...baseRun,
       id: 'qa-claude-run',
+      metrics: { ...baseRun.metrics, trapped: trappedMore, t90: null },
       agents: baseRun.agents.map((a, i) => (i < 12 ? { ...a, llm: true } : a)),
       events: [
         ...baseRun.events,
@@ -745,7 +748,7 @@ try {
       await pg.route('**/demo/fixtures/claude-crowd.run.json', (route) => route.fulfill({ json: claudeRun }))
     }
     // Compares in a fresh page: clicks the button, waits for the split view with the Claude run active and its rules partner loaded, and checks what the card says.
-    const compare = async (pg, claudeId, shotName) => {
+    const compare = async (pg, claudeId, shotName, headline = null) => {
       await pg.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
       await pg.evaluate(() => {
         window.__clock.setState({ playing: false })
@@ -774,6 +777,14 @@ try {
       const text = await pg.locator('.scenario .whatif').innerText()
       if (!text.includes('Claude crowd instead of rules')) bad(`.whatif lacks "Claude crowd instead of rules": "${text.slice(0, 200)}"`)
       if (!/t90 .*trapped \d+ → \d+/.test(text)) bad(`.whatif lacks the t90 and trapped line: "${text.slice(-200)}"`)
+      // With a known difference in the people trapped, the headline leads with it, then the smoke line, then the t90 line.
+      if (headline) {
+        // (Each is searched for after the one before it: the card's sprinkler note above already says "person-seconds in smoke".)
+        const i0 = text.indexOf(headline)
+        const i1 = i0 < 0 ? -1 : text.indexOf('person-seconds in smoke', i0 + headline.length)
+        const i2 = i1 < 0 ? -1 : text.indexOf('t90 ', i1)
+        if (i2 < 0) bad(`.whatif does not read "${headline}", then the smoke line, then the t90 line: "${text.slice(Math.max(0, text.indexOf('Claude crowd instead') - 20))}"`)
+      }
       await pg.locator('.scenario .whatif .whatif-card').first().scrollIntoViewIfNeeded()
       await pg.waitForTimeout(1500)
       await shot(shotName, pg)
@@ -797,8 +808,13 @@ try {
           return { key: a.activeRunKey, claude: !!a.runs['qa-claude'], err: a.whatIfError }
         })
         if (w.key !== propped.id || w.claude || w.err) bad(`the static what-if loaded ${w.key} (Claude run loaded: ${w.claude}, error "${w.err}"), want the propped run ${propped.id}`)
+        // The door pair has the same number trapped in both runs (the demo's R101 pair: none), so its headline leads with the smoke, as before.
+        if (base.metrics?.trapped === propped.metrics?.trapped) {
+          const doorHead = (await pc.locator('.scenario .whatif .whatif-card b').allInnerTexts()).join(' | ')
+          if (/trapped instead of/.test(doorHead)) bad(`the door pair led with the trapped count though it is the same in both runs: "${doorHead}"`)
+        }
       }
-      await compare(pc, 'qa-claude', 'claude-pair')
+      await compare(pc, 'qa-claude', 'claude-pair', `Claude crowd instead of rules: ${trappedMore} people trapped instead of ${baseRun.metrics.trapped}; 90% never get out`)
       // The run is named once for who decides: the Run select, and the caption of its pane.
       const opt = ((await pc.locator('select[aria-label="Run"] option[value="qa-claude"]').textContent()) ?? '').trim()
       if (opt !== 'Kitchen, Claude (qa) · Claude crowd') bad(`the Run select names the Claude run "${opt}", want "Kitchen, Claude (qa) · Claude crowd"`)
@@ -1000,6 +1016,154 @@ try {
       if (problems.length === before) lines.push('crowd-live ok: the Crowd select, the 200-person block, brain in the request, the Claude status and its six minutes, the rules-crowd note, no door what-if against Claude')
     } finally {
       await p6.close()
+    }
+  })
+  // The Fire and scenario card in plain words: the fire's size and growth in place of its type, the fire placed by clicking (with a list as the other way), the people
+  // mix in percent, a hint under each field, and no door overrides. A fresh page in static mode; for what the card sends, live mode is put on by hand and the API
+  // answered by a failing route (the request is all that is read).
+  await step('scenario-card', async () => {
+    const bad = (m) => problems.push(`scenario-card: ${m}`)
+    const before = problems.length
+    const p7 = await ctx.newPage()
+    watchPage(p7, 'scenario-card', /calibration\.json|status of 500|ERR_CONNECTION_REFUSED/)
+    try {
+      const posts = []
+      await p7.route('**/runs', (r) => {
+        if (r.request().method() === 'POST') posts.push(JSON.parse(r.request().postData() ?? '{}'))
+        return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'qa: backend error' }) })
+      })
+      await p7.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await p7.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await p7.evaluate(() => window.__app.setState({ card: 'scenario' }))
+      const card = p7.locator('.scenario')
+      await card.waitFor({ timeout: 10000 })
+      const draft = () => p7.evaluate(() => window.__app.getState().draft)
+      const placing = () => p7.evaluate(() => window.__app.getState().placing)
+      const field = (label) => card.locator('label', { hasText: label })
+      const size = field('Fire size').locator('select')
+      const growth = field('How fast it grows').locator('select')
+      const where = card.locator('.fireplace .where')
+      const mover = card.locator('.fireplace button')
+      const texts = async (loc) => (await loc.allTextContents()).map((t) => t.trim()).join('|')
+      // Plain words, with a hint under the fields; nothing of the old labels, the fire type, the fire room list or the door overrides. (The texts a label or button
+      // holds itself, not the options inside it.)
+      const own = await card.evaluate((el) => [...el.querySelectorAll('label, legend, h4, summary, button')].map((n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join(' ').trim()).filter(Boolean))
+      for (const w of ['Fire size', 'How fast it grows', 'Move fire', 'Choose a room from a list', 'Room', 'Building material (illustrative)', 'Crowd', 'People in the building', 'Who is inside', 'Typical adults', 'Older adults (walk slower)', "Visitors (don't know the building)", 'Variation', 'Alarm sounds after (seconds)'])
+        if (!own.includes(w)) bad(`the card lacks "${w}" (it has ${JSON.stringify(own)})`)
+      for (const w of ['Occupants', 'Seed', 'Alarm time (s)', 'Fire', 'Fire room', 'Door overrides', 'Door…', 'Add', 'Click a floor to place the fire'])
+        if (own.includes(w)) bad(`the card still has "${w}"`)
+      const all = await card.innerText()
+      for (const w of ['Fire in:', 'How big the fire gets.', 'How quickly it reaches its full size.', 'How fast the fire spreads from room to room.', 'Who decides where people go.', 'How many people are inside when the fire starts.', 'Same number, same run; change it to see another possible night.', 'Seconds after the fire starts.'])
+        if (!all.includes(w)) bad(`the card lacks the text "${w}"`)
+      if ((await card.locator('select[aria-label="Door to override"], select option[value="liquid"], select option[value="battery"]').count()) !== 0) bad('the card still has a door override or a fire type select')
+      if ((await texts(size.locator('option'))) !== 'Small, like a wastebasket|Medium, like a kitchen fire|Large, like a burning room') bad(`the Fire size options read "${await texts(size.locator('option'))}"`)
+      if ((await texts(growth.locator('option'))) !== 'Slow|Medium|Fast|Very fast') bad(`the growth options read "${await texts(growth.locator('option'))}"`)
+      // The defaults are today's: a medium (kitchen) fire that grows fast, 160 people in the 85, 10 and 5 percent mix.
+      if ((await size.inputValue()) !== 'medium' || (await growth.inputValue()) !== 'fast') bad(`the fire shows ${await size.inputValue()} and ${await growth.inputValue()}, want medium and fast`)
+      const pct = async () => [await field('Typical adults').locator('input').inputValue(), await field('Older adults').locator('input').inputValue(), await field('Visitors').locator('input').inputValue()].join(',')
+      if ((await pct()) !== '85,10,5' || (await card.locator('fieldset.mix .note').count()) !== 0) bad(`the mix shows ${await pct()} with ${await card.locator('fieldset.mix .note').count()} note(s), want 85,10,5 and none`)
+      // The fire placed by clicking: it says where, "Move fire" turns placing on (and "Cancel" off), and the room list is a collapsed disclosure.
+      if (!/^Fire in: \S.*, Floor \d+/.test(await where.innerText())) bad(`the card says "${await where.innerText()}", want "Fire in: <room>, Floor N"`)
+      if ((await placing()) !== false || (await mover.innerText()) !== 'Move fire') bad(`with a fire placed, placing is ${await placing()} and the button reads "${await mover.innerText()}", want false and "Move fire"`)
+      await mover.click()
+      if ((await placing()) !== true || (await mover.innerText()) !== 'Cancel' || !/Click a room in the building to move the fire\./.test(await where.innerText())) bad(`after "Move fire", placing is ${await placing()}, the button reads "${await mover.innerText()}" and the card says "${await where.innerText()}"`)
+      await mover.click()
+      if ((await placing()) !== false) bad('Cancel did not turn placing off')
+      const disclosure = card.locator('details.roompick')
+      const summary = disclosure.locator('summary')
+      if ((await summary.innerText()) !== 'Choose a room from a list' || (await disclosure.evaluate((d) => d.open)) || (await disclosure.locator('select').isVisible())) bad('the room list is not a collapsed "Choose a room from a list"')
+      await summary.focus()
+      await p7.keyboard.press('Enter')
+      if (!(await disclosure.evaluate((d) => d.open)) || !(await disclosure.locator('select').isVisible())) bad('Enter on the disclosure does not open the room list')
+      const rooms = disclosure.locator('select')
+      const was = (await draft()).fire.room
+      const pick = (await rooms.locator('option').evaluateAll((os) => os.map((o) => o.value))).find((v) => v.includes('|') && v.split('|')[1] !== was)
+      if (!pick) bad('the room list offers no other room')
+      else {
+        await rooms.selectOption(pick)
+        const f = (await draft()).fire
+        if (f.floor !== pick.split('|')[0] || f.room !== pick.split('|')[1] || typeof f.x !== 'number' || typeof f.y !== 'number' || (await placing()) !== false) bad(`choosing ${pick} from the list left the fire at ${JSON.stringify(f)} (placing ${await placing()})`)
+        if (!(await where.innerText()).includes('Fire in:')) bad(`after the list, the card says "${await where.innerText()}"`)
+      }
+      // No fire yet: the card says so and starts placing by itself, also when it is opened that way.
+      await p7.evaluate(() => {
+        const a = window.__app.getState()
+        a.patchDraft({ fire: { type: a.draft.fire.type, start: 0 } })
+      })
+      await p7.waitForFunction(() => window.__app.getState().placing === true, null, { timeout: 5000 }).catch(() => bad('a draft with no fire did not turn placing on'))
+      if (!/^No fire placed yet\./.test(await where.innerText()) || !/Click a room in the building to place the fire\./.test(await where.innerText()) || (await mover.innerText()) !== 'Cancel') bad(`with no fire the card says "${await where.innerText()}" and the button reads "${await mover.innerText()}"`)
+      await p7.evaluate(() => window.__app.setState({ card: null, placing: false }))
+      await p7.evaluate(() => window.__app.setState({ card: 'scenario' }))
+      await p7.waitForFunction(() => window.__app.getState().placing === true, null, { timeout: 5000 }).catch(() => bad('opening the card with no fire did not turn placing on'))
+      await card.locator('details.roompick summary').click()
+      await rooms.selectOption(pick ?? '')
+      if ((await placing()) !== false || !(await where.innerText()).startsWith('Fire in:')) bad('a room chosen from the list did not place the fire and end placing')
+      // The fire as the card shows it: the presets the card does not offer, a growth in the backend's other spellings, and a type it has never seen (nothing throws).
+      const shows = async (fire) => {
+        await p7.evaluate((f) => {
+          const a = window.__app.getState()
+          a.patchDraft({ fire: { ...a.draft.fire, ...f } })
+        }, fire)
+        return `${await size.inputValue()}/${await growth.inputValue()}`
+      }
+      for (const [fire, want] of [
+        [{ type: 'battery', growth: undefined }, 'small/ultra-fast'],
+        [{ type: 'liquid', growth: undefined }, 'medium/ultra-fast'],
+        [{ type: 'trash', growth: undefined }, 'small/fast'],
+        [{ type: 'bedroom', growth: undefined }, 'large/medium'],
+        [{ type: 'kitchen', growth: 'instant' }, 'medium/ultra-fast'],
+        [{ type: 'Kitchen', growth: 'Ultra_Fast' }, 'medium/ultra-fast'],
+        [{ type: 'no-such-fire', growth: 'no-such-growth' }, 'medium/fast'],
+        [{ type: 'kitchen', growth: undefined }, 'medium/fast'],
+      ]) {
+        const got = await shows(fire)
+        if (got !== want) bad(`a fire of ${JSON.stringify(fire)} shows ${got}, want ${want}`)
+      }
+      // The people mix: percent on the card, fractions in the scenario, and a note when it does not add up to 100%.
+      const typical = field('Typical adults').locator('input')
+      await typical.fill('60')
+      const mix = (await draft()).occupants.mix
+      if (mix.typical !== 0.6 || mix.older !== 0.1 || mix.visitor !== 0.05) bad(`typing 60 left the mix at ${JSON.stringify(mix)}, want 0.6, 0.1 and 0.05`)
+      const note = (await card.locator('fieldset.mix .note').allInnerTexts()).join(' ')
+      if (note !== 'These add up to 75%. They are scaled to 100% when you run.') bad(`the mix note reads "${note}"`)
+      await typical.fill('85')
+      if ((await card.locator('fieldset.mix .note').count()) !== 0) bad('the mix note stays at 100%')
+      await field('People in the building').locator('input').fill('120')
+      await field('Variation').locator('input').fill('7')
+      await field('Alarm sounds after').locator('input').fill('45')
+      const d = await draft()
+      if (d.occupants.total !== 120 || d.seed !== 7 || d.alarmTime !== 45) bad(`the people, variation and alarm fields wrote ${JSON.stringify({ total: d.occupants.total, seed: d.seed, alarm: d.alarmTime })}, want 120, 7 and 45`)
+      await shot('scenario-card', p7)
+      await axeOn(p7, 'scenario-card', '.app')
+      // What goes to the backend (live mode by hand). Untouched, the fire is today's: kitchen, no growth written. Size and growth write the type and the growth; the
+      // doors the draft carries go with the run though the card no longer shows them.
+      await p7.evaluate(() => {
+        const a = window.__app.getState()
+        a.patchDraft({ fire: { type: 'kitchen', floor: a.draft.fire.floor, room: a.draft.fire.room, x: a.draft.fire.x, y: a.draft.fire.y, start: 0 }, doors: { DSA1: 'propped' } })
+        window.__app.setState({ mode: 'live' })
+      })
+      const run = async () => {
+        const n = posts.length
+        await p7.locator('.scenario > button.run').click()
+        await p7.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
+        return posts.length > n ? posts[posts.length - 1] : null
+      }
+      let sent = await run()
+      if (!sent || sent.fire.type !== 'kitchen' || 'growth' in sent.fire || JSON.stringify(sent.doors) !== '{"DSA1":"propped"}') bad(`an untouched card sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth, doors: sent?.doors })}, want kitchen, no growth and its doors`)
+      await size.selectOption('small')
+      await growth.selectOption('ultra-fast')
+      sent = await run()
+      if (!sent || sent.fire.type !== 'trash' || sent.fire.growth !== 'ultra-fast') bad(`Small and Very fast sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth })}, want trash and ultra-fast`)
+      await size.selectOption('large')
+      sent = await run()
+      if (!sent || sent.fire.type !== 'bedroom' || sent.fire.growth !== 'ultra-fast') bad(`Large sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth })}, want bedroom and the growth kept (ultra-fast)`)
+      await growth.selectOption('slow')
+      await size.selectOption('medium')
+      sent = await run()
+      if (!sent || sent.fire.type !== 'kitchen' || sent.fire.growth !== 'slow') bad(`Slow and Medium sent ${JSON.stringify({ type: sent?.fire.type, growth: sent?.fire.growth })}, want kitchen and slow`)
+      if (problems.length === before) lines.push('scenario-card ok: plain labels and hints, fire size and growth, placing and the room list, the percent mix, no door overrides')
+    } finally {
+      await p7.close()
     }
   })
   await tabShots('')

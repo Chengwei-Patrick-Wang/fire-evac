@@ -25,7 +25,7 @@ export const MAX_CLAUDE_CROWD = 200
 
 /** Why an everyone-asks-Claude scenario cannot run. */
 export const claudeCrowdLimit = (people: number): string =>
-  `Everyone asks Claude runs up to ${MAX_CLAUDE_CROWD} people, and this scenario has ${people}. Lower Occupants, or pick another crowd.`
+  `Everyone asks Claude runs up to ${MAX_CLAUDE_CROWD} people, and this scenario has ${people}. Lower the people in the building, or pick another crowd.`
 
 /** True when a live run of this scenario would be refused: everyone asks Claude, with more than 200 people. (Only the live backend runs a Claude crowd.) */
 export function crowdTooBig(s: Pick<Scenario, 'brain' | 'occupants'> | null | undefined, live: boolean): boolean {
