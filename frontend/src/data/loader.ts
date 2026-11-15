@@ -114,7 +114,7 @@ function isPending(o: unknown): o is Pending {
   return !!o && typeof o === 'object' && !('version' in o)
 }
 
-export async function pollRun(runId: string, onTick?: (elapsedS: number) => void, maxS = 180): Promise<Run> {
+export async function pollRun(runId: string, onTick?: (elapsedS: number) => void, maxS = 600): Promise<Run> {
   const t0 = Date.now()
   for (;;) {
     const r = await fetchJson<Run | Pending>(`${API}/runs/${encodeURIComponent(runId)}`, {}, 60000)

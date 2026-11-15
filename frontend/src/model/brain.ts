@@ -43,7 +43,7 @@ export const WHATIF_RULES_ONLY = 'Door what-ifs compare against a Rules run. Thi
 
 /** How long a live run is waited for, in seconds. Claude is asked for every decision (about 1.5 s a simulated second; the 160-person
  *  example took 4.3 minutes in process and 5.3 through the API, measured Sat), so a Claude crowd gets fifteen minutes. */
-export const RUN_WAIT_S = 180
+export const RUN_WAIT_S = 600
 export const CLAUDE_RUN_WAIT_S = 900
 export const runWaitS = (brain: Brain): number => (brain === 'rules' ? RUN_WAIT_S : CLAUDE_RUN_WAIT_S)
 

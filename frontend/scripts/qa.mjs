@@ -973,7 +973,7 @@ try {
       await p6.waitForTimeout(500)
       const blocked = await state()
       if (posts.length !== 0 || blocked.running !== null || !/200 people/.test(blocked.err ?? '')) bad(`runScenario with 250 people sent ${posts.length} request(s), running ${blocked.running}, error "${blocked.err}"`)
-      // 160 people: the warning goes, and the run is sent with brain llm, says whom Claude is deciding for, and is waited for six minutes (not three).
+      // 160 people: the warning goes, and the run is sent with brain llm, says whom Claude is deciding for, and is waited for fifteen minutes (not ten).
       await setPeople(160)
       if ((await warn.count()) !== 0) bad('the warning stays at 160 people')
       if (!(await runButton.isEnabled())) bad('the Run button stays off at 160 people')
@@ -984,7 +984,7 @@ try {
       await shot('crowd-live', p6)
       await p6.evaluate(() => window.__skew(200000))
       await p6.waitForFunction(() => / 2\d\d s$/.test(window.__app.getState().running ?? ''), null, { timeout: 15000 }).catch(() => bad('three minutes in, the Claude run is no longer waited for'))
-      await p6.evaluate(() => window.__skew(200000))
+      await p6.evaluate(() => window.__skew(800000))
       await p6.waitForFunction(() => window.__app.getState().running === null, null, { timeout: 30000 })
       const done = await state()
       if (!done.fallback || !/^Live run unavailable: showing the nearest precomputed fire \(room \S+\)\. That run uses the rules crowd, not Claude\.$/.test(done.note ?? '') || done.err) bad(`after six minutes the note reads "${done.note}" (error "${done.err}")`)
@@ -1616,7 +1616,7 @@ try {
       await p3.goto(`${server.resolvedUrls.local[0]}?qa`)
       await p3.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
       const first = await p3.evaluate(() => {
-        // pollRun's wait is 180 s of Date.now: this lets the page's clock jump over it
+        // pollRun's wait is 600 s of Date.now: this lets the page's clock jump over it
         const real = Date.now.bind(Date)
         let skew = 0
         Date.now = () => real() + skew
@@ -1654,7 +1654,7 @@ try {
         await runButton.click()
         if (name === 'slow') {
           await p3.waitForFunction(() => /Running… \d+ s/.test(window.__app.getState().running ?? ''), null, { timeout: 15000 })
-          await p3.evaluate(() => window.__skew(200000))
+          await p3.evaluate(() => window.__skew(700000))
         }
         await settle()
         const s = await read()
@@ -1704,7 +1704,7 @@ try {
       await p5.goto(`${server.resolvedUrls.local[0]}?qa`)
       await p5.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
       const first = await p5.evaluate(() => {
-        // pollRun's wait is 180 s of Date.now: this lets the page's clock jump over it
+        // pollRun's wait is 600 s of Date.now: this lets the page's clock jump over it
         const real = Date.now.bind(Date)
         let skew = 0
         Date.now = () => real() + skew
@@ -1737,7 +1737,7 @@ try {
         await runButton.click()
         if (name === 'slow') {
           await p5.waitForFunction(() => /Running… \d+ s/.test(window.__app.getState().whatIfBusy ?? ''), null, { timeout: 15000 })
-          await p5.evaluate(() => window.__skew(200000))
+          await p5.evaluate(() => window.__skew(700000))
         }
         await settle()
         const s = await read()
