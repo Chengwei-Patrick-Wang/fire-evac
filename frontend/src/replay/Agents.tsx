@@ -8,6 +8,7 @@ import { useClock } from '../store/clock'
 import { floorAlpha, floorPlace, toPlaced } from '../scene/geometry'
 import type { Place } from '../scene/geometry'
 import { usePlace } from '../scene/usePlace'
+import { claudeIdx, decisionAt, decisionText, readDecisions } from '../model/brain'
 import { nearestIndex, sampleAgent } from './runIndex'
 import type { AgentSample } from './runIndex'
 
@@ -57,14 +58,8 @@ export default function Agents({ runKey }: { runKey?: string }) {
   const [hover, setHover] = useState<number | null>(null)
   const [timers, setTimers] = useState<Timer[]>([])
   const timerKey = useRef(-1)
-  const llmIdx = useMemo(() => {
-    const set = new Set<number>()
-    if (lr) {
-      for (const a of lr.run.agents) if (a.llm) set.add(a.idx)
-      for (const e of lr.run.events) if (e.llm && e.idx !== undefined) set.add(e.idx)
-    }
-    return [...set].filter((i) => i >= 0 && i < n).sort((a, b) => a - b)
-  }, [lr, n])
+  // The people who ask Claude (agents flagged `llm`, and anyone with an `llm` decision in the run) wear a ring.
+  const llmIdx = useMemo(() => claudeIdx(lr?.run).filter((i) => i >= 0 && i < n), [lr, n])
   // Everyone who is trapped at some point gets a slot for the red ring that marks them besides their colour.
   const trapIdx = useMemo(() => {
     const out: number[] = []
@@ -167,10 +162,11 @@ export default function Agents({ runKey }: { runKey?: string }) {
           p.set(0, 0, 0)
           s.set(0, 0, 0)
         } else {
-          p.set(out.x + at.dx, at.y + 0.05, -out.y)
+          p.set(out.x + at.dx, at.y + 0.07, -out.y)
           s.set(1, 1, 1)
         }
-        mat.compose(p, q, s)
+        // lies flat on the floor like the red ring of the trapped, a little above it
+        mat.compose(p, qFlat, s)
         r.setMatrixAt(j, mat)
       }
       r.instanceMatrix.needsUpdate = true
@@ -219,6 +215,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
   let hp: [number, number, number] | null = null
   let hst = ''
   let hreason = ''
+  let hdecision: ReturnType<typeof decisionAt> = null
   if (hv && lr) {
     const t = useClock.getState().t
     if (sampleAgent(ix, hv.idx, t, tmp.out)) {
@@ -227,6 +224,8 @@ export default function Agents({ runKey }: { runKey?: string }) {
       hst = tmp.out.trapped ? 'trapped' : STATUS_NAMES[tmp.out.st] ?? ''
     }
     for (const e of lr.run.events) if (e.idx === hv.idx && e.reason && e.t <= t) hreason = e.reason
+    // A run that logged Claude's decisions: this person's latest one at this time (Claude's reason, or the rules' fallback) takes the place of the reason above.
+    hdecision = decisionAt(readDecisions(lr.run), hv.idx, t)
   }
   return (
     <>
@@ -271,7 +270,14 @@ export default function Agents({ runKey }: { runKey?: string }) {
           <div className="tip3d" style={{ width: 220, whiteSpace: 'normal' }}>
             <b>{hv.profile}</b> · {hst}
             {hv.note && <div>{hv.note}</div>}
-            {hreason && <div className="why">{hreason}</div>}
+            {hdecision ? (
+              <div className={'why' + (hdecision.fallback ? ' rules' : '')}>
+                {decisionText(hdecision)}
+                {hdecision.action && ` · ${hdecision.action}`}
+              </div>
+            ) : (
+              hreason && <div className="why">{hreason}</div>
+            )}
           </div>
         </Html>
       )}

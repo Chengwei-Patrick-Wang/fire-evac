@@ -29,6 +29,7 @@ import ShareCard from './ui/ShareCard'
 import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
 import { findPrecomputedVariant } from './model/whatif'
 import { materialPartner } from './model/fireSpread'
+import { brainPartner, runLabel } from './model/brain'
 import { loadHeadlines, readPack } from './model/headlines'
 import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
 import type { LinkState } from './model/link'
@@ -72,7 +73,7 @@ async function selectBuilding(id: string) {
     const first = runs.find((r) => r.whatIf === null)
     if (first) {
       const run = await loadDemoRun(first)
-      useApp.getState().addRun({ key: first.id, label: first.label, run, doors: first.doors ?? {} })
+      useApp.getState().addRun({ key: first.id, label: runLabel(first.label, first.brain), run, doors: first.doors ?? {} })
     }
     useApp.getState().setNotice(null)
   } catch (e) {
@@ -89,7 +90,7 @@ async function ensureRun(entry: DemoRun, whatIf?: LoadedRun['whatIf']) {
     return
   }
   const run = await loadDemoRun(entry)
-  useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
+  useApp.getState().addRun({ key: entry.id, label: runLabel(entry.label, entry.brain), run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
 }
 
 export async function restoreLink(link: LinkState) {
@@ -107,6 +108,13 @@ export async function restoreLink(link: LinkState) {
           if (partner) {
             await ensureRun(partner)
             await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', material: entry.material ?? 'wood' })
+          } else await ensureRun(entry)
+        } else if (entry.whatIf === 'brain') {
+          // A Claude crowd run opens against its rules partner, the same fire; it never passes for a door what-if (it has no door).
+          const partner = brainPartner(entries, entry)
+          if (partner) {
+            await ensureRun(partner)
+            await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', brain: entry.brain ?? 'llm' })
           } else await ensureRun(entry)
         } else {
           const base = entries.find((e) => e.buildingId === entry.buildingId && e.fire.room === entry.fire.room && e.whatIf === null)

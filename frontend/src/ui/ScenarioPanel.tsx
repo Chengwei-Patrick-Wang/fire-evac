@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useApp } from '../store/app'
 import { FIRE_TYPES, insidePoint, roomAt } from '../model/scenarioDraft'
 import { DEFAULT_MATERIAL, MATERIALS } from '../model/fireSpread'
+import { CROWDS, CROWD_NOTE, DEFAULT_BRAIN, claudeCrowdLimit, crowdOf, crowdTooBig } from '../model/brain'
+import type { Brain } from '../model/brain'
 import WhatIfCard from './WhatIfCard'
 import type { DoorState, Material, Profile } from '../data/types'
 
@@ -26,6 +28,9 @@ export default function ScenarioPanel() {
     })
     .filter((o) => o.rs.length)
   const live = mode === 'live'
+  // Only the live backend runs a Claude crowd; static mode always shows the rules' precomputed runs. Everyone asks Claude holds up to 200 people.
+  const crowd: Brain = live ? crowdOf(draft.brain) : DEFAULT_BRAIN
+  const tooMany = crowdTooBig(draft, live)
   const num = (v: string, d: number) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d)
 
   return (
@@ -82,6 +87,27 @@ export default function ScenarioPanel() {
       {!live && (
         <p className="dim note">
           Material needs the live backend. In static mode, What if… shows the precomputed wood and drywall pair where a building has one.
+        </p>
+      )}
+      <label>
+        Crowd
+        <select value={crowd} disabled={!live} onChange={(e) => patchDraft({ brain: e.target.value as Brain })}>
+          {CROWDS.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!live && (
+        <p className="dim note">
+          Claude crowds need the live backend. In static mode, What if… shows the precomputed comparison where one exists.
+        </p>
+      )}
+      {live && crowd !== 'rules' && <p className="dim note">{CROWD_NOTE[crowd]}</p>}
+      {tooMany && (
+        <p className="warn" id="crowd-limit" role="alert">
+          {claudeCrowdLimit(draft.occupants.total)}
         </p>
       )}
       <label>
@@ -164,7 +190,7 @@ export default function ScenarioPanel() {
           Add
         </button>
       </div>
-      <button className="run" disabled={!!running} onClick={() => void runScenario(draft)}>
+      <button className="run" disabled={!!running || tooMany} aria-describedby={tooMany ? 'crowd-limit' : undefined} onClick={() => void runScenario(draft)}>
         {running ?? 'Run'}
       </button>
       {runError && <p className="err">{runError}</p>}

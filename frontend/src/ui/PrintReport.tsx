@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDialogFocus } from './a11y'
 import { createPortal } from 'react-dom'
-import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
 import { fetchReport } from '../data/loader'
 import { reportRef } from '../dashboard/ReportCard'
+import ReportMarkdown from '../dashboard/ReportMarkdown'
 import { Limits } from '../dashboard/Credibility'
 import RiskLegend, { Stamps } from '../dashboard/RiskLegend'
 import RiskMapSvg from '../dashboard/RiskMapSvg'
@@ -74,7 +74,7 @@ export default function PrintReport() {
           <h2>Report card</h2>
           <p className="dim">AI-written summary of the numbers shown; check it against them.</p>
           {md ? (
-            <Markdown>{md}</Markdown>
+            <ReportMarkdown md={md} print />
           ) : md === '' ? (
             <p>No report for this result</p>
           ) : mode === 'static' && rr ? (

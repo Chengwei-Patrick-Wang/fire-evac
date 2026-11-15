@@ -5,6 +5,8 @@ import { pairHeadline, readWhatIf } from '../model/exposure'
 import { doorLabels } from '../model/spots'
 import { materialPair, materialWords, runMaterial } from '../model/fireSpread'
 import type { MaterialPair } from '../model/fireSpread'
+import { CLAUDE_WORDS, WHATIF_RULES_ONLY, brainPair, crowdOf } from '../model/brain'
+import type { BrainPair } from '../model/brain'
 import { listDemoRuns } from '../data/loader'
 import type { DoorState } from '../data/types'
 
@@ -23,6 +25,7 @@ export default function WhatIfCard() {
   const fallback = useApp((s) => s.whatIfFallback)
   const runWhatIf = useApp((s) => s.runWhatIf)
   const showMaterialPair = useApp((s) => s.showMaterialPair)
+  const showBrainPair = useApp((s) => s.showBrainPair)
   const switchRun = useApp((s) => s.switchRun)
   const live = useApp((s) => s.mode) === 'live'
   const batch = useApp((s) => s.batch)
@@ -34,18 +37,23 @@ export default function WhatIfCard() {
   const [state, setState] = useState<DoorState>('propped')
   const [sprinklers, setSprinklers] = useState(false)
 
-  // The building's precomputed wood and drywall pair, from the demo index: the section shows only for a building that has one.
-  const [found, setFound] = useState<{ building: string; pair: MaterialPair | null } | null>(null)
+  // The building's precomputed wood and drywall pair and rules and Claude crowd pair, from the demo index: each section shows only for a building that has one.
+  const [found, setFound] = useState<{ building: string; pair: MaterialPair | null; claude: BrainPair | null } | null>(null)
   const buildingId = building?.id
   useEffect(() => {
     let current = true
-    if (buildingId) void listDemoRuns(buildingId).then((es) => current && setFound({ building: buildingId, pair: materialPair(es, buildingId) }))
+    if (buildingId)
+      void listDemoRuns(buildingId).then((es) => current && setFound({ building: buildingId, pair: materialPair(es, buildingId), claude: brainPair(es, buildingId) }))
     return () => {
       current = false
     }
   }, [buildingId])
   const pair = found && found.building === buildingId ? found.pair : null
   const pairRoom = pair && building ? building.floors.find((f) => f.id === pair.wood.fire.floor)?.rooms.find((r) => r.id === pair.wood.fire.room) : undefined
+  const claude = found && found.building === buildingId ? found.claude : null
+  const claudeRoom = claude && building ? building.floors.find((f) => f.id === claude.claude.fire.floor)?.rooms.find((r) => r.id === claude.claude.fire.room) : undefined
+  // A door what-if is measured against a rules baseline: a live run of a Claude crowd has no such baseline (the store refuses it too).
+  const claudeBase = crowdOf(base?.scenario?.brain) !== 'rules'
 
   const stair = useMemo(() => (building ? stairDoors(building).map((d) => d.door.id) : []), [building])
   const others = useMemo(
@@ -90,13 +98,16 @@ export default function WhatIfCard() {
     ? active
     : order.map((k) => runs[k]).reverse().find((r) => r.whatIf?.baselineKey === active?.key)
   const cmp = variant && base ? compareRuns(base.run, variant.run) : null
-  // A material variant reads "Wood instead of drywall"; a door variant names the door.
+  // A material variant reads "Wood instead of drywall", a crowd variant "Claude crowd instead of rules"; a door variant names the door.
   const material = variant?.whatIf?.material
+  const brain = variant?.whatIf?.brain
   const head =
     variant?.whatIf && base
-      ? material
-        ? { main: pairHeadline(base.run, variant.run, materialWords(material, runMaterial(base.run)))?.main ?? materialWords(material, runMaterial(base.run)) }
-        : pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${nameOf(variant.whatIf.door)} open` : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`)
+      ? brain
+        ? { main: pairHeadline(base.run, variant.run, CLAUDE_WORDS)?.main ?? CLAUDE_WORDS }
+        : material
+          ? { main: pairHeadline(base.run, variant.run, materialWords(material, runMaterial(base.run)))?.main ?? materialWords(material, runMaterial(base.run)) }
+          : pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${nameOf(variant.whatIf.door)} open` : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`)
       : null
 
   return (
@@ -137,9 +148,10 @@ export default function WhatIfCard() {
           {measured ? ` Measured across ${measured.n} fires: ${measured.why}` : ' This static demo has precomputed propped-door runs only.'}
         </p>
       )}
-      <button className="run" disabled={!base || !chosen || !!busy} onClick={() => void runWhatIf(chosen, state, live && sprinklers)}>
+      <button className="run" disabled={!base || !chosen || !!busy || claudeBase} onClick={() => void runWhatIf(chosen, state, live && sprinklers)}>
         {busy ?? 'Run what-if'}
       </button>
+      {claudeBase && <p className="dim note">{WHATIF_RULES_ONLY}</p>}
       {err && <p className="err">{err}</p>}
       {note && (
         <p className={fallback ? 'warn' : 'dim'} role="status">
@@ -154,6 +166,17 @@ export default function WhatIfCard() {
           </button>
           <p className="dim note">
             Precomputed pair, fire in {pairRoom?.name && pairRoom.name !== pair.wood.fire.room ? `${pairRoom.name} (${pair.wood.fire.room})` : pair.wood.fire.room}. Spread speeds are illustrative, not engineering values.
+          </p>
+        </div>
+      )}
+      {claude && (
+        <div className="claudepair">
+          <h5>Claude crowd (illustrative)</h5>
+          <button type="button" disabled={!!busy} onClick={() => void showBrainPair()}>
+            Compare rules with Claude crowd
+          </button>
+          <p className="dim note">
+            Precomputed pair, fire in {claudeRoom?.name && claudeRoom.name !== claude.claude.fire.room ? `${claudeRoom.name} (${claude.claude.fire.room})` : claude.claude.fire.room}: the rules against one saved run where Claude decides for everyone, with the same doors and seed. Claude's answers can differ from one run to the next.
           </p>
         </div>
       )}

@@ -5,6 +5,7 @@ import { STATUS_COLORS, TYPE_COLORS } from '../replay/Agents'
 import { PROFILE_NAMES } from '../replay/runIndex'
 import { DOOR_COLORS } from '../scene/Building'
 import { readSpread } from '../model/fireSpread'
+import { claudeIdx } from '../model/brain'
 
 interface Row {
   name: string
@@ -15,6 +16,8 @@ interface Row {
   ringed?: boolean
   /** only the red ring, no dot */
   ringOnly?: boolean
+  /** only the pink ring of the people who ask Claude */
+  claude?: boolean
 }
 
 const STATUS_ROWS: Row[] = [
@@ -27,6 +30,8 @@ const TYPE_ROWS: Row[] = [
   ...PROFILE_NAMES.map((name, i) => ({ name, color: TYPE_COLORS[i] })),
   { name: 'Trapped (red ring)', color: STATUS_COLORS.trapped, ringOnly: true },
 ]
+/** Shown only for a run in which people ask Claude (its agents flagged `llm`, or `llm` decisions in its events). */
+const CLAUDE_ROW: Row = { name: 'Asks Claude (pink ring)', color: '#E879F9', ringOnly: true, claude: true }
 
 /** What the colours in the viewer mean. The "Color by type" switch swaps the people rows between status and mobility type. */
 export default function LegendCard() {
@@ -34,11 +39,12 @@ export default function LegendCard() {
   const hasRun = useApp((s) => s.activeRunKey !== null)
   // A run that carries a spread (fire.rooms) also draws burning rooms, their markers and the doors the fire closes.
   const hasSpread = useApp((s) => readSpread(s.activeRunKey ? s.runs[s.activeRunKey]?.run : undefined) !== null)
+  const hasClaude = useApp((s) => claudeIdx(s.activeRunKey ? s.runs[s.activeRunKey]?.run : undefined).length > 0)
   // Open on a desktop; on a phone it starts collapsed, because the card would cover most of the picture.
   const [open, setOpen] = useState(() => !window.matchMedia('(max-width: 900px)').matches)
   if (!hasRun) return null
   const byType = colorBy === 'type'
-  const people = byType ? TYPE_ROWS : STATUS_ROWS
+  const people = [...(byType ? TYPE_ROWS : STATUS_ROWS), ...(hasClaude ? [CLAUDE_ROW] : [])]
   return (
     <section className={'legendcard' + (open ? '' : ' closed')} aria-label="Legend">
       <div className="lc-head">
@@ -61,7 +67,7 @@ export default function LegendCard() {
             {people.map((r) => (
               <li key={r.name}>
                 {r.ringOnly ? (
-                  <i className="sw ring red" />
+                  <i className={'sw ring ' + (r.claude ? 'claude' : 'red')} />
                 ) : (
                   <i className={'sw dot' + (r.small ? ' small' : '') + (r.ringed ? ' ringed' : '')} style={{ background: r.color }} />
                 )}

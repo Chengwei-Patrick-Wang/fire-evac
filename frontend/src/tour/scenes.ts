@@ -7,6 +7,7 @@ import { batchHeadline, pairHeadline } from '../model/exposure'
 import { fixLine, fixVerdict, readFixes } from '../model/fixes'
 import { seedBadge } from '../model/ranges'
 import { materialWords, runMaterial } from '../model/fireSpread'
+import { CLAUDE_WORDS } from '../model/brain'
 
 export interface TourCtx {
   after: (ms: number, fn: () => void) => void
@@ -120,8 +121,9 @@ function variantCaption(): string {
     const bh = batchHeadline(st.batch)
     return bh ? `${bh.main} (mean of ${bh.n} fires)` : ''
   }
-  // A material variant (the precomputed wood run) reads "Wood instead of drywall"; the tour's own what-if is always a door.
-  const what = b.whatIf.material ? materialWords(b.whatIf.material, runMaterial(a.run)) : `${doorWords(b.whatIf.door)} propped open`
+  // A material variant (the precomputed wood run) reads "Wood instead of drywall" and a crowd variant (Claude's) "Claude crowd instead of rules";
+  // the tour's own what-if is always a door.
+  const what = b.whatIf.brain ? CLAUDE_WORDS : b.whatIf.material ? materialWords(b.whatIf.material, runMaterial(a.run)) : `${doorWords(b.whatIf.door)} propped open`
   const h = pairHeadline(a.run, b.run, what)
   if (h) return h.secondary ? `${h.main} · ${h.secondary}` : h.main
   const c = compareRuns(a.run, b.run)
