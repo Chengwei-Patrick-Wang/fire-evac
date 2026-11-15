@@ -1,15 +1,16 @@
 import type { BuildingSummary } from '../model/buildingIndex'
 import { create } from 'zustand'
-import type { Batch, Building, BuildingInfo, DoorState, Run, Scenario, Vec2 } from '../data/types'
+import type { Batch, Building, BuildingInfo, DemoRun, DoorState, Material, Run, Scenario, Vec2 } from '../data/types'
 import type { Mode } from '../data/loader'
 import { buildRunIndex } from '../replay/runIndex'
 import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
 import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
-import { spotPosition } from '../model/spots'
+import { doorLabels, spotPosition } from '../model/spots'
 import type { HeadlinePack } from '../model/headlines'
 import { findPrecomputedVariant, makeVariant } from '../model/whatif'
+import { DEFAULT_MATERIAL, materialName, materialPair, runMaterial } from '../model/fireSpread'
 import { floorsByLevel } from '../model/floors'
 import type { ViewMode } from '../scene/geometry'
 
@@ -28,7 +29,8 @@ export interface LoadedRun {
   index: RunIndex
   doors: Record<string, DoorState>
   scenario?: Scenario
-  whatIf?: { baselineKey: string; door: string; state: DoorState }
+  /** The run this one is a variant of. A material variant (the precomputed wood run) has `material` and no door: `door` is '' there. */
+  whatIf?: { baselineKey: string; door: string; state: DoorState; material?: Material }
 }
 
 export type View = 'replay' | 'tracer'
@@ -138,6 +140,14 @@ interface AppState {
   runWhatIf: (door: string, state: DoorState, sprinklers: boolean) => Promise<void>
   whatIfBusy: string | null
   whatIfError: string | null
+  /** Why the what-if on screen is the precomputed one (the live what-if failed). The card shows it as a warning while `whatIfFallback` is set. */
+  whatIfNote: string | null
+  whatIfFallback: boolean
+  /** The building material the next live run spreads fire at (illustrative); kept across buildings. */
+  material: Material
+  setMaterial: (m: Material) => void
+  /** Loads the precomputed wood and drywall runs of the loaded building and shows them side by side, at the clock time they were at. */
+  showMaterialPair: () => Promise<void>
   setMode: (m: Mode) => void
   setView: (v: View) => void
   setLoading: (s: string | null) => void
@@ -196,6 +206,10 @@ export const useApp = create<AppState>((set) => ({
   runError: null,
   whatIfBusy: null,
   whatIfError: null,
+  whatIfNote: null,
+  whatIfFallback: false,
+  material: DEFAULT_MATERIAL,
+  setMaterial: (material) => set({ material }),
   runNote: null,
   runFallback: false,
   fromTracer: null,
@@ -267,7 +281,9 @@ export const useApp = create<AppState>((set) => ({
     const b = st.building
     if (!b || st.running) return
     set({ running: 'Running…', runError: null, runNote: null, runFallback: false })
-    const sc: Scenario = { ...scenario, buildingId: b.id, occupants: { ...scenario.occupants, mix: normalizeMix(scenario.occupants.mix) } }
+    // The material setting rides in the scenario's fire (illustrative spread speed); only the live backend reads it.
+    const material = st.material
+    const sc: Scenario = { ...scenario, buildingId: b.id, occupants: { ...scenario.occupants, mix: normalizeMix(scenario.occupants.mix) }, fire: { ...scenario.fire, material } }
     // The precomputed run nearest this fire (static mode's rule), loaded, made active and explained in runNote. False when the building
     // has none, or when it is no longer the loaded building (a late fallback must not add its run to another one).
     const showNearest = async (afterLiveFailure: boolean): Promise<boolean> => {
@@ -298,7 +314,8 @@ export const useApp = create<AppState>((set) => ({
           sc.id = id
           const runId = await startRun(sc)
           const run = await pollRun(runId, (el) => set({ running: `Running… ${el} s` }))
-          useApp.getState().addRun({ key: id, label: `Your run ${id.slice(3, 7)}`, run, doors: sc.doors ?? {}, scenario: sc })
+          const how = material === DEFAULT_MATERIAL ? '' : ` · ${materialName(material)}`
+          useApp.getState().addRun({ key: id, label: `Your run ${id.slice(3, 7)}${how}`, run, doors: sc.doors ?? {}, scenario: sc })
           return
         } catch (e) {
           // Spec §8 beat 3: the judge's fire "runs live, or loads the nearest precomputed run". Whatever went wrong (no backend, an HTTP
@@ -327,7 +344,10 @@ export const useApp = create<AppState>((set) => ({
     const active = st.activeRunKey ? st.runs[st.activeRunKey] : null
     if (!b || !active || st.whatIfBusy) return
     const base = active.whatIf ? st.runs[active.whatIf.baselineKey] ?? active : active
-    set({ whatIfBusy: 'Running…', whatIfError: null })
+    set({ whatIfBusy: 'Running…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
+    // Set when the live what-if failed, and whether the backend could not be reached at all (which also ends live mode).
+    let failure: Error | null = null
+    let unreachable = false
     try {
       if (useApp.getState().mode === 'live') {
         try {
@@ -341,6 +361,8 @@ export const useApp = create<AppState>((set) => ({
             doors: base.doors,
           }
           const sc = makeVariant({ ...baseSc, buildingId: b.id, occupants: { ...baseSc.occupants, mix: normalizeMix(baseSc.occupants.mix) } }, door, state, sprinklers)
+          // The what-if changes a door, never the material: it keeps the material its base run was made at.
+          sc.fire = { ...sc.fire, material: runMaterial(base.run) }
           const runId = await startRun(sc)
           const run = await pollRun(runId, (el) => set({ whatIfBusy: `Running… ${el} s` }))
           const key = sc.id as string
@@ -349,15 +371,22 @@ export const useApp = create<AppState>((set) => ({
           useClock.getState().seek(prev)
           return
         } catch (e) {
-          const unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
-          if (!unreachable) throw e
-          setLoaderMode('static')
-          set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
+          // As for a live run: whatever went wrong (no backend, an HTTP error, a run that failed, one that outlasted pollRun's wait),
+          // the precomputed what-if below is shown instead. Only a connection that failed ends live mode.
+          failure = e instanceof Error ? e : new Error(String(e))
+          unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
+          console.warn(`live what-if failed, showing the precomputed what-if instead: ${failure.message}`)
+          if (unreachable) {
+            setLoaderMode('static')
+            set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
+          }
+          set({ whatIfBusy: 'Loading precomputed what-if…' })
         }
       }
       const entries = await listDemoRuns(b.id)
       const hit = findPrecomputedVariant(entries, { buildingId: b.id, room: entries.find((e) => e.id === base.key)?.fire.room ?? st.draft?.fire.room, doors: base.doors })
-      if (!hit) throw new ApiError('No precomputed what-if for this fire')
+      // With no precomputed what-if the error is today's: the live failure itself, or after a connection failure "No precomputed what-if".
+      if (!hit) throw failure && !unreachable ? failure : new ApiError('No precomputed what-if for this fire')
       const { entry } = hit
       if (useApp.getState().runs[entry.id]) useApp.getState().switchRun(entry.id)
       else {
@@ -366,6 +395,43 @@ export const useApp = create<AppState>((set) => ({
         useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, whatIf: { baselineKey: base.key, door: hit.door, state: hit.state } })
         useClock.getState().seek(prev)
       }
+      if (failure) {
+        const name = hit.door === '?' ? 'a door' : doorLabels(b).get(hit.door)?.label ?? hit.door
+        set({ whatIfNote: `Live what-if unavailable: showing the precomputed what-if (${name} ${hit.state}).`, whatIfFallback: true })
+      }
+    } catch (e) {
+      set({ whatIfError: e instanceof Error ? e.message : String(e) })
+    } finally {
+      set({ whatIfBusy: null })
+    }
+  },
+  showMaterialPair: async () => {
+    const st = useApp.getState()
+    const b = st.building
+    if (!b || st.whatIfBusy) return
+    set({ whatIfBusy: 'Loading precomputed pair…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
+    // Loads (once) and shows one precomputed run; false when another building was loaded meanwhile.
+    const show = async (entry: DemoRun, whatIf?: LoadedRun['whatIf']): Promise<boolean> => {
+      if (useApp.getState().runs[entry.id]) {
+        if (whatIf && !useApp.getState().runs[entry.id].whatIf) set((s) => ({ runs: { ...s.runs, [entry.id]: { ...s.runs[entry.id], whatIf } } }))
+        useApp.getState().switchRun(entry.id)
+        return true
+      }
+      const run = await loadDemoRun(entry)
+      if (useApp.getState().building?.id !== b.id) return false
+      useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
+      return true
+    }
+    try {
+      const pair = materialPair(await listDemoRuns(b.id), b.id)
+      if (!pair) throw new ApiError('No precomputed wood and drywall pair for this building')
+      const prev = useClock.getState().t
+      if (!(await show(pair.drywall)) || !(await show(pair.wood, { baselineKey: pair.drywall.id, door: '', state: 'propped', material: 'wood' }))) return
+      const runs = useApp.getState().runs
+      // Both panes share one clock, as long as the longer run: keep the time the page was at.
+      useClock.setState({ duration: Math.max(runs[pair.drywall.id].index.duration, runs[pair.wood.id].index.duration) })
+      useClock.getState().seek(prev)
+      set({ split: true, compareKeys: [pair.drywall.id, pair.wood.id] })
     } catch (e) {
       set({ whatIfError: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -377,7 +443,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, whatIfNote: null, whatIfFallback: false, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
