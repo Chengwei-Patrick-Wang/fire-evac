@@ -1,32 +1,32 @@
 ## AI summary (Claude)
 
-Across 54 simulated fires in this two-floor office, most people escaped, but some were trapped in 14 fires. The worst queue formed at the Door between Lobby and Corridor 1, with 23 people at peak. It is the single link funnelling Corridor 1 toward the main entrance, so most of that wait was spent in smoke. Fires starting in Lobby (L1) trapped 16.7 people on average because they cut off that main route. A likely fix to check is a second exit from Corridor 1 that bypasses the Lobby.
+Across 54 simulated fires in this two-floor office, no one was trapped and 90% of people were out in a median of 113 s. The longest queue formed at the Exit East stair exit, where everyone coming down Stair B funnels through a single outdoor door, with 25 people queued at peak. The Door between Lobby and Corridor 1 also backed up, because Corridor 1 traffic must squeeze through it toward the Main entrance. A likely fix to check is widening the Exit East stair exit or adding a second door there.
 
 ### Report card: Example office (synthetic, 2 floors)
 
-**With the Main entrance blocked, smoke exposure rose 201% and 90% of people got out 53.3 s later on average.**
+**Blocking the Main entrance raised smoke exposure by 315% and delayed 90% evacuation by 71.3 s, trapping 3.4 more people per fire.**
 
-54 fires simulated (18 rooms × 3 seeds). Smoke: 1,128 person-seconds in smoke per fire on average; 2.7 people per fire at an illustrative smoke dose of 1 (in 25 of 54 fires). 90% out: median 124 s; not reached within 400 s in 2 of 54 fires. People trapped in 14 of 54 fires. Fire spread at illustrative drywall speeds: 11.0 other rooms per fire on average by 400 s, at most 11 rooms (fire in Kitchen (R101)).
+54 fires simulated (18 rooms × 3 seeds). Smoke: 637 person-seconds in smoke per fire on average; 0.4 people per fire at an illustrative smoke dose of 1 (in 10 of 54 fires). 90% out: median 113 s, worst 143 s. No one trapped in any fire. Fire spread at illustrative drywall speeds: 11.0 other rooms per fire on average by 400 s, at most 11 rooms (fire in Kitchen (R101)).
 
 #### Top weak spots
 
-1. **Door between Lobby and Corridor 1** · F1
-   - Door between Lobby and Corridor 1: 23 people queued at peak; 107 person-seconds of waiting on average, 90 of them in smoke, across 54 fires.
-   - **Fix:** Replace the Door between Lobby and Corridor 1 with a wider double door so the corridor drains into the Lobby faster.
+1. **Exit East stair exit** · from Stair B (SB1) to outside, F1
+   - Exit East stair exit: 25 people queued at peak; 197 person-seconds of waiting on average, 26 of them in smoke, across 54 fires.
+   - **Fix:** Replace the Exit East stair exit with a wider double door, or add a second outdoor door at the foot of Stair B.
 2. **Fires starting in Lobby (L1)** · F1
-   - Fire in Lobby (L1): 16.7 people trapped on average; 90% out after 323 s (3 fires).
-   - **Fix:** Add a direct exit from Corridor 1 to outside that avoids the Lobby, and install early smoke detection in the Lobby.
-3. **Exit East stair exit** · from Stair B (SB1) to outside, F1
-   - Exit East stair exit: 13 people queued at peak; 96 person-seconds of waiting on average, 5 of them in smoke, across 54 fires.
-   - **Fix:** Widen the East stair exit door from Stair B to outside, and add signs pointing occupants to alternative exits when it is busy.
+   - Fire in Lobby (L1): 0.0 people trapped on average; 90% out after 136 s (3 fires).
+   - **Fix:** Extend smoke detection and alarm coverage in the Lobby so a Lobby fire is detected early, and add a route bypassing the Lobby.
+3. **Door between Lobby and Corridor 1** · F1
+   - Door between Lobby and Corridor 1: 16 people queued at peak; 48 person-seconds of waiting on average, 21 of them in smoke, across 54 fires.
+   - **Fix:** Widen the Door between Lobby and Corridor 1 to a double door and add signs steering Corridor 1 occupants toward the east stair.
 
 Queues mark where the building runs short of capacity, not how people behave.
 
 #### What-ifs
 
-- **Stair doors propped open:** smoke exposure +31% (+443 person-seconds in smoke per fire); +0.5 people per fire at an illustrative smoke dose of 1; 90% out 0.2 s sooner on average (slower in 3 of 36 fires); trapped +0.0 per fire.
-- **Exit Main entrance blocked:** smoke exposure +201% (+2,851 person-seconds in smoke per fire); +9.2 people per fire at an illustrative smoke dose of 1; 90% out 53.3 s later on average (slower in 34 of 36 fires); trapped +2.6 per fire.
-- **Sprinklers on:** 1.8 fewer people trapped per fire; 90% out 14.6 s sooner on average (slower in 0 of 36 fires); smoke time is not compared: people who become trapped drop out of the frames.
+- **Stair doors propped open:** smoke exposure +65% (+584 person-seconds in smoke per fire); +0.2 people per fire at an illustrative smoke dose of 1; 90% out 0.3 s sooner on average (slower in 1 of 36 fires); trapped +0.0 per fire.
+- **Exit Main entrance blocked:** smoke exposure +315% (+2,822 person-seconds in smoke per fire); +11.0 people per fire at an illustrative smoke dose of 1; 90% out 71.3 s later on average (slower in 36 of 36 fires); trapped +3.4 per fire.
+- **Sprinklers on:** no change in people trapped; 90% out 0.9 s sooner on average (slower in 0 of 36 fires); smoke time is not compared: people who become trapped drop out of the frames.
 
 ---
 
