@@ -5,8 +5,9 @@
     python tools/precompute_demo.py --building office --thin --resume    reuse the saved batch and sweeps: minutes
     python tools/precompute_demo.py --building office --batch data/runs/batch-office.json
                                                           D's finished batch instead of a batch of our own
-    python tools/precompute_demo.py --live-reports        new report cards with Gemini, no simulation
+    python tools/precompute_demo.py --reports-only        new report cards written by the model (Claude), no simulation
     python tools/precompute_demo.py --refresh-reports     the template cards again (its wording changed), no simulation
+    python tools/precompute_demo.py --claude-pair         only the Claude crowd run of the example building, added to the demo
 
 Per building it makes
     1. one batch (fire.batch.run_many): a fire in every room that is not a corridor or a stair
@@ -25,9 +26,19 @@ Per building it makes
        a preset's "material_pair" (the office: R143, wood) adds a third run after that room's propped one: the
        baseline's very fire, people, doors and seed with fire.material set to the pair's material (office-R143-wood,
        whatIf "material"), so the app can set wood against drywall (illustrative spread speeds, fire/spread.py);
+       a preset's "claude_pair" (the example building: R101) adds a run right after that room's baseline: the baseline's
+       very scenario with "brain": "llm", so every person's choices come from Claude (claude-haiku-5-5, one decision
+       round a simulated second: about 4 minutes of wall time and 3 cents of API for 160 people, measured Sat). It is listed as the baseline's partner
+       (example-office-R101-claude, whatIf "brain", brain "llm", label "Kitchen, Claude crowd (illustrative)") and is
+       left out, with a note, when there is no APP_ANTHROPIC_API_KEY, with --no-claude, or when more than a fifth of its
+       decisions fell back to the rules (a run that is mostly rules must not be shown as Claude's);
     4. the batch's report card, written from the template: LLM_PROVIDER is forced to off here.
-   --live-reports is a separate mode: it rewrites report-*.md with Gemini from the batches already
-   in the demo folder, never simulating and never replacing a card by a worse one (see live_reports).
+   --reports-only is a separate mode (--live-reports is its old name): it rewrites report-*.md with the model (LLM_PROVIDER
+   from .env: claude) from the batches already in the demo folder, never simulating and never replacing a card by a worse
+   one (see live_reports). The card now opens with the model's "AI summary" paragraph. The demo has batch cards only.
+   --claude-pair is another: it simulates just the Claude crowd run of the building (the example building's by default),
+   with the same scenario the baseline was made from (same fire, doors, seed and people), writes its file and adds its entry
+   to index.json right after the baseline's, replacing an earlier one. Needs the baseline already in the demo folder.
 
 Files go to frontend/public/demo/ (or --out), next to what frontend/scripts/sync-demo.mjs keeps there:
     building-ID.json         a copy of the public building (building.example.json for the example, the
@@ -106,6 +117,7 @@ FAILED_OK = 0.03  # share of batch fires that may fail before the batch is repea
 JOBS_TIMEOUT_S = 3600  # the baseline and propped runs together (a few minutes when nothing hangs)
 DEFAULT_MIX = {"typical": 0.85, "older": 0.1, "visitor": 0.05}
 DEFAULT_MATERIAL = "drywall"  # fire.spread's default: a scenario without fire.material spreads at drywall speeds
+CLAUDE_MAX_FALLBACK = 0.2  # share of a Claude crowd run's decisions that may be the rules' (the model gave nothing usable)
 
 # Demo defaults by building id; the command line wins over them, and they over the scenario file.
 PRESETS = {
@@ -127,7 +139,9 @@ PRESETS = {
     "clinic": {"occupants": 280, "fire_type": "kitchen", "rooms": ["R1AC1"], "max_rooms": 24, "sweep_rooms": 3},
     # DSA1 is the stair door of the demo story; the worst room and the kitchen keep the static payload under its 15 MB aim;
     # home_point: the kitchen baseline is the very fire of contracts/run.example.json, which sync-demo lists too
-    "example-office": {"propped_door": "DSA1", "top": 1, "home_point": True},
+    # claude_pair (A12): the baseline of room R101 again with every person's choices made by Claude (brain "llm", 160 people
+    # is under the all-LLM cap of 200): the app can set the rule-based crowd against the Claude-guided one.
+    "example-office": {"propped_door": "DSA1", "top": 1, "home_point": True, "claude_pair": {"room": "R101"}},
 }
 
 
@@ -553,13 +567,17 @@ def run_key(building_id: str, room: str, variant: str) -> str:
 
 
 def build_jobs(building: dict, base: dict, rooms: list[tuple[str, str]], door: str | None,
-               home_point: bool = False, material_pair: dict | None = None) -> list[dict]:
+               home_point: bool = False, material_pair: dict | None = None, claude_pair: dict | None = None) -> list[dict]:
     """A baseline job and, with a door, a propped job per room: same seed, doors differ only in `door`.
     home_point keeps the scenario file's own fire point in the room that file names (the example building:
     sync-demo lists contracts/run.example.json, a baseline of that very fire, so ours must be the same fire).
     material_pair {"room", "material"} (a preset's) adds one job after that room's baseline and propped jobs: the
     baseline's scenario with fire.material set to the pair's material and the id ID-ROOM-MATERIAL. Seed, people,
-    doors and fire point stay the same, so the two runs differ only in how fast the fire spreads."""
+    doors and fire point stay the same, so the two runs differ only in how fast the fire spreads.
+    claude_pair {"room"} (a preset's) adds one job right after that room's baseline: the baseline's scenario with
+    "brain": "llm" and the id ID-ROOM-claude, so the two differ only in who makes the people's choices (rules, or Claude).
+    Its job carries env LLM_PROVIDER=claude, which _simulate_job sets for that run: main() forces the provider off for
+    the report card, and the worker would otherwise inherit that."""
     table = room_table(building)
     jobs = []
     for floor_id, room_id in rooms:
@@ -580,6 +598,12 @@ def build_jobs(building: dict, base: dict, rooms: list[tuple[str, str]], door: s
                 baseline = scenario
             jobs.append({"key": scenario["id"], "room": room_id, "floor": floor_id, "variant": variant,
                          "scenario": scenario})
+            if variant == "base" and claude_pair and claude_pair["room"] == room_id:
+                crowd = copy.deepcopy(scenario)
+                crowd["id"] = run_key(building["id"], room_id, "claude")
+                crowd["brain"] = "llm"
+                jobs.append({"key": crowd["id"], "room": room_id, "floor": floor_id, "variant": "claude",
+                             "scenario": crowd, "env": {"LLM_PROVIDER": "claude"}})
         if material_pair and material_pair["room"] == room_id and \
                 material_pair["material"] != baseline["fire"].get("material", DEFAULT_MATERIAL):
             material = material_pair["material"]
@@ -592,16 +616,54 @@ def build_jobs(building: dict, base: dict, rooms: list[tuple[str, str]], door: s
 
 
 def _simulate_job(job: dict) -> dict:
-    """Pool worker (top level, so it pickles under spawn): one run, as backend.app.jobs.simulate makes it."""
+    """Pool worker (top level, so it pickles under spawn): one run, as backend.app.jobs.simulate makes it. A job's "env"
+    (the Claude crowd run's LLM_PROVIDER) holds for that run only, since a worker does several jobs; its result carries
+    "llm", this process's model counters (calls, tokens, spend) for the run."""
     started = time.perf_counter()
+    env = job.get("env") or {}
+    saved = {name: os.environ.get(name) for name in env}
     try:
+        os.environ.update(env)
         from backend.app.jobs import simulate
 
+        if env:
+            from backend.llm import client
+
+            client.reset_stats()
         run = simulate(job["building"], job["scenario"])
-        return {"key": job["key"], "run": run, "wallS": time.perf_counter() - started}
+        result = {"key": job["key"], "run": run, "wallS": time.perf_counter() - started}
+        if env:
+            result["llm"] = client.stats()
+        return result
     except Exception as error:  # noqa: BLE001 - reported by the caller, which decides what a failure costs
         return {"key": job["key"], "error": f"{type(error).__name__}: {error}", "trace": traceback.format_exc()[-1500:],
                 "wallS": time.perf_counter() - started}
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def claude_ready() -> str | None:
+    """None when a Claude crowd run can be made here, else why not: no APP_ANTHROPIC_API_KEY (in the environment or .env,
+    which backend.llm.client loads), or no anthropic package."""
+    import importlib.util
+
+    from backend.llm import client  # noqa: F401 - loads .env
+
+    if not (os.environ.get("APP_ANTHROPIC_API_KEY") or "").strip():
+        return "APP_ANTHROPIC_API_KEY is not set (put it in .env)"
+    if importlib.util.find_spec("anthropic") is None:
+        return "the anthropic package is not installed (pip install -r requirements.txt)"
+    return None
+
+
+def crowd_decisions(run: dict) -> tuple[int, int]:
+    """(decisions, fallbacks) of an all-LLM run: its llm events, and those the rules made because the model gave nothing."""
+    events = [e for e in run.get("events") or [] if e.get("type") == "llm"]
+    return len(events), sum(1 for e in events if e.get("fallback"))
 
 
 def _pool_round(jobs: list[dict], workers: int, done, timeout_s: float) -> list[dict]:
@@ -799,7 +861,8 @@ def write_atomic(path: Path, content: str | bytes) -> None:
 
 
 def run_entry(key: str, building: dict, scenario: dict, run: dict, file: str, variant: str, door: str | None) -> dict:
-    """variant: "base", "propped", or a material name (the material pair's run: whatIf "material")."""
+    """variant: "base", "propped", "claude" (the Claude crowd run: whatIf "brain", brain "llm"), or a material name (the
+    material pair's run: whatIf "material")."""
     metrics = run.get("metrics") or {}
     fire = scenario["fire"]
     material = fire.get("material", DEFAULT_MATERIAL)
@@ -808,6 +871,8 @@ def run_entry(key: str, building: dict, scenario: dict, run: dict, file: str, va
         label, what_if = f"{where}, baseline", None
     elif variant == "propped":
         label, what_if = f"{where}, {door} propped", "propped"
+    elif variant == "claude":
+        label, what_if = f"{where}, Claude crowd (illustrative)", "brain"
     else:
         label, what_if = f"{where}, {material} (illustrative)", "material"
     return {
@@ -816,6 +881,7 @@ def run_entry(key: str, building: dict, scenario: dict, run: dict, file: str, va
         "label": label,
         "file": file,
         "whatIf": what_if,
+        **({"brain": scenario["brain"]} if scenario.get("brain", "rules") != "rules" else {}),
         "material": material,
         "fire": {"floor": fire["floor"], "room": fire["room"], "x": round(fire["x"], 2), "y": round(fire["y"], 2),
                  "type": fire["type"]},
@@ -865,7 +931,7 @@ def order_by_story(runs: list[dict]) -> list[dict]:
     pair whose propped run adds the most person-seconds in smoke goes first: a what-if that shows something.
     The rest keep their risk order, and so does everything when --rooms names the order. A room's material run
     (whatIf "material") follows its propped run, so the tour's pairing and findPrecomputedVariant still find
-    the propped run first."""
+    the propped run first; its Claude crowd run (whatIf "brain") comes right after the baseline."""
     by_room: dict[str, dict[str, dict]] = {}
     for item in runs:
         by_room.setdefault(item["entry"]["fire"]["room"], {})[item["entry"]["whatIf"] or "base"] = item
@@ -879,7 +945,7 @@ def order_by_story(runs: list[dict]) -> list[dict]:
     if order != list(by_room):
         say("  order in the index (what-if that adds the most smoke first): "
             + ", ".join(f"{room} ({gain[room]:+,.0f})" if room in gain else room for room in order))
-    return [item for room in order for kind in ("base", "propped", "material") if (item := by_room[room].get(kind))]
+    return [item for room in order for kind in ("base", "brain", "propped", "material") if (item := by_room[room].get(kind))]
 
 
 def pair_story(a: dict, b: dict) -> str:
@@ -946,6 +1012,32 @@ def warn_stale_pack(building_id: str, batch: dict, wrote_pack: bool) -> None:
             f"rerun python -m fire.headlines on this batch.")
 
 
+def crowd_report(key: str, result: dict) -> dict | None:
+    """Say how a Claude crowd run went (decisions, how many were the rules', model calls, spend) and return that, or None
+    (and say why) when more than CLAUDE_MAX_FALLBACK of its decisions were the rules': the model was unreachable, out of
+    budget or refusing, and a run of rules must not be listed as Claude's."""
+    decisions, fallbacks = crowd_decisions(result["run"])
+    used = result.get("llm") or {}
+    say(f"  {key}: {decisions} decisions, {fallbacks} of them the rules' (the model gave nothing usable); "
+        f"{used.get('calls', '?')} model calls, ${used.get('spendUsd', 0):.2f} of API, {result['wallS'] / 60:.1f} min")
+    if not decisions or fallbacks > CLAUDE_MAX_FALLBACK * decisions:
+        say(f"  WARNING: {key} not written: {fallbacks} of {decisions} decisions fell back to the rules "
+            f"(over {CLAUDE_MAX_FALLBACK:.0%}); check the key, the budget and the model, then run --claude-pair")
+        return None
+    return {"decisions": decisions, "fallbacks": fallbacks, "spendUsd": used.get("spendUsd", 0.0)}
+
+
+def insert_after(entries: list[dict], anchor_id: str, entry: dict) -> None:
+    """Put `entry` right after the entry `anchor_id` (at the end when there is none), replacing an entry with its id or
+    file wherever it stood: the Claude crowd run follows its baseline."""
+    entries[:] = [e for e in entries if e.get("id") != entry["id"] and e.get("file") != entry["file"]]
+    at = next((i for i, e in enumerate(entries) if e.get("id") == anchor_id), None)
+    if at is None:
+        entries.append(entry)
+    else:
+        entries.insert(at + 1, entry)
+
+
 def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     """Everything for one building. Returns False when it was skipped. Writes its files and merges
     its entries into index.json at the end, so a later building's failure keeps this one's."""
@@ -993,7 +1085,14 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     door = pick_door(building, batch, preset, args)
     say(f"  runs: {', '.join(r for _, r in rooms)}; propped door: {door or 'none (no stair door found)'}")
     material_pair = preset.get("material_pair")
-    jobs = build_jobs(building, base, rooms, door, home_point=bool(preset.get("home_point")), material_pair=material_pair)
+    claude_pair = preset.get("claude_pair")
+    if claude_pair:
+        left_out = "--no-claude" if args.no_claude else claude_ready()
+        say(f"  Claude crowd run: {claude_pair['room']}, brain llm" if not left_out else
+            f"  Claude crowd run left out ({left_out}); an earlier one in the demo folder stays as it is")
+        claude_pair = None if left_out else claude_pair
+    jobs = build_jobs(building, base, rooms, door, home_point=bool(preset.get("home_point")), material_pair=material_pair,
+                      claude_pair=claude_pair)
     if material_pair:
         made = any(j["variant"] == material_pair["material"] for j in jobs)
         say(f"  material pair: {material_pair['room']}, {base['fire'].get('material', DEFAULT_MATERIAL)} -> "
@@ -1014,11 +1113,17 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
             dropped.append(job["key"])
             say(f"  WARNING: {job['key']} dropped: its baseline failed")
             continue
+        crowd = None
+        if job["variant"] == "claude":
+            crowd = crowd_report(job["key"], result)
+            if crowd is None:
+                dropped.append(job["key"])
+                continue
         entry, name, text = write_run(result["run"], building, job["scenario"], job["variant"], door, args)
         note = batch_match_note(batch, job["scenario"], result["run"]) if job["variant"] == "base" else None
         on_fire = (result["run"].get("fire") or {}).get("rooms")  # C27's fire.rooms: absent from runs made before it
         runs.append({"entry": entry, "name": name, "text": text, "note": note, "metrics": result["run"]["metrics"],
-                     "rooms": len(on_fire) if isinstance(on_fire, list) else None})
+                     "rooms": len(on_fire) if isinstance(on_fire, list) else None, "crowd": crowd})
     if not runs:
         fail(f"{building_id}: no run finished")
     if not args.rooms:
@@ -1066,6 +1171,10 @@ def process_building(building_id: str, args, demo: Path, state: dict) -> bool:
     for room, pair in pairs.items():
         if "propped" in pair:
             say(f"  {room}, baseline -> {door} propped: {pair_story(pair['base']['metrics'], pair['propped']['metrics'])}")
+        if "brain" in pair:
+            a, b = pair["base"], pair["brain"]
+            say(f"  {room}, rules crowd -> Claude crowd: t90 {a['metrics'].get('t90')} -> {b['metrics'].get('t90')}, "
+                f"trapped {a['metrics'].get('trapped')} -> {b['metrics'].get('trapped')}")
         if "material" in pair:
             a, b = pair["base"], pair["material"]
             on_fire = [("n/a" if p["rooms"] is None else p["rooms"]) for p in (a, b)]  # n/a: runs made before C27
@@ -1092,7 +1201,11 @@ def commit_building(building_id: str, files: dict, entries: dict, demo: Path, st
     def mine(e: dict, prefix: str) -> bool:  # an entry this tool wrote for the building (sync-demo's never start so)
         return e.get("buildingId") == building_id and str(e.get("file", "")).startswith(prefix)
 
-    stale = [e["file"] for e in index["runs"] if mine(e, "run-")]
+    # a Claude crowd run (whatIf "brain") that this run did not make again (no key, --no-claude, too many rules fallbacks)
+    # stays: its file is not stale and its entry goes back after its baseline below
+    made = {e["id"] for e in entries["runs"]}
+    crowd = [e for e in index["runs"] if mine(e, "run-") and e.get("whatIf") == "brain" and e["id"] not in made]
+    stale = [e["file"] for e in index["runs"] if mine(e, "run-") and e not in crowd]
     for e in index["batches"]:
         if mine(e, "batch-"):
             stale += [e["file"], *([e["report"]] if e.get("report") else []), *([e["headlines"]] if e.get("headlines") else [])]
@@ -1121,6 +1234,9 @@ def commit_building(building_id: str, files: dict, entries: dict, demo: Path, st
     # partner: ours (best what-if story first) go before any other run of the building, such as sync-demo's example
     first = next((i for i, e in enumerate(index["runs"]) if e.get("buildingId") == building_id), len(index["runs"]))
     index["runs"][first:first] = entries["runs"]
+    for e in crowd:
+        insert_after(index["runs"], e["id"].rsplit("-", 1)[0] + "-base", e)
+        say(f"  kept {e['file']} (an earlier Claude crowd run: not made again here)")
     # loadBatch takes the first batch listed for a building: ours goes before any other of its building, and
     # a placeholder (sync-demo's example batch) goes altogether, as sync-demo itself would drop it
     old = next((e for e in index["batches"] if mine(e, "batch-")), {})
@@ -1210,13 +1326,111 @@ def is_placeholder(path: Path) -> bool:
         return False
 
 
+# ----------------------------------------------------------------------------- the Claude crowd run alone
+
+
+def claude_pair(args, demo: Path) -> int:
+    """--claude-pair: simulate only the Claude crowd run of a building (a preset's claude_pair: the example building's
+    kitchen fire) and put it in the demo folder: its run file, and its entry in index.json right after the baseline's
+    (replacing an earlier one). The scenario is the one process_building makes for that baseline, with "brain": "llm", so
+    pass the same options the baseline was made with (--thin, --occupants, --fire-type); it needs the baseline already in
+    the folder, to say whether the two are like for like. Nothing else in the folder changes."""
+    building_id = (args.building or ["example-office"])[0]
+    say(f"== {building_id}: the Claude crowd run only")
+    building, source, problem = find_building(building_id)
+    if problem == "private":
+        say(f"skipped private: {building_id}")
+        return 1
+    if problem:
+        fail(problem, 2)
+    preset = PRESETS.get(building_id, {})
+    spec = preset.get("claude_pair")
+    if not spec:
+        fail(f"{building_id} has no claude_pair in PRESETS (the example building has one)", 2)
+    why = claude_ready()
+    if why:
+        fail(f"no Claude crowd run: {why}", 2)
+    table = room_table(building)
+    if spec["room"] not in table:
+        fail(f"claude_pair: no such room in {building_id}: {spec['room']}", 2)
+    door = args.propped_door or preset.get("propped_door")
+    if door is not None and door_floor(building, door) is None:
+        fail(f"--propped-door: no door {door!r} in {building_id}", 2)
+    args = copy.copy(args)
+    base = base_scenario(building, source, args, preset, sorted(set(args.seeds)))
+    jobs = build_jobs(building, base, [(table[spec["room"]][0], spec["room"])], door,
+                      home_point=bool(preset.get("home_point")), claude_pair=spec)
+    job = next(j for j in jobs if j["variant"] == "claude")
+    scenario = job["scenario"]
+    say(f"  {scenario['occupants'].get('total', '?')} occupants, {scenario['fire']['type']} fire in {spec['room']}, "
+        f"seed {scenario['seed']}, maxTime {scenario['maxTime']} s, doors {scenario.get('doors') or {}}")
+
+    anchor = run_key(building_id, spec["room"], "base")
+    index = load_index(demo)
+    base_entry = next((e for e in index["runs"] if e["id"] == anchor), None)
+    if base_entry is None:
+        say(f"  WARNING: {anchor} is not in {demo.name}/index.json: the Claude run is added at the end of the runs, "
+            "with no baseline to compare it with")
+    else:
+        fire = scenario["fire"]
+        same = (base_entry["fire"].get("floor") == fire["floor"] and base_entry["fire"].get("room") == fire["room"]
+                and abs(base_entry["fire"].get("x", 1e9) - fire["x"]) < 0.01 and abs(base_entry["fire"].get("y", 1e9) - fire["y"]) < 0.01
+                and (base_entry.get("doors") or {}) == (scenario.get("doors") or {}))
+        if not same:
+            say(f"  WARNING: the baseline {anchor} in the demo folder was made with another fire or other doors "
+                f"({base_entry['fire']}, {base_entry.get('doors')}); the two runs are not like for like")
+        else:
+            try:
+                made = json.loads((demo / base_entry["file"]).read_text(encoding="utf-8"))
+                if made.get("seed") != scenario["seed"] or len(made.get("agents") or []) != scenario["occupants"].get("total"):
+                    say(f"  WARNING: the baseline was made with seed {made.get('seed')} and {len(made.get('agents') or [])} "
+                        f"people, this run uses seed {scenario['seed']} and {scenario['occupants'].get('total')}")
+            except (OSError, ValueError):
+                say(f"  WARNING: could not read {base_entry['file']} to compare seed and people")
+
+    t0 = time.perf_counter()
+    result = simulate_jobs(building, [job], 1)[job["key"]]  # one job: run here, no pool
+    if "run" not in result:
+        if result.get("trace"):
+            say(result["trace"])
+        fail(f"{job['key']} failed: {result['error']}")
+    crowd = crowd_report(job["key"], result)
+    if crowd is None:
+        fail(f"{job['key']} not written", 1)
+    entry, name, text = write_run(result["run"], building, scenario, "claude", door, args)
+    check_private({name: text}, [building_id])
+    size = len(text.encode("utf-8"))
+    if size > MAX_FILE_BYTES:
+        fail(f"{name} is {human(size)} (limit {MAX_FILE_BYTES // MB} MB): rerun with --thin")
+    projected = {**folder_bytes(demo), name: size}
+    if sum(projected.values()) > MAX_FOLDER_BYTES:
+        fail(f"{demo} would hold {human(sum(projected.values()))} (limit {MAX_FOLDER_BYTES // MB} MB): rerun with --thin")
+    write_atomic(demo / name, text)
+    say(f"  {name}  {human(size)}")
+    index = load_index(demo)  # the file on disk now, in case it changed while the run went
+    insert_after(index["runs"], anchor, entry)
+    index = {"version": index["version"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             **{k: v for k, v in index.items() if k not in ("version", "generated")}}
+    write_atomic(demo / "index.json", to_text(index, indent=2))
+    problems = verify_index(demo)
+    if problems:
+        fail("index.json does not match the files:\n  " + "\n  ".join(problems))
+    m = result["run"]["metrics"]
+    say(f"  rules crowd -> Claude crowd: t90 {base_entry['metrics'].get('t90') if base_entry else '?'} -> {m.get('t90')}, "
+        f"trapped {base_entry['metrics'].get('trapped') if base_entry else '?'} -> {m.get('trapped')}")
+    say(f"OK: {entry['id']} added to {demo.name}/index.json, {(time.perf_counter() - t0) / 60:.1f} min, "
+        f"{crowd['decisions']} decisions ({crowd['fallbacks']} the rules'), ${crowd['spendUsd']:.2f} of API")
+    return 0
+
+
 # ----------------------------------------------------------------------------- live report cards
 
 
 def live_reports(args, demo: Path, live: bool = True) -> int:
-    """Rewrite report-*.md from the batches already in the demo folder: no simulation. live=True asks Gemini and a card
-    only replaces the file when the model wrote it (a template, from quota, busy or no key, leaves the old one);
-    live=False (--refresh-reports) writes the template card again, with no model call, for when its wording changed."""
+    """Rewrite report-*.md from the batches already in the demo folder: no simulation. live=True (--reports-only) asks
+    the model LLM_PROVIDER names (claude) and a card only replaces the file when the model wrote it (a template, from
+    quota, a refusal, busy or no key, leaves the old one); live=False (--refresh-reports) writes the template card
+    again, with no model call, for when its wording changed."""
     if live:
         if os.environ.get("LLM_PROVIDER", "").strip().lower() == "off":
             del os.environ["LLM_PROVIDER"]  # a shell that exports off must not win here; .env decides again
@@ -1227,15 +1441,15 @@ def live_reports(args, demo: Path, live: bool = True) -> int:
 
     provider = client.provider()
     if live and provider == "off":
-        fail("LLM_PROVIDER is off in .env; set it to gemini (or claude) for --live-reports")
+        fail("LLM_PROVIDER is off in .env; set it to claude (or gemini) for --reports-only")
     index = load_index(demo)
     wanted = set(args.building or [])
     entries = [b for b in index["batches"] if not wanted or b["buildingId"] in wanted]
     if not entries:
         fail("no batch in the demo index" + (f" for {', '.join(sorted(wanted))}" if wanted else ""))
     if live:
-        say(f"live report cards with {provider} ({len(entries)} batch{'es' if len(entries) != 1 else ''}); "
-            "the free tier allows 20 requests a day per model")
+        say(f"live report cards with {provider} ({len(entries)} batch{'es' if len(entries) != 1 else ''})"
+            + ("; the free tier allows 20 requests a day per model" if provider == "gemini" else ""))
     else:
         say(f"template report cards, no model call ({len(entries)} batch{'es' if len(entries) != 1 else ''})")
     changed = 0
@@ -1260,11 +1474,13 @@ def live_reports(args, demo: Path, live: bool = True) -> int:
         entry["report"] = name
         changed += 1
         headline = next((ln.strip("* ") for ln in markdown.splitlines() if ln.startswith("**")), "")
-        say(f"  {name}: {'written by ' + provider if ai else 'template' + (' (no model answer, no earlier card)' if live else '')}")
+        say(f"  {name}: {'written by ' + provider if ai else 'template' + (' (no model answer, no earlier card)' if live else '')}"
+            + (" with an AI summary" if "## AI summary" in markdown else ""))
         say(f"    {headline}")
     if changed:
         write_atomic(demo / "index.json", to_text(index, indent=2))
-    say(f"OK: {changed} report card{'s' if changed != 1 else ''} written")
+    spent = f", {provider} spend ${client.spend_usd():.3f}" if live and provider == "claude" else ""
+    say(f"OK: {changed} report card{'s' if changed != 1 else ''} written{spent}")
     return 0
 
 
@@ -1296,14 +1512,22 @@ def parse_args(argv):
                    help="what-if variants to leave out, such as blockedExit (default: none left out; 'none' also means that)")
     p.add_argument("--workers", type=int, metavar="N", help="processes (default: cores - 2, at most 10; each holds about 33 MB with the one-thread BLAS this tool sets)")
     p.add_argument("--resume", action="store_true", help="reuse the raw batch of the last run when it still fits")
-    p.add_argument("--live-reports", action="store_true", help="instead of simulating: rewrite report-*.md with Gemini from the batches already in --out")
+    p.add_argument("--reports-only", action="store_true",
+                   help="instead of simulating: rewrite report-*.md with the model (LLM_PROVIDER from .env, claude) from the batches already in --out")
+    p.add_argument("--live-reports", action="store_true", help="the old name of --reports-only")
+    p.add_argument("--claude-pair", action="store_true",
+                   help="instead of the whole precompute: only the Claude crowd run of the building (the example building by default), added to --out's index after its baseline; needs APP_ANTHROPIC_API_KEY")
+    p.add_argument("--no-claude", action="store_true", help="leave the Claude crowd run (the example building's: about 4 minutes, a few cents of API) out of this precompute")
     p.add_argument("--refresh-reports", action="store_true", help="instead of simulating: write report-*.md again as template cards (no model) from the batches already in --out")
     p.add_argument("--out", type=Path, default=DEMO_DIR, metavar="DIR", help="output folder (default frontend/public/demo)")
     args = p.parse_args(argv)
-    if args.live_reports and args.refresh_reports:
-        p.error("--live-reports and --refresh-reports are separate modes")
-    if not args.live_reports and not args.refresh_reports and not args.building and not args.all:
+    args.reports_only = args.reports_only or args.live_reports
+    if sum(map(bool, (args.reports_only, args.refresh_reports, args.claude_pair))) > 1:
+        p.error("--reports-only (--live-reports), --refresh-reports and --claude-pair are separate modes")
+    if not args.reports_only and not args.refresh_reports and not args.claude_pair and not args.building and not args.all:
         p.error("give --building ID (or --all)")
+    if args.claude_pair and (args.all or len(args.building or []) > 1):
+        p.error("--claude-pair takes at most one --building")
     if args.batch and (args.all or len(args.building or []) != 1):
         p.error("--batch needs exactly one --building")
     if (args.top is not None and args.top < 0) or (args.max_rooms is not None and args.max_rooms < 1) or (
@@ -1320,8 +1544,10 @@ def main(argv=None) -> int:
             stream.reconfigure(errors="replace")
     args = parse_args(argv)
     demo = args.out.resolve()
-    if args.live_reports or args.refresh_reports:
-        return live_reports(args, demo, live=args.live_reports)
+    if args.claude_pair:
+        return claude_pair(args, demo)
+    if args.reports_only or args.refresh_reports:
+        return live_reports(args, demo, live=args.reports_only)
     os.environ["LLM_PROVIDER"] = "off"  # the template card; the sim's rule agents never ask a model anyway
 
     ids = public_building_ids() if args.all else list(dict.fromkeys(args.building))
