@@ -3,6 +3,9 @@ import { useApp } from '../store/app'
 import { compareRuns, defaultWhatIfDoor, stairDoors } from '../model/whatif'
 import { pairHeadline, readWhatIf } from '../model/exposure'
 import { doorLabels } from '../model/spots'
+import { materialPair, materialWords, runMaterial } from '../model/fireSpread'
+import type { MaterialPair } from '../model/fireSpread'
+import { listDemoRuns } from '../data/loader'
 import type { DoorState } from '../data/types'
 
 const STATES: DoorState[] = ['propped', 'open', 'closed', 'blocked']
@@ -16,7 +19,10 @@ export default function WhatIfCard() {
   const order = useApp((s) => s.runOrder)
   const busy = useApp((s) => s.whatIfBusy)
   const err = useApp((s) => s.whatIfError)
+  const note = useApp((s) => s.whatIfNote)
+  const fallback = useApp((s) => s.whatIfFallback)
   const runWhatIf = useApp((s) => s.runWhatIf)
+  const showMaterialPair = useApp((s) => s.showMaterialPair)
   const switchRun = useApp((s) => s.switchRun)
   const live = useApp((s) => s.mode) === 'live'
   const batch = useApp((s) => s.batch)
@@ -27,6 +33,19 @@ export default function WhatIfCard() {
   const [door, setDoor] = useState('')
   const [state, setState] = useState<DoorState>('propped')
   const [sprinklers, setSprinklers] = useState(false)
+
+  // The building's precomputed wood and drywall pair, from the demo index: the section shows only for a building that has one.
+  const [found, setFound] = useState<{ building: string; pair: MaterialPair | null } | null>(null)
+  const buildingId = building?.id
+  useEffect(() => {
+    let current = true
+    if (buildingId) void listDemoRuns(buildingId).then((es) => current && setFound({ building: buildingId, pair: materialPair(es, buildingId) }))
+    return () => {
+      current = false
+    }
+  }, [buildingId])
+  const pair = found && found.building === buildingId ? found.pair : null
+  const pairRoom = pair && building ? building.floors.find((f) => f.id === pair.wood.fire.floor)?.rooms.find((r) => r.id === pair.wood.fire.room) : undefined
 
   const stair = useMemo(() => (building ? stairDoors(building).map((d) => d.door.id) : []), [building])
   const others = useMemo(
@@ -71,9 +90,13 @@ export default function WhatIfCard() {
     ? active
     : order.map((k) => runs[k]).reverse().find((r) => r.whatIf?.baselineKey === active?.key)
   const cmp = variant && base ? compareRuns(base.run, variant.run) : null
+  // A material variant reads "Wood instead of drywall"; a door variant names the door.
+  const material = variant?.whatIf?.material
   const head =
     variant?.whatIf && base
-      ? pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${nameOf(variant.whatIf.door)} open` : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`)
+      ? material
+        ? { main: pairHeadline(base.run, variant.run, materialWords(material, runMaterial(base.run)))?.main ?? materialWords(material, runMaterial(base.run)) }
+        : pairHeadline(base.run, variant.run, variant.whatIf.state === 'propped' ? `Propping ${nameOf(variant.whatIf.door)} open` : `${nameOf(variant.whatIf.door)} ${variant.whatIf.state}`)
       : null
 
   return (
@@ -118,6 +141,22 @@ export default function WhatIfCard() {
         {busy ?? 'Run what-if'}
       </button>
       {err && <p className="err">{err}</p>}
+      {note && (
+        <p className={fallback ? 'warn' : 'dim'} role="status">
+          {note}
+        </p>
+      )}
+      {pair && (
+        <div className="material">
+          <h5>Building material (illustrative)</h5>
+          <button type="button" disabled={!!busy} onClick={() => void showMaterialPair()}>
+            Compare wood with drywall
+          </button>
+          <p className="dim note">
+            Precomputed pair, fire in {pairRoom?.name && pairRoom.name !== pair.wood.fire.room ? `${pairRoom.name} (${pair.wood.fire.room})` : pair.wood.fire.room}. Spread speeds are illustrative, not engineering values.
+          </p>
+        </div>
+      )}
       {head && <p className="whatif-card"><b>{head.main}</b></p>}
       {cmp && variant && (
         <p className={'whatif-card' + (cmp.dT90 != null ? (cmp.dT90 > 0 || cmp.dTrapped > 0 ? ' worse' : ' better') : cmp.dTrapped > 0 ? ' worse' : '')}>

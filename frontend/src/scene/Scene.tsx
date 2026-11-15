@@ -6,6 +6,8 @@ import CameraRig from './CameraRig'
 import Agents from '../replay/Agents'
 import Smoke from '../replay/Smoke'
 import Fire from '../replay/Fire'
+import BurningRooms from '../replay/BurningRooms'
+import BlockedDoors from '../replay/BlockedDoors'
 import Heatmap from '../replay/Heatmap'
 import QueueRings from '../replay/QueueRings'
 import FirePicker from './FirePicker'
@@ -53,6 +55,8 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
         <Agents runKey={runKey} />
         <Smoke runKey={runKey} />
         <Fire runKey={runKey} />
+        <BurningRooms runKey={runKey} />
+        <BlockedDoors runKey={runKey} />
         <Heatmap runKey={runKey} />
         <QueueRings runKey={runKey} />
         <RiskOverlay />

@@ -4,6 +4,7 @@ import { useApp } from '../store/app'
 import { STATUS_COLORS, TYPE_COLORS } from '../replay/Agents'
 import { PROFILE_NAMES } from '../replay/runIndex'
 import { DOOR_COLORS } from '../scene/Building'
+import { readSpread } from '../model/fireSpread'
 
 interface Row {
   name: string
@@ -31,6 +32,8 @@ const TYPE_ROWS: Row[] = [
 export default function LegendCard() {
   const colorBy = useApp((s) => s.colorBy)
   const hasRun = useApp((s) => s.activeRunKey !== null)
+  // A run that carries a spread (fire.rooms) also draws burning rooms, their markers and the doors the fire closes.
+  const hasSpread = useApp((s) => readSpread(s.activeRunKey ? s.runs[s.activeRunKey]?.run : undefined) !== null)
   // Open on a desktop; on a phone it starts collapsed, because the card would cover most of the picture.
   const [open, setOpen] = useState(() => !window.matchMedia('(max-width: 900px)').matches)
   if (!hasRun) return null
@@ -93,6 +96,22 @@ export default function LegendCard() {
               <i className="sw" style={{ background: '#F97316' }} />
               Fire
             </li>
+            {hasSpread && (
+              <>
+                <li>
+                  <i className="sw ramp" />
+                  Burning room (illustrative)
+                </li>
+                <li>
+                  <i className="sw cone" />
+                  Fire marker
+                </li>
+                <li>
+                  <i className="sw" style={{ background: DOOR_COLORS.blocked }} />
+                  Closed door
+                </li>
+              </>
+            )}
             <li>
               <i className="sw" style={{ background: '#6B7280' }} />
               Smoke
