@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useApp } from '../store/app'
@@ -7,6 +7,9 @@ import { floorAlpha, floorPlace, pointInPolygon, toPlaced } from '../scene/geome
 import { insidePoint } from '../model/scenarioDraft'
 import { readSpread, spreadTint } from '../model/fireSpread'
 import { flatGeometry } from './flat'
+import FlameSprites from './fx/FlameSprites'
+import type { FlameSource } from './fx/FlameSprites'
+import { readHeat } from './fx/heat'
 import type { Spread } from '../model/fireSpread'
 import type { Building, BuildingFloor, Run, Vec2 } from '../data/types'
 
@@ -21,18 +24,13 @@ if (typeof window !== 'undefined' && (import.meta.env.DEV || new URLSearchParams
 
 /** Above the room fills (0.02), doors (0.03) and stairs and exits (0.04) of Building, below the heatmap (0.06). */
 const TINT_Y = 0.05
-const CONE_R = 0.35
-const CONE_H = 0.9
 const FIRE = '#F97316'
-/** The base sits on the floor, so a bigger glow grows the cone upward from it instead of sinking it through the slab. */
-const coneGeo = new THREE.ConeGeometry(CONE_R, CONE_H, 16).translate(0, CONE_H / 2, 0)
-const coneMat = new THREE.MeshStandardMaterial({ color: FIRE, emissive: FIRE, emissiveIntensity: 1, roughness: 0.6 })
 
 interface Item {
   floor: BuildingFloor
   ignite: number
   geo: THREE.BufferGeometry
-  /** where the marker cone stands; null in the room that holds the fire sphere */
+  /** where the room's flame stands; null in the room that holds the ignition flame (Fire draws that one) */
   cone: Vec2 | null
 }
 
@@ -63,18 +61,16 @@ function buildItems(spread: Spread, building: Building, run: Run): Item[] {
 function Tints({ spread, run, building, runKey }: { spread: Spread; run: Run; building: Building; runKey: string }) {
   const items = useMemo(() => buildItems(spread, building, run), [spread, building, run])
   useEffect(() => () => items.forEach((it) => it.geo.dispose()), [items])
-  const coned = useMemo(() => items.filter((it) => it.cone !== null), [items])
+  const heat = useMemo(() => readHeat(run, spread), [run, spread])
+  // A flame in every burning room but the ignition room, lit at the room's ignition and grown on the model's ramp for the room.
+  const flames = useMemo<FlameSource[]>(
+    () =>
+      items
+        .filter((it) => it.cone !== null)
+        .map((it) => ({ floor: it.floor, x: (it.cone as Vec2)[0], y: (it.cone as Vec2)[1], ignite: it.ignite, heat: (t: number) => heat.room(it.ignite, t) })),
+    [items, heat],
+  )
   const meshes = useRef<(THREE.Mesh | null)[]>([])
-  const cones = useRef<THREE.InstancedMesh>(null)
-  const tmp = useMemo(() => ({ m: new THREE.Matrix4(), q: new THREE.Quaternion(), p: new THREE.Vector3(), s: new THREE.Vector3() }), [])
-  // Until the first frame every cone is scaled to nothing (an instanced mesh starts with identity matrices).
-  useLayoutEffect(() => {
-    const c = cones.current
-    if (!c) return
-    tmp.m.makeScale(0, 0, 0)
-    for (let j = 0; j < coned.length; j++) c.setMatrixAt(j, tmp.m)
-    c.instanceMatrix.needsUpdate = true
-  }, [coned, tmp])
 
   useFrame(() => {
     const st = useApp.getState()
@@ -100,21 +96,6 @@ function Tints({ spread, run, building, runKey }: { spread: Spread; run: Run; bu
       const at = toPlaced(floorPlace(building, it.floor, viewMode, explode), 0, 0, TINT_Y)
       mesh.position.set(at[0], at[1], at[2])
     }
-    // The markers: hidden until their room ignites, and left off the faint floors of the ghost view (like the queue rings).
-    const c = cones.current
-    if (c) {
-      const grow = 0.6 + 0.4 * fireGlow
-      for (let j = 0; j < coned.length; j++) {
-        const it = coned[j]
-        const s = shown(it) && floorAlpha(viewMode, focusFloor, it.floor.id) === 1 ? grow : 0
-        const at = toPlaced(floorPlace(building, it.floor, viewMode, explode), (it.cone as Vec2)[0], (it.cone as Vec2)[1], 0)
-        tmp.p.set(at[0], at[1], at[2])
-        tmp.s.set(s, s, s)
-        tmp.m.compose(tmp.p, tmp.q, tmp.s)
-        c.setMatrixAt(j, tmp.m)
-      }
-      c.instanceMatrix.needsUpdate = true
-    }
     if (st.activeRunKey === runKey) {
       spreadStats.burning = burning
       spreadStats.drawn = drawn
@@ -128,14 +109,14 @@ function Tints({ spread, run, building, runKey }: { spread: Spread; run: Run; bu
           <meshBasicMaterial color={FIRE} transparent opacity={0} depthWrite={false} toneMapped={false} side={THREE.DoubleSide} />
         </mesh>
       ))}
-      {coned.length > 0 && <instancedMesh key={coned.length} ref={cones} args={[coneGeo, coneMat, coned.length]} frustumCulled={false} />}
+      {flames.length > 0 && <FlameSprites sources={flames} building={building} />}
     </>
   )
 }
 
 /**
- * The rooms the fire has spread to (`run.fire.rooms`): each is tinted from orange to red from its ignition time, and carries a cone
- * marker. It draws only while the Fire layer is on, and nothing at all for a run without `fire.rooms`.
+ * The rooms the fire has spread to (`run.fire.rooms`): each is tinted from orange to red from its ignition time, and carries a flame
+ * (FlameSprites) that fades in at its ignition and grows with the room's heat. It draws only while the Fire layer is on, and nothing at all for a run without `fire.rooms`.
  */
 export default function BurningRooms({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)
