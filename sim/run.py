@@ -16,6 +16,14 @@ Behavior:
 - Fire in the same room, or visibility below 10 m, starts a separate 0–10 s
   cue delay; the first cue wins and the alarm can still start people sooner.
   scenario.premovement overrides profile delay ranges by room type.
+- Social following (C28; scenario.socialFollowing false turns it off). Someone still waiting who can see two or more
+  people walking to an exit or stair (same floor and region, within 8 m, the straight line inside the walkable area,
+  so no wall) starts 2-5 s later, a reaction time drawn per person from the seed's own stream; the earliest start
+  wins, the alarm and the fire or smoke cue included. Their `start` event has cue "others" and reason "saw others
+  leaving". A person choosing or reconsidering a way out also leans toward the one most of those people are heading
+  to (a clear plurality): up to 3 s off its cost, withheld from a route with smoke seen or a fire penalty, and
+  never given to a route already dropped as blocked or without a way through. metrics.premovement has the mean
+  pre-movement time and how many people a social cue started.
 - People keep 2.5 m from the burning item where room geometry permits;
   smaller discs or sealed empty rooms preserve connected escape routes. Fallback
   discs may be smaller than the flame footprint; nearby people remain subject
@@ -59,7 +67,8 @@ from shapely.ops import unary_union
 from sim.safe_routes import BuildingRoutes, hazard_cut, pieces, proximity_cost
 from fire.stub import NoFire
 from sim.brain import SMOKE_BETA, UNFAMILIAR_GAMMA, main_entrance, visible_smoke, route_points, RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
-from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
+from sim.profiles import (PROFILES, CUE_VIS_M, CUE_DELAY, SOCIAL_RADIUS_M, SOCIAL_MIN_MOVERS, SOCIAL_NEAREST,
+                          SOCIAL_DELAY, HERD_S_PER_PERSON, HERD_MAX_S)
 from sim.floors import StairNet, find_spot, reachable_zone, stair_blocked, stair_doors
 
 DT = 0.01
@@ -585,9 +594,18 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     net = StairNet(building, walkable=walkable, blocked=blocked, bidirectional=building_routing)
     agents = place_occupants(building, scenario, rng, walkable)
     cue_rng = np.random.default_rng([seed, 3])
+    social_rng = np.random.default_rng([seed, 4])  # C28: its own stream, so no other draw moves
     for a in agents:
         a["cueDelay"] = float(cue_rng.uniform(*CUE_DELAY))
+        a["socialDelay"] = float(social_rng.uniform(*SOCIAL_DELAY))
     cues = {}
+    social = {}  # idx -> t they first saw others leaving (people still waiting)
+    social_on = scenario.get("socialFollowing", True)
+    if not isinstance(social_on, bool):
+        raise ValueError("socialFollowing must be true or false")
+    sight = {}  # idx -> {stage id: people in view heading there}, rebuilt every 1 s (scan_sight)
+    watched = {}  # fs.key -> (xy, idx, stage id) of the people walking to a way out, as of the last scan
+    start_time = {}
     if not building_routing:
         net.check({a["floor"] for a in agents})
     n = len(agents)
@@ -659,6 +677,53 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         return queues
 
     queues = zone_queues(0)
+    for fs in sims:
+        shapely.prepare(fs.walk)  # the sight lines below are tested against it many times a second
+
+    def see_movers(fs, ids, xy):
+        """{idx: {stage id: n}} for the people at xy (idx in ids) in region fs: n is how many people in view are walking
+        to that exit or stair. In view: within SOCIAL_RADIUS_M, among the SOCIAL_NEAREST closest walkers, and the straight
+        line between them stays inside the region's walkable area, so no wall (an open doorway is clear)."""
+        seen = watched.get(fs.key)
+        if seen is None or not len(ids):
+            return {}
+        walkers, walker_ids, walker_stage = seen
+        xy = np.asarray(xy, dtype=float).reshape(-1, 2)
+        d2 = ((xy[:, None, :] - walkers[None, :, :]) ** 2).sum(-1)
+        d2[np.asarray(ids)[:, None] == walker_ids[None, :]] = np.inf  # nobody sees themselves
+        d2[d2 > SOCIAL_RADIUS_M ** 2] = np.inf
+        near = np.argsort(d2, axis=1, kind="stable")[:, :SOCIAL_NEAREST]
+        rows, cols = np.nonzero(np.isfinite(np.take_along_axis(d2, near, axis=1)))
+        if not len(rows):
+            return {}
+        pick = near[rows, cols]
+        clear = shapely.covers(fs.walk, shapely.linestrings(np.stack([xy[rows], walkers[pick]], axis=1)))
+        out = {}
+        for row, walker in zip(rows[clear].tolist(), pick[clear].tolist()):
+            counts = out.setdefault(ids[row], {})
+            counts[walker_stage[walker]] = counts.get(walker_stage[walker], 0) + 1
+        return out
+
+    def scan_sight():
+        """Once per 1 s tick: who is walking to a way out (movers), and for everyone standing in a region, which of them
+        are in view and where they are heading. People waiting to start and people already walking both look."""
+        sight.clear()
+        watched.clear()
+        for fs in sims:
+            ids, xy, heading = [], [], []
+            for ag in fs.sim.agents():
+                j = fs.jid2idx.get(ag.id)
+                if j is None or j in trapped:
+                    continue
+                ids.append(j)
+                xy.append(ag.position)
+                walking = status[j] == 1 and target[j] is not None and ag.stage_id != fs.park_stage
+                heading.append(target[j]["id"] if walking else None)
+            walkers = [k for k, stage in enumerate(heading) if stage is not None]
+            if walkers:
+                watched[fs.key] = (np.array([xy[k] for k in walkers], dtype=float),
+                                   np.array([ids[k] for k in walkers]), [heading[k] for k in walkers])
+                sight.update(see_movers(fs, ids, xy))
 
     def blocking_doors(fs, st):
         if st is None:
@@ -729,6 +794,18 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         forbidden = visited[i] - {fs.key}
         route_blocks = {(other.key, st['id']) for other in sims for st in other.stages
                         if blocking_doors(other, st)} if building_routing else set()
+        # C28 herding: of the people in view walking to a way out, the way most of them take (a clear plurality of at
+        # least SOCIAL_MIN_MOVERS) is worth a few seconds off its cost. Only routes that stayed in `options` can get it,
+        # so a blocked or severed route never does, and it is withheld from a route with smoke seen or a fire penalty.
+        counts = None
+        if social_on:
+            counts = see_movers(fs, [i], [pos]).get(i) if trigger == "arrive" else sight.get(i)
+        leader = None
+        if counts:
+            top = max(counts.values())
+            leaders = [sid for sid, c in sorted(counts.items()) if c == top]
+            if top >= SOCIAL_MIN_MOVERS and len(leaders) == 1:
+                leader = leaders[0]
         for st in stages:
             tail = (planner.tail(st, forbidden | {fs.key}, route_blocks, agents[i]['v0'], profile['stairSpeed'], agents[i]['radius'])
                     if building_routing else st['tail'])
@@ -745,14 +822,19 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
             seen = visible_smoke(routes[key], min(30, fire.visibility(fs.id, *pos)),
                                  lambda xs, ys: grid_visibility(fs.id, xs, ys)) if fs.id in smoke_grids else 0
             route_smoke[memory_key] = max(route_smoke.get(memory_key, 0), seen)
+            fire_penalty = (proximity_cost(routes[key], preferred_zone, agents[i]['v0'])
+                            if building_routing and fs.id == ignition.get('floor') else 0.0)
+            nearby = counts.get(st["id"], 0) if counts else 0
+            herd = (min(HERD_MAX_S, HERD_S_PER_PERSON * nearby)
+                    if st["id"] == leader and not round(route_smoke[memory_key], 1) and not fire_penalty else 0.0)
             options.append({"id": st["id"], "kind": st["kind"], "name": st["name"],
                             "dist": distances[key], "queue": queues.get((fs.key, st["id"]), 0),
                             "flow": (1.3 if st["kind"] == "exit" else 1.1) * st["width"],
                             "tail": tail, "smoke": round(route_smoke[memory_key], 1),
-                            'firePenalty': (proximity_cost(routes[key], preferred_zone, agents[i]['v0'])
-                                            if building_routing and fs.id == ignition.get('floor') else 0.0),
+                            'firePenalty': fire_penalty,
                             **({"unfamiliar": True} if agents[i]["profile"] == "visitor"
-                               and st["kind"] == "exit" and st["id"] != entrance else {}), **({"assist": True} if st.get("assist") else {})})
+                               and st["kind"] == "exit" and st["id"] != entrance else {}), **({"assist": True} if st.get("assist") else {}),
+                            **({"nearby": nearby} if nearby else {}), **({"herd": herd} if herd else {})})
         if not options:
             trap(i, t, fs, pos, 'no route')
             return None
@@ -826,6 +908,7 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     def start_agent(i, t):
         if status[i] == 0 and i not in trapped:
             fs, jid = where[i]
+            start_time[i] = t
             target[i] = choose(i, t, fs, fs.sim.agent(jid).position, "start")
             if target[i] is not None:
                 fs.sim.switch_agent_journey(jid, target[i]["journey"], target[i]["stage"])
@@ -912,6 +995,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                     elif i in transit:
                         visited[i] = {transit[i]['destination'].key}
             queues = zone_queues(t)
+            if social_on:
+                scan_sight()
         while next_start < n and alarm + agents[start_order[next_start]]["startDelay"] <= t + 1e-9:
             i = start_order[next_start]
             next_start += 1
@@ -987,10 +1072,18 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                             cues[i] = (t, "fire")
                         elif fire.visibility(fs.id, x, y) < CUE_VIS_M:
                             cues[i] = (t, "smoke")
-                    if i in cues and t >= cues[i][0] + agents[i]["cueDelay"]:
+                    # C28: two or more people in view walking to a way out start this person after a short reaction time
+                    if social_on and i not in social and sum(sight.get(i, {}).values()) >= SOCIAL_MIN_MOVERS:
+                        social[i] = t
+                    # The earliest start wins; the fire or smoke cue beats the social one on a tie.
+                    due = [(cues[i][0] + agents[i]["cueDelay"], 0, cues[i][1])] if i in cues else []
+                    if i in social:
+                        due.append((social[i] + agents[i]["socialDelay"], 1, "others"))
+                    if due and t >= min(due)[0]:
+                        cue = min(due)[2]
                         start_agent(i, t)
-                        events.append({"t": t, "type": "start", "idx": i,
-                                       "floor": fs.id, "cue": cues[i][1]})
+                        events.append({"t": t, "type": "start", "idx": i, "floor": fs.id, "cue": cue,
+                                       **({"reason": "saw others leaving"} if cue == "others" else {})})
                 elif status[i] == 1:
                     stuck = watch.update(i, t, x, y)
                     if stuck:
@@ -1104,6 +1197,12 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     }
 
     metrics["profiles"], metrics["assist"] = profile_metrics(agents, events)
+    # C28: mean pre-movement time (s from the alarm to the first step, over everyone who started; people who started on
+    # a fire cue before the alarm count below zero) and how many people a social cue started.
+    metrics["premovement"] = {
+        "meanS": round(sum(start_time.values()) / len(start_time) - alarm, 2) if start_time else None,
+        "started": len(start_time),
+        "social": sum(1 for e in events if e["type"] == "start" and e.get("cue") == "others")}
 
     # Round only the exported events, after all dynamics and metrics used the
     # original times (especially the stair FIFO and assistance deadlines).
