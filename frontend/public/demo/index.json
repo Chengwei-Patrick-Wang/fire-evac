@@ -1,6 +1,6 @@
 {
   "version": "demo-index/v0",
-  "generated": "2026-11-14T16:54:37Z",
+  "generated": "2026-11-15T01:46:48Z",
   "buildings": [
     {
       "id": "example-office",
@@ -28,6 +28,7 @@
       "label": "Kitchen, baseline",
       "file": "run-example-office-R101-base.json",
       "whatIf": null,
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "R101",
@@ -41,9 +42,9 @@
       "metrics": {
         "t50": 95.29,
         "t90": 120.73,
-        "t100": 199.79,
-        "evacuated": 160,
-        "trapped": 0
+        "t100": null,
+        "evacuated": 159,
+        "trapped": 1
       }
     },
     {
@@ -52,6 +53,7 @@
       "label": "Kitchen, DSA1 propped",
       "file": "run-example-office-R101-propped.json",
       "whatIf": "propped",
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "R101",
@@ -76,6 +78,7 @@
       "label": "Lobby, baseline",
       "file": "run-example-office-L1-base.json",
       "whatIf": null,
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "L1",
@@ -88,10 +91,10 @@
       },
       "metrics": {
         "t50": 103.55,
-        "t90": 221.77,
+        "t90": null,
         "t100": null,
-        "evacuated": 144,
-        "trapped": 16
+        "evacuated": 143,
+        "trapped": 17
       }
     },
     {
@@ -100,6 +103,7 @@
       "label": "Lobby, DSA1 propped",
       "file": "run-example-office-L1-propped.json",
       "whatIf": "propped",
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "L1",
@@ -112,10 +116,10 @@
       },
       "metrics": {
         "t50": 103.55,
-        "t90": 223.23,
+        "t90": null,
         "t100": null,
-        "evacuated": 144,
-        "trapped": 16
+        "evacuated": 143,
+        "trapped": 17
       }
     },
     {
@@ -146,6 +150,7 @@
       "label": "CENTRAL WAITING, baseline",
       "file": "run-clinic-R1AC1-base.json",
       "whatIf": null,
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "R1AC1",
@@ -170,6 +175,7 @@
       "label": "CENTRAL WAITING, DqxQ3VC propped",
       "file": "run-clinic-R1AC1-propped.json",
       "whatIf": "propped",
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "R1AC1",
@@ -194,6 +200,7 @@
       "label": "SCIF OPEN OFFICE, baseline",
       "file": "run-office-R143-base.json",
       "whatIf": null,
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "R143",
@@ -218,6 +225,7 @@
       "label": "SCIF OPEN OFFICE, D$77xsW propped",
       "file": "run-office-R143-propped.json",
       "whatIf": "propped",
+      "material": "drywall",
       "fire": {
         "floor": "F1",
         "room": "R143",
@@ -237,11 +245,37 @@
       }
     },
     {
+      "id": "office-R143-wood",
+      "buildingId": "office",
+      "label": "SCIF OPEN OFFICE, wood (illustrative)",
+      "file": "run-office-R143-wood.json",
+      "whatIf": "material",
+      "material": "wood",
+      "fire": {
+        "floor": "F1",
+        "room": "R143",
+        "x": 9.54,
+        "y": 31.26,
+        "type": "kitchen"
+      },
+      "doors": {
+        "D$77xsW": "closed"
+      },
+      "metrics": {
+        "t50": 97.7,
+        "t90": null,
+        "t100": null,
+        "evacuated": 217,
+        "trapped": 33
+      }
+    },
+    {
       "id": "office-R203c-base",
       "buildingId": "office",
       "label": "OPEN OFFICE (R203c), baseline",
       "file": "run-office-R203c-base.json",
       "whatIf": null,
+      "material": "drywall",
       "fire": {
         "floor": "F2",
         "room": "R203c",
@@ -253,11 +287,11 @@
         "D$77xsW": "closed"
       },
       "metrics": {
-        "t50": 98.44,
-        "t90": null,
+        "t50": 98.64,
+        "t90": 148.05,
         "t100": null,
-        "evacuated": 219,
-        "trapped": 31
+        "evacuated": 234,
+        "trapped": 16
       }
     },
     {
@@ -266,6 +300,7 @@
       "label": "OPEN OFFICE (R203c), D$77xsW propped",
       "file": "run-office-R203c-propped.json",
       "whatIf": "propped",
+      "material": "drywall",
       "fire": {
         "floor": "F2",
         "room": "R203c",
@@ -277,11 +312,11 @@
         "D$77xsW": "propped"
       },
       "metrics": {
-        "t50": 98.44,
-        "t90": null,
+        "t50": 98.64,
+        "t90": 148.05,
         "t100": null,
-        "evacuated": 219,
-        "trapped": 31
+        "evacuated": 234,
+        "trapped": 16
       }
     },
     {
@@ -290,6 +325,7 @@
       "label": "OPEN OFFICE (R237b), baseline",
       "file": "run-office-R237b-base.json",
       "whatIf": null,
+      "material": "drywall",
       "fire": {
         "floor": "F2",
         "room": "R237b",
@@ -301,11 +337,11 @@
         "D$77xsW": "closed"
       },
       "metrics": {
-        "t50": 96.15,
-        "t90": 139.19,
-        "t100": null,
-        "evacuated": 238,
-        "trapped": 12
+        "t50": 96.95,
+        "t90": 135.62,
+        "t100": 234.94,
+        "evacuated": 250,
+        "trapped": 0
       }
     },
     {
@@ -314,6 +350,7 @@
       "label": "OPEN OFFICE (R237b), D$77xsW propped",
       "file": "run-office-R237b-propped.json",
       "whatIf": "propped",
+      "material": "drywall",
       "fire": {
         "floor": "F2",
         "room": "R237b",
@@ -325,11 +362,11 @@
         "D$77xsW": "propped"
       },
       "metrics": {
-        "t50": 96.15,
-        "t90": 139.19,
-        "t100": null,
-        "evacuated": 238,
-        "trapped": 12
+        "t50": 96.95,
+        "t90": 135.62,
+        "t100": 234.94,
+        "evacuated": 250,
+        "trapped": 0
       }
     }
   ],
