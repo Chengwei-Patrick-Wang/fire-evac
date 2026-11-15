@@ -10,7 +10,8 @@ import math
 
 from sim.floors import STAIR_UP_FACTOR
 import jupedsim as jps
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
+from shapely.ops import unary_union
 
 
 def pieces(geometry):
@@ -22,19 +23,48 @@ def pieces(geometry):
                   key=lambda p: (-p.area, p.bounds))
 
 
-def hazard_cut(walk, x, y, radius, clearance=0.35):
-    """Never shrink a fire to keep a corridor connected; close body-width slots.
+def body_clear_regions(safe, clearance):
+    """Restore each body-clear component without reconnecting narrow necks.
 
-    Closing the excluded area against walls removes gaps too narrow for the
-    largest default body plus a small routing allowance. Retain every region.
+    Unioning restored components directly can reopen a slit that their eroded
+    cores could not traverse. Remove overlapping restoration areas from both
+    sides, leaving separate physical regions for JuPedSim.
     """
+    cores = pieces(safe.buffer(-clearance, join_style=2))
+    restored = [core.buffer(clearance, join_style=2).intersection(safe) for core in cores]
+    overlaps = []
+    for i, first in enumerate(restored):
+        for second in restored[i + 1:]:
+            overlap = first.intersection(second)
+            if not overlap.is_empty:
+                overlaps.append(overlap.buffer(1e-5))
+    cuts = unary_union(overlaps)
+    # Remove sub-micron duplicate vertices produced by buffer/intersection.
+    # JuPedSim's triangulation cannot reliably handle those degenerate edges.
+    return unary_union([region.difference(cuts).simplify(1e-6, preserve_topology=True)
+                        for region in restored])
+
+
+def hazard_cut(walk, x, y, radius, clearance=0.35):
+    """Exclude flame plus required clearance, preserving body-clear regions."""
     if radius <= 0:
         return walk
-    exclusion = Point(x, y).buffer(radius + clearance, quad_segs=8)
-    # Reserve the whole disc, including adjoining corridor/door openings.
-    # This is conservative near walls, not a claim about flame propagation.
+    # Circumscribe the circle: polygon chords must not reduce the exclusion.
+    extent = (radius + clearance) / math.cos(math.pi / 32)
+    exclusion = Point(x, y).buffer(extent, quad_segs=8)
     safe = walk.difference(exclusion)
-    return safe.buffer(-clearance, join_style=2).buffer(clearance, join_style=2).intersection(safe)
+    return body_clear_regions(safe, clearance)
+
+
+def proximity_cost(points, zone, speed):
+    """Prefer more distance from flame without forbidding a clear retreat.
+
+    Time inside the preferred zone carries twice its walking-time cost. This
+    is a modeling preference, not a new physical boundary or safety standard.
+    """
+    if zone is None or len(points) < 2:
+        return 0.0
+    return 2 * LineString(points).intersection(zone).length / max(speed, 0.2)
 
 
 def path_length(walk, start, end, router=None):

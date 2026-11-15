@@ -664,7 +664,10 @@ def check_keepout(building, scenario, slow=False):
                    and np.hypot(e["x"] - point.x, e["y"] - point.y) < 2
                    for e in protected["events"])
     fid = protected["floors"].index("F1")
-    assert all(np.hypot(x - point.x, y - point.y) >= 2.5
+    # The preferred 2.5 m distance is not a hard wall. Enforce the actual
+    # flame exclusion plus required clearance, including spawn positions.
+    required = protected['routing']['fireRadius'] + protected['routing']['clearance']
+    assert all(np.hypot(x - point.x, y - point.y) >= required - 0.02
                for _, x, y, f, _ in protected["frames"][0]["a"] if f == fid)
     # Arrival clearance changes congestion and seeded trajectories. Compare
     # the intervention with its paired baseline rather than pinning one old
@@ -1513,6 +1516,52 @@ def check_building_routes():
     print('building routes OK: upstairs crossover, no unsafe gap, no-route outcome, opposing stair flow')
 
 
+def check_fire_retreat(building, scenario):
+    """Keep a room's usable retreat while rejecting point-only door gaps."""
+    from sim.safe_routes import hazard_cut, pieces, path_length, proximity_cost
+    from sim.brain import option_cost
+    from fire.model import FOOT_BASE_M, FOOT_PER_SQRT_MW_M, Q_REF_KW
+    from shapely.geometry import LineString
+    floor = building['floors'][0]
+    walk = floor_walkable(floor)
+    x, y = 18.91, 8.07
+    footprint = FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(1500 / Q_REF_KW)
+    safe = hazard_cut(walk, x, y, footprint)
+    doorway = LineString([(16, 9.5), (17, 9.5)])
+    assert safe.intersection(doorway).length > 0.99
+    room_point = Point(16, 11)
+    region = next(p for p in pieces(safe) if p.covers(room_point))
+    stairs = [Polygon(st['polygon']) for st in floor['stairs'] if region.intersects(Polygon(st['polygon']))]
+    assert stairs, 'R106 must be able to retreat toward a stair'
+    goal = stairs[0].intersection(region).representative_point()
+    assert math.isfinite(path_length(region, (16, 11), (goal.x, goal.y)))
+    # The original 2.5 m hard circle leaves a point-sized doorway slit.
+    # Restoring its eroded geometry must not reconnect that isolated room.
+    large = hazard_cut(walk, x, y, 2.5)
+    isolated = next(p for p in pieces(large) if p.covers(room_point))
+    assert not any(isolated.intersects(Polygon(st['polygon'])) for st in floor['stairs'])
+    assert len(pieces(isolated.buffer(-0.2))) == 1
+    assert isolated.minimum_clearance > 1e-6
+    zone = Point(0, 0).buffer(2.5)
+    assert proximity_cost([(3, 0), (4, 0)], zone, 1) == 0
+    cost = proximity_cost([(0, 0), (1, 0)], zone, 1)
+    assert cost == 2 and option_cost({'firePenalty': cost}, 1) == cost
+    sc = deepcopy(scenario)
+    sc['fire'].update(floor='F1', room='C1', x=x, y=y)
+    sc['occupants'] = {'perRoom': {'R106': 13}, 'mix': {'typical': 1}}
+    sc['maxTime'] = 400
+    result = run(building, sc)
+    assert result['metrics']['evacuated'] == 13, result['metrics']
+    assert result['metrics']['trapped'] == result['metrics']['remaining'] == 0
+    assert {e['idx'] for e in result['events'] if e['type'] == 'stair' and e['floor'] == 'F1'} == set(range(13))
+    assert abs(result['routing']['fireRadius'] - footprint) < 1e-9
+    assert result['routing']['clearance'] == 0.35  # not overwritten by stair arrivals
+    assert result['routing']['preferredFireDistance'] == 2.5
+    assert all(math.hypot(px - x, py - y) >= footprint + .35 - .02
+               for fr in result['frames'] for _, px, py, fi, _ in fr['a'] if fi == 0)
+    print('fire retreat OK: R106 exits via stairs; body-sized connectivity and clearance metadata')
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1536,6 +1585,7 @@ def main(argv=None) -> int:
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
+    timed("fire retreat", check_fire_retreat, building, fast)
     timed("fast sweep", check_sweep, building, fast)
     timed("fast seeds", check_seeds, building, fast)
     core = timed("fast core", check_core, building, fast)

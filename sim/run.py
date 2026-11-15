@@ -18,8 +18,8 @@ Behavior:
 - People keep 2.5 m from the burning item where room geometry permits;
   smaller discs or sealed empty rooms preserve connected escape routes. Fallback
   discs may be smaller than the flame footprint; nearby people remain subject
-  to untenable trapping. Corridor/lobby fires instead reserve a full exclusion
-  area, preserve disconnected regions, and search complete routes across floors.
+  to untenable trapping. Corridor/lobby fires instead reserve the modeled flame footprint plus body
+  clearance, preserve disconnected regions, and search complete routes across floors.
   This conservative mode reserves the hazard before ignition and uses global
   route knowledge; it does not model personal awareness or a growing nav mesh.
 - A burning stairwell is not an escape route; its doors close to route choice.
@@ -45,7 +45,7 @@ import numpy as np
 import shapely
 from shapely.geometry import Point, Polygon
 
-from sim.safe_routes import BuildingRoutes, hazard_cut, pieces
+from sim.safe_routes import BuildingRoutes, hazard_cut, pieces, proximity_cost
 from fire.stub import NoFire
 from sim.brain import SMOKE_BETA, UNFAMILIAR_GAMMA, main_entrance, visible_smoke, route_points, RuleBrain, route_length, ROUTING_MODE, mobility_options, LLMBrain, load_llm_decider, load_llm_batch_decider
 from sim.profiles import PROFILES, CUE_VIS_M, CUE_DELAY
@@ -478,6 +478,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
     # Complete building routes are the default for corridor/lobby ignition.
     building_routing = bool(scenario.get('buildingRouting', origin is not None and origin.get('type') in {'corridor', 'lobby'}))
     walkable = {f['id']: floor_walkable(f, blocked, all_pieces=building_routing) for f in building['floors']}
+    preferred_zone = None
+    protected_radius = nav_clearance = 0.0
     if radius and ignition and fire.hrr(float(scenario.get("maxTime", 600))) > 0:
         for floor in building["floors"]:
             if floor["id"] == ignition.get("floor"):
@@ -485,16 +487,17 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 per_room = scenario.get("occupants", {}).get("perRoom", {})
                 seal = origin is None or per_room.get(origin["id"], 0) <= 0
                 if building_routing:
-                    clearance = float(scenario.get('fireClearance', 0.35))
-                    if not math.isfinite(clearance) or clearance < 0.31:
+                    nav_clearance = float(scenario.get('fireClearance', 0.35))
+                    if not math.isfinite(nav_clearance) or nav_clearance < 0.31:
                         raise ValueError('fireClearance must be finite and at least 0.31 m')
                     protected_radius = radius
                     if hasattr(fire, 'params'):
                         from fire.model import FOOT_BASE_M, FOOT_PER_SQRT_MW_M, Q_REF_KW
-                        protected_radius = max(radius, FOOT_BASE_M + FOOT_PER_SQRT_MW_M *
-                            math.sqrt(fire.hrr(float(scenario.get('maxTime', 600))) / Q_REF_KW))
+                        protected_radius = FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(
+                            fire.hrr(float(scenario.get('maxTime', 600))) / Q_REF_KW)
+                    preferred_zone = Point(ignition['x'], ignition['y']).buffer(radius)
                     walkable[floor['id']] = hazard_cut(walkable[floor['id']],
-                        ignition['x'], ignition['y'], protected_radius, clearance)
+                        ignition['x'], ignition['y'], protected_radius, nav_clearance)
                 else:
                     walkable[floor["id"]] = keepout_cut(
                         walkable[floor["id"]], floor, ignition.get("room"),
@@ -678,6 +681,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                             "dist": distances[key], "queue": queues.get((fs.key, st["id"]), 0),
                             "flow": (1.3 if st["kind"] == "exit" else 1.1) * st["width"],
                             "tail": tail, "smoke": round(route_smoke[memory_key], 1),
+                            'firePenalty': (proximity_cost(routes[key], preferred_zone, agents[i]['v0'])
+                                            if building_routing and fs.id == ignition.get('floor') else 0.0),
                             **({"unfamiliar": True} if agents[i]["profile"] == "visitor"
                                and st["kind"] == "exit" and st["id"] != entrance else {}), **({"assist": True} if st.get("assist") else {})})
         if not options:
@@ -856,9 +861,9 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
                 # Never relax clearance for a narrow/empty landing: retry FIFO.
                 key = (fs.key, group, agents[i]["radius"])
                 if key not in arrival_regions:
-                    clearance = agents[i]["radius"] + 0.25
-                    arrival_regions[key] = entry["arrival"].buffer(-clearance).intersection(
-                        fs.walk.buffer(-clearance))
+                    arrival_clearance = agents[i]["radius"] + 0.25
+                    arrival_regions[key] = entry["arrival"].buffer(-arrival_clearance).intersection(
+                        fs.walk.buffer(-arrival_clearance))
                 region = arrival_regions[key]
                 positions = [ag.position for ag in fs.sim.agents()]
                 gap = max(MIN_SPACING, agents[i]["radius"] +
@@ -1022,7 +1027,8 @@ def run(building: dict, scenario: dict, fire=None) -> dict:
         **({'routing': {'mode': 'building', 'hazardKnowledge': 'global',
                         'hazardReservedBeforeIgnition': True,
                         'fireRadius': protected_radius if radius and ignition and fire.hrr(max_time) > 0 else 0,
-                        'clearance': clearance if radius and ignition and fire.hrr(max_time) > 0 else 0}}
+                        'clearance': nav_clearance,
+                        'preferredFireDistance': radius, 'fireProximityWeight': 2.0}}
            if building_routing else {}),
         "frameInterval": frame_interval,
         "floors": [f["id"] for f in floors],

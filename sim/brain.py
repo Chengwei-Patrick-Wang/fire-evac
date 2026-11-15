@@ -57,7 +57,8 @@ def visible_smoke(points, sight, vis):
 def option_cost(o, speed, beta=SMOKE_BETA, gamma=UNFAMILIAR_GAMMA):
     return (o.get("dist", 0) / max(speed, 0.2) +
             o.get("queue", 0) / o.get("flow", 1) + o.get("tail", 0) +
-            beta * o.get("smoke", 0) + gamma * o.get("unfamiliar", False))
+            beta * o.get("smoke", 0) + gamma * o.get("unfamiliar", False) +
+            o.get("firePenalty", 0))
 
 
 def main_entrance(building, scenario):

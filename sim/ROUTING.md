@@ -9,11 +9,21 @@ new planner explicitly. `false` selects the legacy behavior for comparisons.
 - The fire exclusion is not reduced merely to keep a hallway connected. Every
   remaining connected region gets a separate JuPedSim simulation. Output floor
   indices still refer to the building floors, not these internal regions.
-- The exclusion radius is at least `fireKeepout` (default 2.5 m), and, with D's
-  FireModel, at least its predicted maximum flame-footprint radius for this run.
-  `fireClearance` adds 0.35 m by default (minimum 0.31 m). Body-width slots are
-  closed geometrically. These are illustrative modeling assumptions, not safe
-  distances for a real evacuation.
+- With D's FireModel, the mandatory exclusion uses its predicted maximum
+  flame-footprint radius for this run, plus `fireClearance` (0.35 m by default,
+  minimum 0.31 m). The polygon circumscribes the circle rather than cutting
+  inside it. Unknown/custom fire models retain `fireKeepout` as a conservative
+  hard-radius fallback.
+- `fireKeepout` (default 2.5 m) is a preferred separation for FireModel, not a
+  wall that seals clear retreat doors. Route walking time inside this preferred
+  zone receives an extra factor of 2 as a choice penalty, without making it
+  unavailable. A zero `fireKeepout` explicitly disables the cut for comparisons.
+- Body-clear connectivity is computed before restoring wall clearance. Overlaps
+  between restored components are removed, so the restoration cannot reconnect
+  a slit too narrow for a body. Sub-micron duplicate vertices are simplified
+  before passing polygons to JuPedSim's triangulation.
+- These distances and preferences are illustrative modeling assumptions, not
+  safe distances for a real evacuation.
 - All regions survive the cut; people are distributed over usable spawn regions
   with the original total count. Explicit per-room counts that cannot fit still
   fail with a clear placement error rather than silently dropping occupants.
@@ -38,7 +48,8 @@ personal line of sight or dynamically grow/shrink the navigation mesh. The circl
 is conservative near walls and can exclude adjoining space; D's smoke model is
 unchanged. A perception-aware, time-varying planner would be a separate change.
 
-`run.routing` records this mode, reserved radius and clearance as optional
+`run.routing` records this mode, reserved radius, required clearance, preferred
+separation and preference weight as optional
 metadata. Existing agents/frames/events/metrics field names remain unchanged.
 Upward stair target ids add `@<destinationFloor>` to distinguish directions;
 building door and stair ids are not changed. One smoke snapshot is recorded per
@@ -56,3 +67,32 @@ routing behavior; never compare an old baseline with a newly generated variant.
 floor, all 12 receive a no-route outcome and none crosses the fire. It also checks
 narrow-gap closure, repeatable events, LLM rule fallback, and opposing-flight
 capacity. `--slow` retains the existing real-building and 300-agent checks.
+
+## Doorway retreat regression
+
+For the example's C1 fire at (18.91, 8.07), a 2.5 m hard disc left only a
+point-sized slit at D106. The point router offered it while bodies stalled in
+R106. The FireModel's kitchen footprint radius is about 1.725 m; the separate
+0.35 m required clearance leaves the 1 m doorway usable, so occupants can
+retreat toward the opposite stair. The full 160-agent reproduction finishes
+with everyone out, including all 13 R106 occupants. This is a model regression,
+not evidence that a real doorway beside a fire is safe.
+
+The default suite checks this case with 13 R106 occupants. It also checks that
+retaining the larger hard disc produces a genuinely separate, unreachable room,
+that the soft-distance cost never makes a feasible path impossible, and that
+stair arrivals do not overwrite the reported fire-clearance assumption.
+
+Paired reproduction with the same scenario and seed: progress commit `af311c6`
+has 147 evacuated / 13 no-route traps; this change has 160 evacuated / 0 trapped.
+All 13 R106 occupants use an upward stair transfer and eventually exit. Existing
+recordings are not modified. Wider scenario outcomes can change: the 300-agent
+real-office lobby test has 298 evacuated and two early no-route outcomes in
+surviving isolated regions; neither outcome is flame or smoke exposure. This
+is not a guarantee that every placement has a reachable exit.
+
+Verification: `LLM_PROVIDER=off OPENBLAS_NUM_THREADS=1 python -m sim.smoke_test
+--slow` passes (229.3 s). This includes the new doorway regression, original
+upstairs crossover/no-route/LLM checks, full-size keep-out comparison, and office
+and clinic scale checks. Paired reproduction used the same example scenario,
+160 occupants and seed 1 on both the progress commit and the updated code.
