@@ -1750,6 +1750,252 @@ try {
     await nav(page, false)
     if ((await page.evaluate(() => document.documentElement.dataset.contrast)) === 'high') problems.push('High contrast did not turn off')
   })
+  // The split view and the camera: the building fills the viewer at laptop sizes in every floor view (and again after a resize and after the analytics
+  // panel is hidden), Reset camera resets both panes after one was dragged, each pane says which side it is and what it runs with an Edit button
+  // that opens that side's settings, static mode picks saved runs per side, and the right side can be on another building (and run on it, live).
+  await step('split', async () => {
+    const bad = (m) => problems.push(`split: ${m}`)
+    const before = problems.length
+    const sp = await ctx.newPage()
+    watchPage(sp, 'split', /calibration\.json|status of 4\d\d|status of 5\d\d|ERR_CONNECTION_REFUSED/)
+    try {
+      await sp.setViewportSize({ width: 1366, height: 768 })
+      await sp.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await sp.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await sp.waitForTimeout(2500)
+      // Where the building's outline lands in the viewer, from the camera the page publishes: its box in pixels, and the viewer's own.
+      const outline = () =>
+        sp.evaluate(() => {
+          const s = window.__app.getState()
+          const r = document.querySelector('main.center canvas').getBoundingClientRect()
+          const w = r.width
+          const h = r.height
+          const pts = window.__geo.framePoints(s.building, s.visibleFloors?.length === 1 ? s.visibleFloors : null, s.explode, s.viewMode)
+          const { p, t } = window.__pose
+          let f = [t[0] - p[0], t[1] - p[1], t[2] - p[2]]
+          const fl = Math.hypot(...f)
+          f = f.map((v) => v / fl)
+          let rx = -f[2]
+          let rz = f[0]
+          const rl = Math.hypot(rx, rz)
+          rx /= rl
+          rz /= rl
+          const v = [-rz * f[1], rz * f[0] - rx * f[2], rx * f[1]]
+          const tanV = Math.tan((25 * Math.PI) / 180)
+          const tanH = (tanV * w) / h
+          let x0 = 1e9
+          let x1 = -1e9
+          let y0 = 1e9
+          let y1 = -1e9
+          for (let i = 0; i < pts.length; i += 3) {
+            const px = pts[i] - p[0]
+            const py = pts[i + 1] - p[1]
+            const pz = pts[i + 2] - p[2]
+            const z = px * f[0] + py * f[1] + pz * f[2]
+            const nx = (px * rx + pz * rz) / (z * tanH)
+            const ny = (px * v[0] + py * v[1] + pz * v[2]) / (z * tanV)
+            x0 = Math.min(x0, nx)
+            x1 = Math.max(x1, nx)
+            y0 = Math.min(y0, ny)
+            y1 = Math.max(y1, ny)
+          }
+          const tags = [...document.querySelectorAll('.floortag')].map((e) => e.getBoundingClientRect().left - r.left)
+          return { w, h, x0: ((x0 + 1) / 2) * w, x1: ((x1 + 1) / 2) * w, y0: ((1 - y1) / 2) * h, y1: ((1 - y0) / 2) * h, tagLeft: tags.length ? Math.min(...tags) : null }
+        })
+      const checkFill = async (name) => {
+        // The camera flies for up to two seconds and a slow machine takes a while to notice a resize: wait until it has settled (or nine seconds).
+        let o = await outline()
+        for (let i = 0; i < 22 && (Math.max((o.x1 - o.x0) / (o.w - 80), (o.y1 - o.y0) / o.h) < 0.84 || o.x0 < -2 || o.x1 > o.w + 2 || o.y0 < -2 || o.y1 > o.h + 2 || (o.tagLeft !== null && o.tagLeft < -2)); i++) {
+          await sp.waitForTimeout(400)
+          o = await outline()
+        }
+        // The pills ("Floor 2") hang 80 px left of the building's corner: that much of the viewer is theirs.
+        const fillX = (o.x1 - o.x0) / (o.w - 80)
+        const fillY = (o.y1 - o.y0) / o.h
+        const fill = Math.max(fillX, fillY)
+        lines.push(`split fit ${name}: viewer ${Math.round(o.w)}x${Math.round(o.h)}, the building fills ${(fillX * 100).toFixed(0)}% of the width and ${(fillY * 100).toFixed(0)}% of the height`)
+        if (fill < 0.84) bad(`${name}: the building fills only ${(fill * 100).toFixed(0)}% of the viewer, want about 91%`)
+        if (o.x0 < -2 || o.x1 > o.w + 2 || o.y0 < -2 || o.y1 > o.h + 2) bad(`${name}: the building runs out of the viewer (${Math.round(o.x0)}..${Math.round(o.x1)} of ${Math.round(o.w)}, ${Math.round(o.y0)}..${Math.round(o.y1)} of ${Math.round(o.h)})`)
+        if (o.tagLeft !== null && o.tagLeft < -2) bad(`${name}: a floor pill is cut off at the left edge (${Math.round(o.tagLeft)} px)`)
+      }
+      // 1. Every floor view at 1366x768 and 1920x1080.
+      for (const [w, h] of [[1366, 768], [1920, 1080]]) {
+        await sp.setViewportSize({ width: w, height: h })
+        await sp.waitForTimeout(1200)
+        for (const [mode, floor] of [['stacked'], ['single', 'F2'], ['side'], ['ghost', 'F2']]) {
+          await sp.evaluate(([m, f]) => window.__app.getState().setViewMode(m, f), [mode, floor])
+          await sp.waitForTimeout(3200)
+          await checkFill(`${w}x${h} ${mode}`)
+          if (w === 1366) await shot(`split-fit-${mode}`, sp)
+        }
+      }
+      // 2. A window resize alone (no view change) frames the building again, and so does hiding the analytics panel.
+      await sp.evaluate(() => window.__app.getState().setViewMode('stacked'))
+      await sp.waitForTimeout(3000)
+      await sp.setViewportSize({ width: 1366, height: 768 })
+      await sp.waitForTimeout(1800)
+      await checkFill('after a resize to 1366x768')
+      await sp.getByRole('button', { name: 'Hide analytics' }).click()
+      await sp.waitForTimeout(1800)
+      await checkFill('analytics hidden')
+      await sp.getByRole('button', { name: 'Show analytics' }).click()
+      await sp.waitForTimeout(1800)
+      await checkFill('analytics shown again')
+      // 3. Split: rules against the Claude crowd of the loaded building (a precomputed pair).
+      await sp.evaluate(() => window.__clock.setState({ playing: false }))
+      await sp.evaluate(() => window.__app.getState().showBrainPair())
+      await sp.waitForFunction(() => window.__app.getState().split && window.__app.getState().pairBusy === null && document.querySelectorAll('main.center canvas').length === 2, null, { timeout: 60000 })
+      await sp.waitForTimeout(2500)
+      const heads = await sp.locator('.pane-head').evaluateAll((els) => els.map((e) => ({ side: e.querySelector('.pane-side')?.textContent, what: e.querySelector('.pane-what')?.textContent ?? '', edit: e.querySelector('.pane-edit')?.textContent?.trim() })))
+      if (heads.map((h) => h.side).join('|') !== 'Left|Right') bad(`the panes are headed "${heads.map((h) => h.side).join('|')}", want Left|Right`)
+      if (heads.some((h) => h.edit !== 'Edit')) bad('a pane has no Edit button')
+      for (const h of heads) for (const part of ['Fire in', 'Drywall', 'crowd', 'people']) if (!h.what.includes(part)) bad(`a pane header lacks "${part}": "${h.what}"`)
+      if (!heads[0]?.what.includes('Rules crowd') || !heads[1]?.what.includes('Claude crowd')) bad(`the headers read "${heads.map((h) => h.what).join(' / ')}", want the rules on the left and the Claude crowd on the right`)
+      await shot('split-headers', sp)
+      // 4. Reset camera: drag the left pane, the right follows (they are linked), then Reset camera brings both back.
+      const poses = () => sp.evaluate(() => ({ L: { p: [...window.__panePoses.L.p], t: [...window.__panePoses.L.t] }, R: { p: [...window.__panePoses.R.p], t: [...window.__panePoses.R.t] } }))
+      const gap = (a, b) => Math.hypot(...a.p.map((v, i) => v - b.p[i]), ...a.t.map((v, i) => v - b.t[i]))
+      const ov = await poses()
+      const box = await sp.locator('.pane[data-side=L] canvas').boundingBox()
+      await sp.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await sp.mouse.down()
+      await sp.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 30, { steps: 30 })
+      await sp.mouse.up()
+      // (the camera coasts on for a moment after the drag, and the other pane follows it)
+      await sp.waitForTimeout(5000)
+      const dragged = await poses()
+      const near = 0.025 * Math.hypot(...ov.L.p.map((v, i) => v - ov.L.t[i]))
+      if (gap(dragged.L, ov.L) < 1) bad('dragging the left pane did not move its camera')
+      if (gap(dragged.L, dragged.R) > near) bad(`the panes are not linked: after a drag they are ${gap(dragged.L, dragged.R).toFixed(2)} apart`)
+      await nav(sp, true)
+      await sp.locator('.ctxbar').getByRole('button', { name: 'Reset camera', exact: true }).click()
+      await nav(sp, false)
+      await sp.waitForTimeout(4500)
+      const reset = await poses()
+      if (gap(reset.L, ov.L) > near) bad(`Reset camera left the left pane ${gap(reset.L, ov.L).toFixed(2)} from its overview`)
+      if (gap(reset.R, ov.R) > near) bad(`Reset camera left the right pane ${gap(reset.R, ov.R).toFixed(2)} from its overview (it only reset the left one)`)
+      if (gap(reset.L, reset.R) > near) bad(`after Reset camera the panes are ${gap(reset.L, reset.R).toFixed(2)} apart`)
+      // ... and the pair still follows after a drag in the right pane.
+      const boxR = await sp.locator('.pane[data-side=R] canvas').boundingBox()
+      await sp.mouse.move(boxR.x + boxR.width / 2, boxR.y + boxR.height / 2)
+      await sp.mouse.down()
+      await sp.mouse.move(boxR.x + boxR.width / 2 - 70, boxR.y + boxR.height / 2 + 20, { steps: 30 })
+      await sp.mouse.up()
+      await sp.waitForTimeout(5000)
+      const again = await poses()
+      if (gap(again.R, reset.R) < 1 || gap(again.L, again.R) > near) bad(`after a reset, a drag in the right pane left the panes ${gap(again.L, again.R).toFixed(2)} apart`)
+      // 5. Edit opens that side's settings; static mode picks saved runs per side and says new settings need live mode.
+      await sp.locator('.pane[data-side=L] .pane-edit').click()
+      const card = sp.locator('section#card-scenario')
+      await card.waitFor({ timeout: 5000 })
+      if (!/Left side: fire and scenario/.test((await card.getAttribute('aria-label')) ?? '')) bad(`the left Edit opened "${await card.getAttribute('aria-label')}"`)
+      for (const want of ['Fire size', 'How fast it grows', 'Building material', 'Crowd', 'People in the building', 'Variation', 'Alarm sounds after', 'Saved run (left side)']) if (!(await card.innerText()).includes(want)) bad(`the left card lacks "${want}"`)
+      if (!/Static mode shows saved runs only/.test(await card.innerText())) bad('the side card does not say static mode shows saved runs only (new settings need live mode)')
+      await shot('split-edit-left', sp)
+      await sp.locator('.pane[data-side=R] .pane-edit').click()
+      await sp.waitForFunction(() => /^Right side: fire and scenario/.test(document.querySelector('section#card-scenario')?.getAttribute('aria-label') ?? ''), null, { timeout: 5000 })
+      if (!(await sp.locator('section#card-scenario').getByLabel('Building (right side)').count())) bad('the right card has no building picker')
+      // A saved run for the right side: another fire room, shown in the right pane (not the left run).
+      const sel = sp.locator('section#card-scenario').getByLabel('Saved run (right side)')
+      const opts = await sel.locator('option:not([disabled])').evaluateAll((os) => os.map((o) => ({ v: o.value, t: o.textContent })))
+      const cur = await sel.inputValue()
+      const next = opts.find((o) => o.v !== cur && /L1|kitchen/i.test(o.v + o.t)) ?? opts.find((o) => o.v !== cur)
+      if (!next) bad('the right side lists no other saved run')
+      else {
+        await sel.selectOption(next.v)
+        await sp.waitForFunction((k) => window.__app.getState().splitRight === k, next.v, { timeout: 20000 })
+        const cap = await sp.locator('.pane[data-side=R] .pane-caption').innerText()
+        lines.push(`split: the right side now shows "${cap}"`)
+      }
+      // 6. The right side on another building (example-office-plus when it is there, else the office).
+      const ids = await sp.evaluate(() => window.__app.getState().buildings.map((b) => b.id))
+      const index = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+      const saved = (id) => index.runs.some((r) => r.buildingId === id && r.whatIf === null)
+      const other = ids.find((i) => i === 'example-office-plus' && saved(i)) ?? ids.find((i) => i !== 'example-office' && saved(i))
+      if (!other) bad('the building list has no second building')
+      else {
+        await sp.locator('section#card-scenario').getByLabel('Building (right side)').selectOption(other)
+        await sp.waitForFunction((id) => window.__app.getState().rightBuilding?.id === id && window.__app.getState().pairBusy === null, other, { timeout: 60000 })
+        await sp.waitForTimeout(2500)
+        const st = await sp.evaluate(() => {
+          const a = window.__app.getState()
+          const r = a.runs[a.splitRight]
+          return { right: r?.run.buildingId, left: a.runs[a.splitLeft]?.run.buildingId, order: a.runOrder.length, canvases: document.querySelectorAll('main.center canvas').length, what: document.querySelector('.pane[data-side=R] .pane-what b')?.textContent, floors: a.rightBuilding?.floors.length }
+        })
+        if (st.right !== other) bad(`the right pane's run is on "${st.right}", want ${other}`)
+        if (st.left === other) bad('the left pane moved to the right building too')
+        if (st.canvases !== 2) bad(`${st.canvases} canvases with two buildings, want 2`)
+        const rb = await sp.evaluate(() => window.__app.getState().rightBuilding?.name)
+        if (st.what !== rb) bad(`the right header names "${st.what}", want ${rb}`)
+        await blankCheck('split-two-buildings', sp)
+        await shot('split-two-buildings', sp)
+        lines.push(`split: two buildings, left ${st.left} and right ${st.right} (${st.floors} floors), the loaded building's runs stay at ${st.order}`)
+        // Reset camera still resets both, each to its own overview.
+        await nav(sp, true)
+        await sp.locator('.ctxbar').getByRole('button', { name: 'Reset camera', exact: true }).click()
+        await nav(sp, false)
+        await sp.waitForTimeout(3500)
+        await blankCheck('split-two-buildings-reset', sp)
+        // Live: Run on the right side posts the scenario for the right building, and its run lands in the right pane only.
+        const posts = []
+        await sp.route('**/runs', (r) => {
+          if (r.request().method() !== 'POST') return r.fallback()
+          posts.push(JSON.parse(r.request().postData() ?? '{}'))
+          return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runId: 'qa-split' }) })
+        })
+        const fileOf = readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8')
+        const entry = JSON.parse(fileOf).runs.find((r) => r.buildingId === other && r.whatIf === null)
+        if (!entry) bad(`the demo index has no baseline run for ${other}`)
+        else {
+          await sp.route('**/runs/qa-split', (r) => r.fulfill({ path: join(root, 'dist', 'demo', entry.file), contentType: 'application/json' }))
+          const leftBefore = await sp.evaluate(() => window.__app.getState().splitLeft)
+          await sp.evaluate(() => window.__app.setState({ mode: 'live', running: null }))
+          await sp.locator('.pane[data-side=R] .pane-edit').click()
+          await sp.waitForFunction(() => /^Right side/.test(document.querySelector('section#card-scenario')?.getAttribute('aria-label') ?? ''), null, { timeout: 5000 })
+          const run = sp.locator('section#card-scenario button.run')
+          if (!/Run right side/.test(await run.innerText())) bad(`the card's Run button reads "${await run.innerText()}", want "Run right side"`)
+          if (!(await sp.locator('section#card-scenario').getByLabel('Building material', { exact: false }).first().isEnabled())) bad('the material select is off in live mode')
+          await run.click()
+          await sp.waitForFunction(() => window.__app.getState().running === null && /^ui-/.test(window.__app.getState().splitRight ?? ''), null, { timeout: 30000 })
+          if (posts.length !== 1 || posts[0].buildingId !== other) bad(`the right Run posted ${JSON.stringify(posts.map((p) => p.buildingId))}, want one scenario for ${other}`)
+          const after = await sp.evaluate(() => {
+            const a = window.__app.getState()
+            return { left: a.splitLeft, order: a.runOrder.length, rb: a.rightBuilding?.id, runBuilding: a.runs[a.splitRight]?.run.buildingId }
+          })
+          if (after.left !== leftBefore) bad(`the right Run changed the left pane (${leftBefore} to ${after.left})`)
+          if (after.rb !== other) bad(`the right pane left ${other} for ${after.rb}`)
+          lines.push(`split: Run right side posted buildingId ${posts[0]?.buildingId}; the left pane kept ${after.left}`)
+        }
+      }
+      // 7. A building with no saved run (example-office-plus until its runs are precomputed): static mode says so, live mode runs it (with the fire it picks).
+      const bare = ids.find((i) => i === 'example-office-plus' && !saved(i))
+      if (bare) {
+        await sp.evaluate(() => window.__app.setState({ mode: 'live', running: null, pairError: null }))
+        const posts2 = []
+        await sp.route('**/runs', (r) => {
+          if (r.request().method() !== 'POST') return r.fallback()
+          posts2.push(JSON.parse(r.request().postData() ?? '{}'))
+          return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runId: 'qa-plus' }) })
+        })
+        const base = index.runs.find((r) => r.buildingId === 'example-office' && r.whatIf === null)
+        await sp.route('**/runs/qa-plus', (r) => r.fulfill({ path: join(root, 'dist', 'demo', base.file), contentType: 'application/json' }))
+        await sp.locator('.pane[data-side=R] .pane-edit').click()
+        await sp.waitForFunction(() => /^Right side/.test(document.querySelector('section#card-scenario')?.getAttribute('aria-label') ?? ''), null, { timeout: 5000 })
+        await sp.locator('section#card-scenario').getByLabel('Building (right side)').selectOption(bare)
+        await sp.waitForFunction((id) => window.__app.getState().rightBuilding?.id === id && window.__app.getState().running === null, bare, { timeout: 60000 })
+        if (posts2.length !== 1 || posts2[0].buildingId !== bare || !posts2[0].fire?.floor) bad(`choosing ${bare} (no saved run) in live mode posted ${JSON.stringify(posts2.map((p) => [p.buildingId, p.fire?.floor]))}, want one scenario for it with a fire room`)
+        await sp.waitForTimeout(2000)
+        await blankCheck('split-plus', sp)
+        await shot('split-plus', sp)
+        lines.push(`split: ${bare} has no saved run: live mode ran one (${posts2[0]?.fire?.room}) and moved the right pane to it`)
+        await sp.evaluate(() => window.__app.setState({ mode: 'static' }))
+      }
+      await axeOn(sp, 'split', '.app')
+      if (problems.length === before) lines.push('split ok: both cameras reset and stay linked, the building fills the viewer, each side has headers, Edit, its own settings and building')
+    } finally {
+      await sp.close()
+    }
+  })
   await step('phone', async () => {
     // A 390 x 844 phone with the same init script: panels overlay the viewer, the floor strip scrolls, the timeline stays usable.
     const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })

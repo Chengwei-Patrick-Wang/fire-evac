@@ -11,6 +11,7 @@ import type { BuildingFloor } from '../data/types'
 import FlameSprites from './fx/FlameSprites'
 import type { FlameSource } from './fx/FlameSprites'
 import { fadeIn, flicker, readHeat } from './fx/heat'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 /** The fire light's colour, and its height above the floor (m). */
 const LIGHT = '#ff7a1a'
@@ -66,7 +67,7 @@ function outlineBox(floor: BuildingFloor): [number, number, number, number] {
 export default function Fire({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)
   const on = useApp((s) => s.layers.fire)
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const visible = useApp((s) => s.visibleFloors)
   const place = usePlace()
   const key = runKey ?? activeKey

@@ -9,6 +9,7 @@ import { spreadStats } from './BurningRooms'
 import { CLOSED_BY_FIRE_COLOR } from '../scene/Building'
 import { flatGeometry } from './flat'
 import type { Building, BuildingFloor, Door, Run, Vec2 } from '../data/types'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 const OPACITY = 0.85
 /** Above the neutral doors Building draws at 0.03, below the stairs, exits and room tints. */
@@ -100,7 +101,7 @@ function Overlays({ closings, building, runKey }: { closings: Closing[]; buildin
  */
 export default function BlockedDoors({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const key = runKey ?? activeKey
   const lr = useApp((s) => (key ? s.runs[key] : undefined))
   const closings = useMemo(() => (lr && building && readSpread(lr.run) ? closingsOf(lr.run, building) : []), [lr, building])

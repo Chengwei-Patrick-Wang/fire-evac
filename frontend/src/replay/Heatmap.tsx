@@ -5,6 +5,7 @@ import { b64ToBytes } from '../model/decode'
 import { floorAlpha, gridPlacement, toPlaced } from '../scene/geometry'
 import { usePlace } from '../scene/usePlace'
 import type { Heatmap as HeatmapT } from '../data/types'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 // inferno-like stops
 const STOPS: [number, number, number][] = [
@@ -25,7 +26,7 @@ const LUT = (() => {
 })()
 
 function HeatPlane({ hm }: { hm: HeatmapT }) {
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const visible = useApp((s) => s.visibleFloors)
   const viewMode = useApp((s) => s.viewMode)
   const focusFloor = useApp((s) => s.focusFloor)

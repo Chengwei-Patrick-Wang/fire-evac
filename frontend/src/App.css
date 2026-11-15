@@ -222,6 +222,23 @@ a { color: var(--primary-text); }
 .splitview { display: flex; width: 100%; height: 100%; }
 .splitview .pane { position: relative; flex: 1; min-width: 0; border-right: 1px solid var(--border-strong); }
 .pane-caption { position: absolute; bottom: 8px; left: 8px; padding: 2px 8px; border-radius: var(--r-ctl); font-size: var(--fs-sm); pointer-events: none; }
+/* Each split pane says which side it is and what it runs, with an Edit button for that side's settings. The right pane keeps clear of the legend card. */
+.pane-head {
+  position: absolute; top: 8px; left: 8px; z-index: 2; max-width: calc(100% - 16px); display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 2px var(--s2);
+  padding: 4px 8px 6px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow); font-size: var(--fs-sm);
+}
+.pane[data-side=R] .pane-head { max-width: calc(100% - 272px); }
+.pane-side { margin: 0; font-size: var(--fs-md); font-weight: 700; }
+.pane-edit { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; }
+.pane-edit[aria-expanded=true] { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-text); }
+.pane-what { grid-column: 1 / -1; margin: 0; display: flex; flex-wrap: wrap; gap: 0 6px; color: var(--text-2); }
+.pane-what b { color: var(--text); font-weight: 600; }
+.pane-what span::before { content: '· '; }
+/* The top of a side's card: its building and its saved runs. */
+.sidepick { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; margin-bottom: 2px; border-bottom: 1px solid var(--border); }
+.sidepick select { max-width: 190px; }
+.sidepick .where { margin: 0; }
+.sidepick .note { margin: 0; font-size: var(--fs-xs); }
 
 /* In-scene labels (drei <Html>) */
 .l3d { font-size: 11px; color: var(--text); white-space: nowrap; text-shadow: 0 0 3px var(--canvas); }
@@ -406,6 +423,9 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
   .app.sb-wide:not(.sb-closed) .scenariocard { left: calc(min(760px, 55vw) + 28px); }
 }
 
+/* The right side's Fire and scenario card opens over the right pane, left of the rail. */
+.app .scenariocard.side-r { left: auto; right: 64px; }
+
 /* Phones: one column; panels and cards are sheets over the viewer, the floor strip scrolls, the timeline wraps */
 @media (max-width: 900px) {
   .app { --nav-h: 148px; grid-template-columns: minmax(0, 1fr); grid-template-areas: 'center' 'dock'; }
@@ -442,6 +462,10 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
     top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 60dvh; z-index: 30;
   }
   .nav-open .scenariocard { top: auto; max-height: min(60dvh, calc(100% - var(--nav-h) - 16px)); }
+  .app .scenariocard.side-r { left: 8px; right: 8px; }
+  /* The panes are narrow here: a pane's header keeps its side, its Edit button and the building. */
+  .pane[data-side=R] .pane-head { max-width: calc(100% - 16px); }
+  .pane-what span { display: none; }
   button { min-height: 36px; }
   .timeline .mark { min-height: 10px; }
   html, body { overflow-x: hidden; }
@@ -458,7 +482,7 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
 :root[data-contrast="high"] a { text-decoration: underline; color: #fff; }
 :root[data-contrast="high"] .about-card a { color: #fff; }
 :root[data-contrast="high"] .badge { background: #000; border: 1px solid #fff; color: #fff; }
-:root[data-contrast="high"] .legendcard, :root[data-contrast="high"] .banner, :root[data-contrast="high"] .pane-caption,
+:root[data-contrast="high"] .legendcard, :root[data-contrast="high"] .banner, :root[data-contrast="high"] .pane-caption, :root[data-contrast="high"] .pane-head,
 :root[data-contrast="high"] .sidebar, :root[data-contrast="high"] .topnav, :root[data-contrast="high"] .navtoggle,
 :root[data-contrast="high"] .edgetab, :root[data-contrast="high"] .dock, :root[data-contrast="high"] .card, :root[data-contrast="high"] .kpi,
 :root[data-contrast="high"] .menu, :root[data-contrast="high"] .railbtn, :root[data-contrast="high"] .newbuilding {

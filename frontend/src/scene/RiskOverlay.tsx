@@ -9,6 +9,7 @@ import { centroidOf, rampColor, RISK_NAMES, riskRange, roomRiskColor, stairScore
 import Heatmap from '../replay/Heatmap'
 import type { BuildingFloor, Vec2 } from '../data/types'
 import { readStability, roomRange, span } from '../model/ranges'
+import { useSceneBuilding } from './sceneBuilding'
 
 function RoomFill({ poly, color, onClick }: { poly: Vec2[]; color: string; onClick: () => void }) {
   const geo = useMemo(() => {
@@ -43,7 +44,7 @@ function PulseRing({ pos, y }: { pos: Vec2; y: number }) {
 /** The ring that marks where flyTo went (a chokepoint alert, a weak spot). It shows whether or not the risk layer is on. */
 function FocusPulse() {
   const focus = useApp((s) => s.focus)
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const place = usePlace()
   const floor = focus && building ? building.floors.find((f) => f.id === focus.floorId) : undefined
   if (!focus || !floor) return null
@@ -57,9 +58,11 @@ function FocusPulse() {
 
 function FloorRisk({ floor }: { floor: BuildingFloor }) {
   const place = usePlace()
-  const batch = useApp((s) => s.batch)
+  const loadedBatch = useApp((s) => s.batch)
   const metric = useApp((s) => s.riskMetric)
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
+  // The batch is of the loaded building: a pane drawing another one has none.
+  const batch = loadedBatch && building && loadedBatch.buildingId === building.id ? loadedBatch : null
   const range = useMemo(() => (batch ? riskRange(batch, metric) : null), [batch, metric])
   if (!batch || !building) return null
   const maxScore = Math.max(1e-9, ...batch.doors.map((d) => d.score))
@@ -99,8 +102,9 @@ function FloorRisk({ floor }: { floor: BuildingFloor }) {
 
 export default function RiskOverlay() {
   const on = useApp((s) => s.layers.risk)
-  const building = useApp((s) => s.building)
-  const batch = useApp((s) => s.batch)
+  const building = useSceneBuilding()
+  const loadedBatch = useApp((s) => s.batch)
+  const batch = loadedBatch && building && loadedBatch.buildingId === building.id ? loadedBatch : null
   const visible = useApp((s) => s.visibleFloors)
   const viewMode = useApp((s) => s.viewMode)
   const focusFloor = useApp((s) => s.focusFloor)
