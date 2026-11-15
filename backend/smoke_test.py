@@ -1617,6 +1617,26 @@ def check_run(client) -> str:
 
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 60
+    # A fire that is not placed in a room (the UI's Run with no fire placed, or a hand-made request): a plain 422 up
+    # front, never a job that ends in "KeyError: 'floor'". No job is queued for any of these.
+    fire = scenario["fire"]
+    unplaced = [
+        ("no fire", None),
+        ("only a type", {"type": "kitchen", "start": 0}),
+        ("no floor", {k: v for k, v in fire.items() if k != "floor"}),
+        ("no room", {k: v for k, v in fire.items() if k != "room"}),
+        ("a blank room", dict(fire, room="")),
+        ("an unknown room", dict(fire, room="R999")),
+        ("an unknown floor", dict(fire, floor="F99")),
+        ("no spot", {k: v for k, v in fire.items() if k not in ("x", "y")}),
+    ]
+    for what, bad in unplaced:
+        r = client.post("/api/runs", json=dict(scenario, fire=bad))
+        assert r.status_code == 422, (what, r.status_code, r.text)
+        detail = r.json()["detail"]
+        assert isinstance(detail, str) and "fire" in detail.lower() and "KeyError" not in detail, (what, detail)
+    r = client.post("/api/runs", json={k: v for k, v in scenario.items() if k != "fire"})
+    assert r.status_code == 422 and "no fire" in r.json()["detail"], r.text
     t0 = time.time()
     run_id = post_run(client, scenario)
     wood_id = post_run(client, dict(scenario, fire=dict(scenario["fire"], material="wood")))
@@ -1665,7 +1685,8 @@ def check_run(client) -> str:
         f"OK  run {run_id}: {len(run['frames'])} frames, {len(doors)} doors, "
         f"evacuated {m.get('evacuated')}/{m.get('agents')}, trapped {m.get('trapped')}, "
         f"t90 {m.get('t90')}, t100 {m.get('t100')}, {saved_run.stat().st_size / 1e6:.1f} MB, "
-        f"{elapsed:.1f} s through the API; twins: wood run says wood, steel refused ({refused['error'].split(':', 1)[0]})"
+        f"{elapsed:.1f} s through the API; twins: wood run says wood, steel refused ({refused['error'].split(':', 1)[0]}); "
+        f"{len(unplaced) + 1} unplaced fires refused with 422"
     )
 
 

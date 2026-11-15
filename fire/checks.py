@@ -1414,12 +1414,17 @@ def check_tradeoffs_slow():
     # With drywall (the corridor at 180 s) the lobby fire traps 17 and the R105 fire traps one more person once E1 is
     # blocked, so the net 16 is less than the lobby's 17 and no "(N of N in fires in ...)" note is written.
     base["fire"]["material"] = "concrete"
+    # sim/ROUTING.md: a lobby or corridor fire now gets building-wide routing by default, which walks the lobby's people round the
+    # fire and traps nobody, so blocking E1 changes no trapped count and there is no dTrappedRooms row to name. The check keeps the
+    # legacy keep-out (buildingRouting false), which still traps the lobby's people at E1 (seed 1: two trapped, none once E1 is blocked).
+    base["buildingRouting"] = False
     ignitions = [{"floor": "F1", "room": room} for room in ("L1", "R105")]
     batch = run_many(building, base, ignitions, seeds=(1,), workers=2, timeout_s=600)
     assert len(batch["runs"]) == 2 and not batch["failed"], batch["failed"]
     blocked = {"id": "blockedExit", "label": "Exit Main entrance blocked", "doors": {"E1": "blocked"}, "sprinklers": False}
     result = add_whatif(building, base, batch, variants=[blocked], workers=2, timeout_s=600, progress=False)
     entry = result["whatIf"][0]
+    assert entry.get("dTrappedRooms"), f"blocking E1 changed no trapped count (baseline trapped {[(r['ignition']['room'], r['trapped']) for r in batch['runs']]})"
     first = entry["dTrappedRooms"][0]
     assert (first["floor"], first["room"], first["opensOnto"]) == ("F1", "L1", "exit") and first["delta"] < 0, first
     assert "in fires in Lobby (L1), which this exit opens onto" in entry["why"], entry["why"]
@@ -2842,6 +2847,10 @@ def check_spread_slow():
     scenario = json.loads((ROOT / "contracts/scenario.example.json").read_text(encoding="utf-8"))
     scenario.update(maxTime=400, sprinklers=False)
     scenario["fire"]["material"] = "drywall"
+    # C28's social cue (people who see others leave start sooner) gets all 160 out by 129 s, before the corridor ignites at 180 s,
+    # so the run ends with no door left to close. This check is about the spread, not the crowd's pace: it keeps the crowd as it
+    # was (socialFollowing false: event for event as before C28, with its one person still inside at 180 s).
+    scenario["socialFollowing"] = False
     assert scenario["occupants"]["total"] == 160
     result = run(building, scenario, FireModel(building, scenario))
     first = {}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, Flame } from 'lucide-react'
 import { useApp } from '../store/app'
 import { STATUS_COLORS, TYPE_COLORS } from '../replay/Agents'
 import { PROFILE_NAMES } from '../replay/runIndex'
@@ -103,7 +103,7 @@ export default function LegendCard() {
                   Burning room (illustrative)
                 </li>
                 <li>
-                  <i className="sw cone" />
+                  <Flame className="sw-flame" size={12} strokeWidth={2} aria-hidden="true" />
                   Fire marker
                 </li>
                 <li>

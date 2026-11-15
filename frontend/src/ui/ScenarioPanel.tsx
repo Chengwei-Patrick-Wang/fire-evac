@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { sideDraft, useApp } from '../store/app'
 import type { Side } from '../store/app'
-import { fromPercent, insidePoint, roomAt, toPercent } from '../model/scenarioDraft'
+import { PLACE_FIRE_FIRST, firePlaced, fromPercent, insidePoint, roomAt, toPercent } from '../model/scenarioDraft'
 import { DEFAULT_MATERIAL, MATERIALS } from '../model/fireSpread'
 import { CROWDS, CROWD_NOTE, DEFAULT_BRAIN, claudeCrowdLimit, crowdOf, crowdTooBig } from '../model/brain'
 import type { Brain } from '../model/brain'
@@ -56,6 +56,8 @@ export default function ScenarioPanel({ side }: { side?: Side }) {
   // Only the live backend runs a Claude crowd; static mode always shows the rules' precomputed runs. Everyone asks Claude holds up to 200 people.
   const crowd: Brain = live ? crowdOf(draft.brain) : DEFAULT_BRAIN
   const tooMany = crowdTooBig(draft, live)
+  // A run needs the fire placed in a room (the backend refuses one without), so Run stays off until a click or the room list places it.
+  const placed = firePlaced(draft)
   const mixTotal = MIX.reduce((n, p) => n + toPercent(draft.occupants.mix[p.id]), 0)
   const num = (v: string, d: number) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d)
 
@@ -226,9 +228,20 @@ export default function ScenarioPanel({ side }: { side?: Side }) {
         />
       </label>
       <p className="dim hint" id="sc-hint-alarm">Seconds after the fire starts.</p>
-      <button className="run" disabled={!!running || tooMany} aria-describedby={tooMany ? 'crowd-limit' : undefined} onClick={() => void (side ? app.runSide(side) : runScenario(draft))}>
+      <button
+        className="run"
+        disabled={!!running || tooMany || !placed}
+        aria-describedby={[tooMany ? 'crowd-limit' : '', placed ? '' : 'sc-hint-run'].filter(Boolean).join(' ') || undefined}
+        title={placed ? undefined : PLACE_FIRE_FIRST}
+        onClick={() => void (side ? app.runSide(side) : runScenario(draft))}
+      >
         {running ?? (side ? `Run ${side === 'L' ? 'left' : 'right'} side` : 'Run')}
       </button>
+      {!placed && (
+        <p className="dim hint" id="sc-hint-run">
+          {PLACE_FIRE_FIRST}
+        </p>
+      )}
       {runError && <p className="err">{runError}</p>}
       {runNote && (
         <p className={runFallback ? 'warn' : 'dim'} role="status">

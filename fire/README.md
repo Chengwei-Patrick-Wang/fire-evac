@@ -1716,7 +1716,10 @@ because the example's kitchen smoke saturates. One slow check moved: `check_trad
 fires in L1 and R105) tests the trade-off wording, so it pins `fire.material` to `concrete`, which keeps the spread (the
 corridor at 300 s) out of its fires and all its assertions as they were. With drywall the lobby fire traps 17 and the R105
 fire traps one more person once E1 is blocked, so the net 16 is less than the lobby's 17 and `trapped_note` writes no
-"(N of N in fires in ...)" note. Every other slow check passes unchanged.
+"(N of N in fires in ...)" note. Every other slow check passes unchanged. Later, building-wide routing became the default
+for lobby and corridor fires (`sim/ROUTING.md`): the lobby fire then traps nobody, blocking E1 changes no trapped count
+and `add_whatif` writes no `dTrappedRooms`, so `check_tradeoffs_slow` also sets `buildingRouting` false (the legacy
+keep-out; seed 1: the lobby fire traps 2, none once E1 is blocked, and the line says "2 of 2 in fires in Lobby (L1)").
 
 **What D26 changed.** Only values the floor links move: the example's wood schedule gained R201 at 300 s (`check_spread`,
 16 rooms by 400 s, was 15) and the office's wood count from R143 is 46 (was 37). Every drywall and concrete number is as
@@ -1775,7 +1778,9 @@ room E beside C, door DC between them), a fire in A:
 `check_spread_slow` runs the example's kitchen fire with drywall for 400 s (160 occupants). The corridor's 11 doors close
 by 180 s: D101 at 174 s by smoke, the other ten at exactly 180 s by the spread. By 400 s 1 of 160 is trapped (reason
 `no route`), t50 is 95.3 s and t90 is 120.7 s: with drywall the corridor ignites after most people are out. In the model the
-lobby and Stair B ignite at 360 s, so the exits E1 and E2 are in `blocked_doors()` from then on.
+lobby and Stair B ignite at 360 s, so the exits E1 and E2 are in `blocked_doors()` from then on. The check sets
+`socialFollowing` false (C28's social cue gets all 160 out by 129 s, before the corridor ignites, so the run would end with
+no door left to close); false keeps the run event for event as the numbers above.
 
 ### Handoffs
 

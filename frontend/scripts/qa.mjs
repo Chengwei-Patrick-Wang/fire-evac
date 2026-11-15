@@ -699,6 +699,9 @@ try {
       if (matName && !line.includes(matName)) bad(`the spread line reads "${line}", want the material ${matName}`)
       const legend = await pf.locator('section.legendcard').innerText()
       for (const row of ['Burning room (illustrative)', 'Fire marker', 'Closed by fire']) if (!legend.includes(row)) bad(`the legend lacks "${row}"`)
+      // The "Fire marker" row is a small flame, like the flame sprites it stands for (not the old cone swatch).
+      const marker = pf.locator('section.legendcard li', { hasText: 'Fire marker' })
+      if ((await marker.locator('svg.lucide-flame').count()) !== 1 || (await marker.locator('.cone').count()) !== 0) bad('the "Fire marker" legend row is not a flame icon')
       if ((await pf.evaluate(() => window.__app.getState().viewMode)) !== 'stacked') bad('the page left the stacked view')
       // The doors the run closes show as they close: none before the first, all of them at the end.
       if (got.closed !== want.closed) bad(`at ${t1} s ${got.closed} closed doors are drawn, the run has closed ${want.closed}`)
@@ -747,7 +750,7 @@ try {
         }
       }
       lines.push(`fire-spread: views draw ${views.map(([m, f, n]) => `${m}${f ? ' ' + f : ''} ${n}`).join(', ')} of ${wFast.drawn} burning rooms`)
-      // A close-up on a burning room other than the ignition room (the fire sphere stands there): it carries the marker cone.
+      // A close-up on a burning room other than the ignition room (the fire sphere stands there): it carries the flame marker.
       const near = await pf.evaluate((rooms) => {
         const a = window.__app.getState()
         for (const r of rooms.slice(1)) {
@@ -1225,12 +1228,35 @@ try {
       })
       await p7.waitForFunction(() => window.__app.getState().placing === true, null, { timeout: 5000 }).catch(() => bad('a draft with no fire did not turn placing on'))
       if (!/^No fire placed yet\./.test(await where.innerText()) || !/Click a room in the building to place the fire\./.test(await where.innerText()) || (await mover.innerText()) !== 'Cancel') bad(`with no fire the card says "${await where.innerText()}" and the button reads "${await mover.innerText()}"`)
+      // With no fire the card's Run is off and says why (the backend refuses a run with no fire), and so are the nav's two Run buttons.
+      const HINT = 'Click a room to place the fire first'
+      const cardRun = p7.locator('.scenario > button.run')
+      const navRun = p7.locator('.ctxbar').getByRole('button', { name: 'Run simulation', exact: true })
+      const offWithHint = async (what, el) => {
+        if (!(await el.isDisabled()) || (await el.getAttribute('title')) !== HINT) bad(`${what} is ${(await el.isDisabled()) ? 'off' : 'on'} with title "${await el.getAttribute('title')}" and no fire, want off with "${HINT}"`)
+      }
+      await offWithHint("the card's Run", cardRun)
+      const hintText = await card.locator('p#sc-hint-run').innerText().catch(() => '')
+      if (hintText !== HINT) bad(`the hint under the card's Run reads "${hintText}", want "${HINT}"`)
+      await cardRun.scrollIntoViewIfNeeded()
+      await shot('scenario-card-nofire', p7)
+      await nav(p7, true)
+      await offWithHint("the toolbar's Run simulation", navRun)
+      await p7.locator('#topnav .menus').getByRole('button', { name: 'Simulation', exact: true }).click()
+      await offWithHint("the Simulation menu's Run simulation", p7.getByRole('menuitem', { name: 'Run simulation', exact: true }))
+      await p7.keyboard.press('Escape')
+      await nav(p7, false)
       await p7.evaluate(() => window.__app.setState({ card: null, placing: false }))
       await p7.evaluate(() => window.__app.setState({ card: 'scenario' }))
       await p7.waitForFunction(() => window.__app.getState().placing === true, null, { timeout: 5000 }).catch(() => bad('opening the card with no fire did not turn placing on'))
       await card.locator('details.roompick summary').click()
       await rooms.selectOption(pick ?? '')
       if ((await placing()) !== false || !(await where.innerText()).startsWith('Fire in:')) bad('a room chosen from the list did not place the fire and end placing')
+      // Placed, the Run buttons are on again and the hint is gone.
+      if (!(await cardRun.isEnabled()) || (await cardRun.getAttribute('title')) !== null || (await card.locator('p#sc-hint-run').count()) !== 0) bad("placing the fire from the list did not turn the card's Run on and its hint off")
+      await nav(p7, true)
+      if (!(await navRun.isEnabled())) bad("placing the fire did not turn the toolbar's Run simulation on")
+      await nav(p7, false)
       // The fire as the card shows it: the presets the card does not offer, a growth in the backend's other spellings, and a type it has never seen (nothing throws).
       const shows = async (fire) => {
         await p7.evaluate((f) => {
@@ -1955,6 +1981,24 @@ try {
           const run = sp.locator('section#card-scenario button.run')
           if (!/Run right side/.test(await run.innerText())) bad(`the card's Run button reads "${await run.innerText()}", want "Run right side"`)
           if (!(await sp.locator('section#card-scenario').getByLabel('Building material', { exact: false }).first().isEnabled())) bad('the material select is off in live mode')
+          // With no fire on the right side's scenario its Run is off and says to click a room first; once a fire is placed it runs.
+          const rightFire = await sp.evaluate(() => {
+            const a = window.__app.getState()
+            return JSON.parse(JSON.stringify((a.rightDraft ?? a.draft).fire))
+          })
+          await sp.evaluate(() => window.__app.getState().patchRightDraft({ fire: { type: 'kitchen', start: 0 } }))
+          await sp.waitForFunction(() => document.querySelector('section#card-scenario button.run')?.disabled === true, null, { timeout: 5000 }).catch(() => bad('the right side Run stays on with no fire placed'))
+          const rightHint = await sp.locator('section#card-scenario p#sc-hint-run').innerText().catch(() => '')
+          if ((await run.getAttribute('title')) !== 'Click a room to place the fire first' || rightHint !== 'Click a room to place the fire first') bad(`with no fire the right side Run has title "${await run.getAttribute('title')}" and hint "${rightHint}", want "Click a room to place the fire first"`)
+          if (rightFire.floor && rightFire.room) await sp.evaluate((fire) => { window.__app.getState().patchRightDraft({ fire }); window.__app.setState({ placing: false }) }, rightFire)
+          else {
+            // This right building has no batch, so no fire of its own to put back: place one from the room list, as a user would.
+            const list = sp.locator('section#card-scenario details.roompick')
+            await list.locator('summary').click()
+            const pickRoom = await list.locator('select option').evaluateAll((os) => os.map((o) => o.value).find((v) => v.includes('|')))
+            await list.locator('select').selectOption(pickRoom)
+          }
+          await sp.waitForFunction(() => document.querySelector('section#card-scenario button.run')?.disabled === false, null, { timeout: 5000 }).catch(() => bad('the right side Run stays off once its fire is placed'))
           await run.click()
           await sp.waitForFunction(() => window.__app.getState().running === null && /^ui-/.test(window.__app.getState().splitRight ?? ''), null, { timeout: 30000 })
           if (posts.length !== 1 || posts[0].buildingId !== other) bad(`the right Run posted ${JSON.stringify(posts.map((p) => p.buildingId))}, want one scenario for ${other}`)
