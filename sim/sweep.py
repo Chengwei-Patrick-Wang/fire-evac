@@ -17,14 +17,18 @@ import shapely
 from shapely.geometry import Point, Polygon
 
 from fire.presets import PRESETS, fire_params, hrr_kw
-from sim.run import BATCH_RECORDING, FIRE_KEEPOUT_M, WALL_CLEARANCE, fire_room, floor_walkable, keepout_cut, run
+from sim.run import (BATCH_RECORDING, FIRE_KEEPOUT_M, WALL_CLEARANCE, fire_clearance, fire_room, flame_radius,
+                     floor_walkable, keepout_cut, run, uses_building_routing)
+from sim.safe_routes import hazard_cut
 
 REJECTIONS = ("cannot fit", "no room to place", "no stair route", "no exits or stairs")
 ROOT = Path(__file__).resolve().parents[1]
 # A's precompute occupancy (tools/precompute_demo.py PRESETS); other buildings use their base scenario's total.
 DESIGN_OCCUPANTS = {"office": 250, "clinic": 280}
-# Keep-out classes, riskiest first: no cut, the 0.5 and 0.75 m fallback discs, a sealed room, then 1.0, 1.5 and 2.5 m.
-KEEPOUT_ORDER = ("none", "0.5", "0.75", "sealed", "1.0", "1.5", "2.5")
+# Keep-out classes, riskiest first: no cut, the 0.5 and 0.75 m fallback discs, a sealed room, then 1.0, 1.5 and 2.5 m;
+# last "building": a corridor or lobby fire, whose building-wide routing (sim/ROUTING.md) cuts the flame footprint
+# plus body clearance instead of a keep-out disc.
+KEEPOUT_ORDER = ("none", "0.5", "0.75", "sealed", "1.0", "1.5", "2.5", "building")
 FALLBACK = ("0.75", "0.5", "sealed", "none")
 ROOM_SETTINGS = ("seed", "agents", "maxTime", "preset")  # a resumed report must match on these
 
@@ -86,10 +90,13 @@ def sweep_cases(buildings, n, seed=0, agents=(10, 40, 120, 300)):
     return cases
 
 
-def radius_label(radius):
-    """The keep-out class of a radius: "none" (no cut), "sealed" (the room itself) or the disc in metres."""
+def radius_label(radius, building=False):
+    """The keep-out class of a radius: "none" (no cut), "sealed" (the room itself) or the disc in metres; "building" for
+    any cut a building-routed fire makes (its radius is the flame footprint plus clearance, not a keep-out disc)."""
     if not radius:
         return "none"
+    if building:
+        return "building"
     return "sealed" if math.isinf(radius) else str(float(radius))
 
 
@@ -99,18 +106,27 @@ def case_keepout(building, scenario, walkable=None):
     Built from the inputs run() uses: the blocked doors, fireKeepout (2.5 m by default), sealing only when
     no perRoom count puts people in the fire room, and only while the fire burns at maxTime. walkable
     optionally maps floor ids to floor_walkable(floor, blocked) for those same blocked doors.
+    A building-routed fire (sim.run.uses_building_routing: corridor and lobby fires unless the scenario says
+    otherwise) gets run()'s other cut instead: safe_routes.hazard_cut of every walkable piece (walkable is not
+    used) with D's largest flame footprint plus fireClearance; radius is then that footprint plus clearance.
     """
     fire = scenario.get("fire") or {}
     radius = float(scenario.get("fireKeepout", FIRE_KEEPOUT_M))
     if not radius or not fire:
         return None
     params = fire_params(fire, scenario.get("sprinklers", False))
-    if hrr_kw(params, float(scenario.get("maxTime", 600)) - float(fire.get("start", 0))) <= 0:
+    start, max_time = float(fire.get("start", 0)), float(scenario.get("maxTime", 600))
+    if hrr_kw(params, max_time - start) <= 0:
         return None
     floor = next((f for f in building["floors"] if f["id"] == fire.get("floor")), None)
     if floor is None:
         return None
     blocked = {key for key, state in scenario.get("doors", {}).items() if state == "blocked"}
+    if uses_building_routing(building, scenario):
+        with redirect_stderr(io.StringIO()):
+            walk = floor_walkable(floor, blocked, all_pieces=True)
+        reserved, clearance = flame_radius(params, start, max_time), fire_clearance(scenario)
+        return floor["id"], walk.difference(hazard_cut(walk, fire["x"], fire["y"], reserved, clearance)), reserved + clearance
     with redirect_stderr(io.StringIO()):  # run() prints these warnings itself
         walk = floor_walkable(floor, blocked) if walkable is None else walkable[floor["id"]]
         origin = fire_room(floor, fire.get("room"), fire["x"], fire["y"])
@@ -192,7 +208,8 @@ def room_cases(buildings, seed=1, agents=None, preset="kitchen", max_time=300, c
             scenario = make(f"{name}-{room['id']}", floor, room, point.x, point.y)
             cut = case_keepout(building, scenario, walkable)
             mine.append(dict(id=scenario["id"], building=name, scenario=scenario,
-                             radius=radius_label(None if cut is None else cut[2])))
+                             radius=radius_label(None if cut is None else cut[2],
+                                                 uses_building_routing(building, scenario))))
             if clicks and room.get("type") != "stair":
                 region = Polygon(room["polygon"]).intersection(walkable[floor["id"]]).buffer(-WALL_CLEARANCE)
                 click = click_point(region, np.random.default_rng([seed, k]))
@@ -229,7 +246,7 @@ def check_case(building, scenario, keepout=False):
     row = dict(id=scenario.get("id"), building=building["id"], outcome="ok", problems=[], error=None,
                **{key: None for key in ("agents", "evacuated", "trapped", "remaining", "inStairs", "t100")})
     if keepout:
-        row.update(radius=None, stuck=None)
+        row.update(radius=None, stuck=None, routing="building" if uses_building_routing(building, scenario) else "keep-out")
     try:
         result = run(building, {**BATCH_RECORDING, **scenario})
     except Exception as exc:

@@ -480,3 +480,14 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
 :root[data-contrast="high"] .playbtn, :root[data-contrast="high"] .demo, :root[data-contrast="high"] .aboutbtns button:first-child { background: #0040c0; color: #fff; }
 :root[data-contrast="high"] .cbar { background: #000; border: 1px solid #fff; }
 .aboutbtns button:first-child, .demo { color: #fff; }
+
+/* Calibration series explanations stay visible for touch and keyboard users. */
+.cal-legend { margin: 8px 0; font-size: var(--fs-sm); }
+.cal-legend > div { margin: 0 0 10px; }
+.cal-legend dt { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.cal-legend dd { margin: 3px 0 0 16px; color: var(--muted); }
+.cal-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.cal-methods { margin: 12px 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.cal-methods summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.cal-limits-note { font-size: var(--fs-sm); }
+.cred a { color: var(--primary-text); text-decoration: underline; text-underline-offset: 2px; }

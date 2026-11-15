@@ -778,7 +778,10 @@ def check_keepout(building, scenario, slow=False):
                    and np.hypot(e["x"] - point.x, e["y"] - point.y) < 2
                    for e in protected["events"])
     fid = protected["floors"].index("F1")
-    assert all(np.hypot(x - point.x, y - point.y) >= 2.5
+    # The preferred 2.5 m distance is not a hard wall. Enforce the actual
+    # flame exclusion plus required clearance, including spawn positions.
+    required = protected['routing']['fireRadius'] + protected['routing']['clearance']
+    assert all(np.hypot(x - point.x, y - point.y) >= required - 0.02
                for _, x, y, f, _ in protected["frames"][0]["a"] if f == fid)
     # Arrival clearance changes congestion and seeded trajectories. Compare
     # the intervention with its paired baseline rather than pinning one old
@@ -1477,15 +1480,18 @@ def check_sweep(building, fast, slow=False):
 
 def check_room_sweep(building, fast, slow=False):
     from unittest.mock import patch
-    from sim.sweep import (FALLBACK, case_keepout, cases_left, check_case, keepout_problems, load_buildings,
-                           radius_label, room_cases, room_report)
+    from sim.sweep import (FALLBACK, KEEPOUT_ORDER, case_keepout, cases_left, check_case, keepout_problems,
+                           load_buildings, radius_label, room_cases, room_report)
 
     buildings = load_buildings(["example"])
     cases = room_cases(buildings, agents=12)
     assert cases == room_cases(buildings, agents=12)
     assert len(cases) == 24 and len({c["id"] for c in cases}) == 24
-    assert cases[0]["id"] == "example-C1" and cases[0]["radius"] == "1.0"
-    order = ("none", "0.5", "0.75", "sealed", "1.0", "1.5", "2.5")
+    # Corridor and lobby fires use building-wide routing by default (sim/ROUTING.md): class "building", sorted last.
+    assert [c["id"] for c in cases if c["radius"] == "building"] == ["example-L1", "example-C1", "example-C2"]
+    assert cases[0]["id"] == "example-R104" and cases[0]["radius"] == "1.5"
+    order = ("none", "0.5", "0.75", "sealed", "1.0", "1.5", "2.5", "building")
+    assert KEEPOUT_ORDER == order
     assert [order.index(c["radius"]) for c in cases] == sorted(order.index(c["radius"]) for c in cases)
     for case in cases:
         scenario = case["scenario"]
@@ -1493,6 +1499,7 @@ def check_room_sweep(building, fast, slow=False):
         assert scenario["occupants"]["total"] == 12 and scenario["doors"] == {} and scenario["alarmTime"] == 30
         assert scenario["fire"]["type"] == "kitchen" and scenario["fire"]["start"] == 0
     assert radius_label(0.0) == "none" and radius_label(math.inf) == "sealed" and radius_label(0.75) == "0.75"
+    assert radius_label(2.07, True) == "building" and radius_label(0.0, True) == "none"
     # Click fires: every non-stair room, a point inside room ∩ walkable shrunk by 0.3 m, after the ordinary cases.
     clicked = room_cases(buildings, agents=12, clicks=True)
     assert clicked[:24] == cases and clicked == room_cases(buildings, agents=12, clicks=True)
@@ -1509,7 +1516,8 @@ def check_room_sweep(building, fast, slow=False):
     assert room_cases(buildings, agents=12, clicks=True, seed=2) != clicked
     # keepout_problems: rows of any status inside the removed disc are flagged, 0.1 m outside it they are not.
     by_id = {case["id"]: case for case in cases}
-    lobby = by_id["example-L1"]["scenario"]
+    # The legacy keep-out (scenario.buildingRouting false) still cuts the lobby's 2.5 m disc.
+    lobby = dict(by_id["example-L1"]["scenario"], buildingRouting=False)
     floor_id, removed, radius = case_keepout(building, lobby)
     index = [f["id"] for f in building["floors"]].index(floor_id)
     x, y = lobby["fire"]["x"], lobby["fire"]["y"]
@@ -1524,6 +1532,14 @@ def check_room_sweep(building, fast, slow=False):
         assert len(keepout_problems(building, lobby, frames((0, x, y, index, status)))) == 1
     assert keepout_problems(building, lobby, frames((0, *outside, index, 1))) == []
     assert keepout_problems(building, lobby, frames((0, x, y, 1 - index, 1))) == []
+    # The lobby's default, building routing, cuts D's largest flame footprint plus 0.35 m clearance instead: for the
+    # kitchen preset 0.5 + sqrt(1.5) + 0.35 m, so the fire's point is inside the cut and the 2.6 m row is not.
+    reserved = 0.5 + math.sqrt(1.5) + 0.35
+    routed = by_id["example-L1"]["scenario"]
+    routed_floor, routed_removed, routed_radius = case_keepout(building, routed)
+    assert routed_floor == floor_id and abs(routed_radius - reserved) < 1e-9 and routed_removed.contains(Point(x, y))
+    assert len(keepout_problems(building, routed, frames((0, x, y, index, 1)))) == 1
+    assert keepout_problems(building, routed, frames((0, *outside, index, 1))) == []
     # check_case(keepout=True) turns such a row into a failure and reports the cut's radius; the default ignores it.
     seen = dict(agents=[dict(idx=0)], events=[dict(type="exit", idx=0, t=10.0)], frames=frames((0, x, y, index, 1))["frames"],
                 metrics=dict(agents=1, evacuated=1, trapped=0, remaining=0, inStairs=0, t100=10.0))
@@ -1533,10 +1549,14 @@ def check_room_sweep(building, fast, slow=False):
         assert row["problems"][0].startswith("keep-out: agent 0"), row
         plain = check_case(building, lobby)
         assert plain["outcome"] == "ok" and "radius" not in plain and "stuck" not in plain
-    # Two real runs: the lobby's 2.5 m disc and corridor C1's 1.0 m fallback.
-    for case_id, expected in (("example-L1", 2.5), ("example-C1", 1.0)):
-        row = check_case(building, by_id[case_id]["scenario"], keepout=True)
-        assert row["outcome"] == "ok" and row["radius"] == expected and row["agents"] == 12, row
+    # Four real runs: the lobby's 2.5 m disc and corridor C1's 1.0 m fallback with the legacy keep-out, then the same
+    # fires with their default building-wide routing. Neither mode replaces the other.
+    for case_id, routing, expected in (("example-L1", False, 2.5), ("example-C1", False, 1.0),
+                                       ("example-L1", True, reserved), ("example-C1", True, reserved)):
+        scenario = by_id[case_id]["scenario"]
+        row = check_case(building, scenario if routing else dict(scenario, buildingRouting=False), keepout=True)
+        assert row["outcome"] == "ok" and abs(row["radius"] - expected) < 1e-9 and row["agents"] == 12, row
+        assert row["routing"] == ("building" if routing else "keep-out"), row
         assert row["evacuated"] + row["trapped"] == 12 and isinstance(row["stuck"], int), row
     # Resume: a report holding one finished id leaves every other case to run, in order.
     done = {"rows": [{"id": cases[3]["id"], "outcome": "ok"}]}
@@ -1557,10 +1577,13 @@ def check_room_sweep(building, fast, slow=False):
         # Repros of the causes C23 fixed: a keep-out gap of 0.3-0.4 m beside the disc wedged people (office R113a:
         # 1.5 m disc, 4 stuck events); the disc now steps down (R113a 1.5 -> 1.0 m, clinic R1D30 0.75 -> 0.5 m).
         # A hairline between the 2.5 m disc and a wall (office R201: 13 stuck events, 26 trapped; R237b: 11 stuck,
-        # 12 trapped) is now cut out of the walkable area, so both finish clean.
+        # 12 trapped) is now cut out of the walkable area, so both finish clean. These repros pin the legacy keep-out
+        # (buildingRouting false): R201 is a corridor, whose fires now default to building-wide routing. The last row
+        # runs R201 with that default (measured clean: 250 of 250 out, none stuck).
         both = load_buildings(["office", "clinic"])
         for name, room_id, expected in (("office", "R113a", 1.0), ("clinic", "R1D30", 0.5),
-                                        ("office", "R201", 2.5), ("office", "R237b", 2.5)):
+                                        ("office", "R201", 2.5), ("office", "R237b", 2.5),
+                                        ("office", "R201", "building")):
             if name not in both:
                 print(f"room sweep repro {name}/{room_id}: building missing; skipped")
                 continue
@@ -1568,9 +1591,14 @@ def check_room_sweep(building, fast, slow=False):
             floor = next(f for f in full["floors"] if any(r["id"] == room_id for r in f["rooms"]))
             one = {**full, "floors": [{**floor, "rooms": [r for r in floor["rooms"] if r["id"] == room_id]}]}
             (case,) = room_cases({name: (one, base)})
+            if expected != "building":
+                case["scenario"]["buildingRouting"] = False
             row = check_case(full, case["scenario"], keepout=True)
-            assert row["outcome"] == "ok" and row["radius"] == expected, row
-            print(f"  {case['id']}: radius {row['radius']}, {row['evacuated']}/{row['agents']} out, "
+            if expected == "building":
+                assert case["radius"] == "building" and row["routing"] == "building" and row["outcome"] == "ok", row
+            else:
+                assert row["outcome"] == "ok" and row["radius"] == expected and row["routing"] == "keep-out", row
+            print(f"  {case['id']} ({row['routing']}): radius {row['radius']}, {row['evacuated']}/{row['agents']} out, "
                   f"{row['trapped']} trapped, {row['stuck']} stuck")
     print("room sweep: cases, clicks, keep-out checks and resume OK")
 
@@ -1667,6 +1695,200 @@ def check_smoke_walk(slow=False):
     print("smoke walking-speed measurements OK")
 
 
+def check_building_routes():
+    """A bisected corridor must detour upstairs, or report no route."""
+    from shapely.geometry import box
+    from sim.safe_routes import hazard_cut, pieces
+
+    def ring(poly):
+        return list(poly.exterior.coords)[:-1]
+
+    def floor(fid, level):
+        def room(rid, kind, bounds):
+            return dict(id=rid, name=rid, type=kind, polygon=ring(box(*bounds)))
+        return dict(id=fid, level=level, elevation=level * 3.5, height=3.5,
+            walkable=[dict(outer=ring(box(-2, 0, 30, 4)), holes=[])],
+            rooms=[room('C' + fid, 'corridor', (0, 0, 30, 4)),
+                   room('E' + fid, 'office', (20, 0, 24, 4)),
+                   room('SA' + fid, 'stair', (2, 0, 5, 4)),
+                   room('SB' + fid, 'stair', (25, 0, 28, 4))],
+            doors=[dict(id='exit', width=1.2, connects=['C' + fid, 'outside'],
+                        rect=ring(box(-0.1, 1, 0.1, 2.2)), a=[0, 1], b=[0, 2.2])],
+            stairs=[dict(id='SA' + fid, room='SA' + fid, group='A', polygon=ring(box(2, 0, 5, 4))),
+                    dict(id='SB' + fid, room='SB' + fid, group='B', polygon=ring(box(25, 0, 28, 4)))],
+            exits=[dict(id='exit', door='exit', polygon=ring(box(-2, 0.2, -1, 3.8)))] if level == 0 else [])
+
+    b = dict(version='building/v0', id='fire-detour', floors=[floor('F1', 0), floor('F2', 1)])
+    sc = dict(version='scenario/v0', id='detour', seed=3, buildingId=b['id'],
+              occupants=dict(perRoom={'EF1': 12}, mix={'typical': 1}),
+              premovement={'office': [0, 0]}, alarmTime=0, maxTime=400,
+              fire=dict(floor='F1', room='CF1', x=15, y=2, type='kitchen', start=0))
+
+    class HallFire(NoFire):
+        def hrr(self, t):
+            return 1000.0
+
+        def untenable(self, fid, x, y):
+            return fid == 'F1' and math.hypot(x - 15, y - 2) < 1
+
+    result = run(b, sc, HallFire(b, sc))
+    assert result['metrics']['evacuated'] == 12, result['metrics']
+    assert result['metrics']['remaining'] == result['metrics']['inStairs'] == 0
+    for agent in result['agents']:
+        flights = [e for e in result['events'] if e['type'] == 'stair' and e['idx'] == agent['idx']]
+        assert [(e['floor'], e['to'], e['group']) for e in flights] == [('F1', 'F2', 'B'), ('F2', 'F1', 'A')], flights
+        assert flights[0]['arrive'] - flights[0]['enter'] > flights[1]['arrive'] - flights[1]['enter']
+    assert all(math.hypot(x - 15, y - 2) >= 2.8 for fr in result['frames']
+               for _, x, y, fi, _ in fr['a'] if fi == 0)
+    assert len({fr['t'] for fr in result['frames']}) == len(result['frames'])
+    assert result['events'] == run(b, sc, HallFire(b, sc))['events']
+    # Model decisions cannot bypass the same feasible-route filter.
+    llm_sc = {**sc, 'brain': 'llm'}
+    llm_result = run(b, llm_sc, HallFire(b, llm_sc))
+    assert llm_result['metrics']['evacuated'] == 12, llm_result['metrics']
+    isolated = deepcopy(b)
+    isolated['floors'] = isolated['floors'][:1]
+    lost = run(isolated, sc, HallFire(isolated, sc))
+    assert lost['metrics']['trapped'] == 12 and lost['metrics']['evacuated'] == 0
+    assert all(e['reason'] == 'no route' for e in lost['events'] if e['type'] == 'trapped')
+    # A same-floor bypass is also a complete route, without changing exits.
+    bypass = deepcopy(isolated)
+    f = bypass['floors'][0]
+    from shapely.ops import unary_union
+    loop = unary_union([box(-2, 0, 30, 4), box(0, 0, 4, 9), box(26, 0, 30, 9), box(0, 6, 30, 9)])
+    f['walkable'] = [dict(outer=ring(loop), holes=[list(h.coords)[:-1] for h in loop.interiors])]
+    f['stairs'] = []
+    around = run(bypass, sc, HallFire(bypass, sc))
+    assert around['metrics']['evacuated'] == 12, around['metrics']
+    assert not any(e['type'] == 'stair' for e in around['events'])
+    assert any(y > 6 for fr in around['frames'] for _, _, y, _, _ in fr['a'])
+    blocked = {**sc, 'doors': {'exit': 'blocked'}}
+    closed = run(b, blocked, HallFire(b, blocked))
+    assert closed['metrics']['trapped'] == 12 and closed['metrics']['evacuated'] == 0
+    # A smaller disc with a slit cannot leave a point-sized shortcut.
+    walk = box(0, 0, 20, 4)
+    cut = hazard_cut(walk, 10, 2, 1.5)
+    assert len(pieces(cut)) == 2
+    net = StairNet(b, bidirectional=True)
+    rng = np.random.default_rng(4)
+    down = net.enter(0, 0, 'F2', 'A', rng, to='F1')
+    up = net.enter(1, 0, 'F1', 'A', rng, to='F2')
+    assert up['enter'] >= down['arrive'], (down, up)
+    print('building routes OK: upstairs crossover, no unsafe gap, no-route outcome, opposing stair flow')
+
+
+def check_spread_regions():
+    """D25 spread with building routing: a hallway fire splits the floor into two regions, and the rooms that catch
+    fire close their doors and trap the people inside them in both regions; the ignition room traps nobody."""
+    from shapely.geometry import box
+    from sim.safe_routes import hazard_cut, pieces
+
+    def ring(x0, y0, x1, y1):
+        return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+    def door(door_id, rooms, rect):
+        return dict(id=door_id, width=1.0, connects=rooms, rect=ring(*rect))
+
+    hall = box(-2, 0, 32, 4).union(box(2, 4, 8, 10)).union(box(22, 4, 28, 10))
+    floor = dict(id='F1', level=0, elevation=0, height=3, walkable=[dict(outer=list(hall.exterior.coords)[:-1], holes=[])],
+                 rooms=[dict(id='C', name='Hall', type='corridor', polygon=ring(0, 0, 30, 4)),
+                        dict(id='W', name='West office', type='office', polygon=ring(2, 4, 8, 10)),
+                        dict(id='E', name='East office', type='office', polygon=ring(22, 4, 28, 10))],
+                 doors=[door('DW', ['W', 'C'], (4, 3.9, 6, 4.1)), door('DE', ['E', 'C'], (24, 3.9, 26, 4.1)),
+                        door('XW', ['C', 'outside'], (-0.1, 1, 0.1, 3)), door('XE', ['C', 'outside'], (29.9, 1, 30.1, 3))],
+                 stairs=[], exits=[dict(id='west', door='XW', polygon=ring(-2, 0.2, -1, 3.8)),
+                                   dict(id='east', door='XE', polygon=ring(31, 0.2, 32, 3.8))])
+    b = dict(version='building/v0', id='spread-regions', floors=[floor])
+    sc = dict(version='scenario/v0', id='spread-regions', seed=1, buildingId=b['id'], alarmTime=1000, maxTime=30,
+              occupants=dict(perRoom={'W': 2, 'E': 2, 'C': 1}, mix={'typical': 1}),
+              fire=dict(floor='F1', room='C', x=15, y=2, type='kitchen', start=0))
+    schedule = [dict(room='C', floor='F1', ignite=0.0), dict(room='W', floor='F1', ignite=20.0),
+                dict(room='E', floor='F1', ignite=20.0)]
+
+    class SpreadingHall(NoFire):
+        t = 0.0
+
+        def step(self, t):
+            self.t = t
+
+        def hrr(self, t):
+            return 1000.0
+
+        def untenable(self, fid, x, y):
+            return math.hypot(x - 15, y - 2) < 1
+
+        def blocked_doors(self):
+            return {'DW', 'DE'} if self.t >= 20 else set()
+
+        def burning_rooms(self, t):
+            return {(e['floor'], e['room']) for e in schedule if e['ignite'] <= t}
+
+        def ignition_times(self):
+            return [dict(e) for e in schedule]
+
+    # NoFire has no flame footprint, so the hard fallback radius (fireKeepout 2.5 m) plus 0.35 m splits the 4 m hall.
+    assert len(pieces(hazard_cut(floor_walkable(floor, all_pieces=True), 15, 2, 2.5, 0.35))) == 2
+    result = run(b, sc, SpreadingHall(b, sc))
+    assert result['routing']['mode'] == 'building', result.get('routing')
+    rooms = {a['idx']: a['room'] for a in result['agents']}
+    traps = [e for e in result['events'] if e['type'] == 'trapped']
+    assert sorted(rooms[e['idx']] for e in traps) == ['E', 'E', 'W', 'W'], traps
+    assert all(e['reason'] == 'burning room' and e['t'] == 20.0 for e in traps), traps
+    assert all((e['x'] < 15) == (rooms[e['idx']] == 'W') for e in traps), traps
+    blocks = sorted((e['door'], e['t']) for e in result['events'] if e['type'] == 'door_blocked')
+    assert blocks == [('DE', 20.0), ('DW', 20.0)], blocks
+    # The hall's own occupant sees the fire, starts on that cue and leaves: the ignition room is not a burning room.
+    assert [rooms[e['idx']] for e in result['events'] if e['type'] == 'exit'] == ['C'], result['events']
+    assert result['metrics']['trapped'] == 4 and result['metrics']['remaining'] == 0, result['metrics']
+    print('spread regions OK: burning rooms trap people in both regions of a split floor; the hall traps nobody')
+
+
+def check_fire_retreat(building, scenario):
+    """Keep a room's usable retreat while rejecting point-only door gaps."""
+    from sim.safe_routes import hazard_cut, pieces, path_length, proximity_cost
+    from sim.brain import option_cost
+    from fire.model import FOOT_BASE_M, FOOT_PER_SQRT_MW_M, Q_REF_KW
+    from shapely.geometry import LineString
+    floor = building['floors'][0]
+    walk = floor_walkable(floor)
+    x, y = 18.91, 8.07
+    footprint = FOOT_BASE_M + FOOT_PER_SQRT_MW_M * math.sqrt(1500 / Q_REF_KW)
+    safe = hazard_cut(walk, x, y, footprint)
+    doorway = LineString([(16, 9.5), (17, 9.5)])
+    assert safe.intersection(doorway).length > 0.99
+    room_point = Point(16, 11)
+    region = next(p for p in pieces(safe) if p.covers(room_point))
+    stairs = [Polygon(st['polygon']) for st in floor['stairs'] if region.intersects(Polygon(st['polygon']))]
+    assert stairs, 'R106 must be able to retreat toward a stair'
+    goal = stairs[0].intersection(region).representative_point()
+    assert math.isfinite(path_length(region, (16, 11), (goal.x, goal.y)))
+    # The original 2.5 m hard circle leaves a point-sized doorway slit.
+    # Restoring its eroded geometry must not reconnect that isolated room.
+    large = hazard_cut(walk, x, y, 2.5)
+    isolated = next(p for p in pieces(large) if p.covers(room_point))
+    assert not any(isolated.intersects(Polygon(st['polygon'])) for st in floor['stairs'])
+    assert len(pieces(isolated.buffer(-0.2))) == 1
+    assert isolated.minimum_clearance > 1e-6
+    zone = Point(0, 0).buffer(2.5)
+    assert proximity_cost([(3, 0), (4, 0)], zone, 1) == 0
+    cost = proximity_cost([(0, 0), (1, 0)], zone, 1)
+    assert cost == 2 and option_cost({'firePenalty': cost}, 1) == cost
+    sc = deepcopy(scenario)
+    sc['fire'].update(floor='F1', room='C1', x=x, y=y)
+    sc['occupants'] = {'perRoom': {'R106': 13}, 'mix': {'typical': 1}}
+    sc['maxTime'] = 400
+    result = run(building, sc)
+    assert result['metrics']['evacuated'] == 13, result['metrics']
+    assert result['metrics']['trapped'] == result['metrics']['remaining'] == 0
+    assert {e['idx'] for e in result['events'] if e['type'] == 'stair' and e['floor'] == 'F1'} == set(range(13))
+    assert abs(result['routing']['fireRadius'] - footprint) < 1e-9
+    assert result['routing']['clearance'] == 0.35  # not overwritten by stair arrivals
+    assert result['routing']['preferredFireDistance'] == 2.5
+    assert all(math.hypot(px - x, py - y) >= footprint + .35 - .02
+               for fr in result['frames'] for _, px, py, fi, _ in fr['a'] if fi == 0)
+    print('fire retreat OK: R106 exits via stairs; body-sized connectivity and clearance metadata')
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slow", action="store_true",
@@ -1684,11 +1906,14 @@ def main(argv=None) -> int:
     timed("smoke walk", check_smoke_walk)
     timed("brain", check_brain)
     timed("floors", check_floors)
+    timed("building routes", check_building_routes)
+    timed("spread regions", check_spread_regions)
     timed("watch and geometry", check_watch_and_geometry)
     building = load_building()
     scenario = json.loads((ROOT / "contracts" / "scenario.example.json").read_text(encoding="utf-8"))
     scenario["maxTime"] = 900
     fast = fast_scenario(scenario)
+    timed("fire retreat", check_fire_retreat, building, fast)
     timed("fast sweep", check_sweep, building, fast)
     timed("fast room sweep", check_room_sweep, building, fast)
     timed("fast seeds", check_seeds, building, fast)
