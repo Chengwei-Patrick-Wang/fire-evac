@@ -11,6 +11,7 @@ import { classifyWalls, floorAlpha, toWorld } from './geometry'
 import type { Segment } from './geometry'
 import { usePlace } from './usePlace'
 import { floorName } from '../model/floors'
+import { useSceneBuilding } from './sceneBuilding'
 
 const WALL_T = 0.15
 /** Interior walls are a cutaway: low enough to see people and rooms over them from the isometric camera. */
@@ -224,7 +225,7 @@ function Floor({ floor, order }: { floor: BuildingFloor; order: number }) {
     if (g.scale.y !== y) g.scale.y = y
   })
   const place = usePlace()
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const viewMode = useApp((s) => s.viewMode)
   const focusFloor = useApp((s) => s.focusFloor)
   const labels = useApp((s) => s.layers.labels)
@@ -304,7 +305,7 @@ function Floor({ floor, order }: { floor: BuildingFloor; order: number }) {
 }
 
 export default function Building() {
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const visible = useApp((s) => s.visibleFloors)
   if (!building) return null
   return (

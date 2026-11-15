@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { useApp } from '../store/app'
+import { sideDraft, useApp } from '../store/app'
+import type { Side } from '../store/app'
 import { fromPercent, insidePoint, roomAt, toPercent } from '../model/scenarioDraft'
 import { DEFAULT_MATERIAL, MATERIALS } from '../model/fireSpread'
 import { CROWDS, CROWD_NOTE, DEFAULT_BRAIN, claudeCrowdLimit, crowdOf, crowdTooBig } from '../model/brain'
@@ -8,6 +9,7 @@ import { FIRE_GROWTHS, FIRE_SIZES, fireGrowthOf, fireSizeOf, withFireGrowth, wit
 import type { FireGrowthId, FireSizeId } from '../model/fireSetup'
 import { floorName } from '../model/floors'
 import PairCompare, { usePairs } from './PairCompare'
+import SideRunPicker from './SideRunPicker'
 import type { Material, Profile } from '../data/types'
 
 /** The people the card lets you mix, in plain words. The scenario keeps their shares as fractions of 1; the card shows percent. */
@@ -17,8 +19,19 @@ const MIX: { id: Profile; label: string }[] = [
   { id: 'visitor', label: "Visitors (don't know the building)" },
 ]
 
-export default function ScenarioPanel() {
-  const { draft, building, patchDraft, placing, setPlacing, running, runError, runNote, runFallback, runScenario, mode, material, setMaterial } = useApp()
+/**
+ * The Fire and scenario settings. In the split view `side` says which pane they are for: the left is the loaded building's scenario, the
+ * right has its own (and its own building, material and run). Without a side it is the one scenario of the single view.
+ */
+export default function ScenarioPanel({ side }: { side?: Side }) {
+  const app = useApp()
+  const { placing, setPlacing, running, runError, runNote, runFallback, runScenario, mode } = app
+  const right = side === 'R'
+  const draft = side ? sideDraft(app, side) : app.draft
+  const building = right ? app.rightBuilding ?? app.building : app.building
+  const patchDraft = right ? app.patchRightDraft : app.patchDraft
+  const material = right ? app.rightMaterial : app.material
+  const setMaterial = right ? app.setRightMaterial : app.setMaterial
   // The precomputed comparisons of this building (each shows under its own setting, and only when the demo index has the pair).
   const pairs = usePairs()
   // A card that opens on a draft with no fire yet starts placing: the first click on a room puts the fire there.
@@ -46,8 +59,11 @@ export default function ScenarioPanel() {
   const mixTotal = MIX.reduce((n, p) => n + toPercent(draft.occupants.mix[p.id]), 0)
   const num = (v: string, d: number) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d)
 
+  // The precomputed comparisons load a pair of the loaded building's runs into both panes: they are for the left, or a right side on the same building.
+  const pairsHere = !(right && app.rightBuilding)
   return (
     <div className="scenario">
+      {side && <SideRunPicker side={side} />}
       <label>
         Fire size
         <select value={fireSizeOf(fire)} aria-describedby="sc-hint-size" onChange={(e) => patchDraft({ fire: withFireSize(fire, e.target.value as FireSizeId) })}>
@@ -129,7 +145,7 @@ export default function ScenarioPanel() {
           Material needs the live backend. In static mode, the comparison below shows the precomputed wood and drywall pair where a building has one.
         </p>
       )}
-      {pairs.material && <PairCompare kind="material" fire={pairs.material.wood.fire} label="Compare wood with drywall" />}
+      {pairsHere && pairs.material && <PairCompare kind="material" fire={pairs.material.wood.fire} label="Compare wood with drywall" />}
       <label>
         Crowd
         <select value={crowd} disabled={!live} aria-describedby="sc-hint-crowd" onChange={(e) => patchDraft({ brain: e.target.value as Brain })}>
@@ -152,7 +168,7 @@ export default function ScenarioPanel() {
           {claudeCrowdLimit(draft.occupants.total)}
         </p>
       )}
-      {pairs.claude && <PairCompare kind="brain" fire={pairs.claude.claude.fire} label="Compare rules with Claude crowd" />}
+      {pairsHere && pairs.claude && <PairCompare kind="brain" fire={pairs.claude.claude.fire} label="Compare rules with Claude crowd" />}
       <label>
         People in the building
         <input
@@ -210,8 +226,8 @@ export default function ScenarioPanel() {
         />
       </label>
       <p className="dim hint" id="sc-hint-alarm">Seconds after the fire starts.</p>
-      <button className="run" disabled={!!running || tooMany} aria-describedby={tooMany ? 'crowd-limit' : undefined} onClick={() => void runScenario(draft)}>
-        {running ?? 'Run'}
+      <button className="run" disabled={!!running || tooMany} aria-describedby={tooMany ? 'crowd-limit' : undefined} onClick={() => void (side ? app.runSide(side) : runScenario(draft))}>
+        {running ?? (side ? `Run ${side === 'L' ? 'left' : 'right'} side` : 'Run')}
       </button>
       {runError && <p className="err">{runError}</p>}
       {runNote && (

@@ -10,6 +10,7 @@ import { usePlace } from '../scene/usePlace'
 import { nearestIndex } from './runIndex'
 import { smokeNoise } from './fx/smokeNoise'
 import type { SmokeLayer } from '../data/types'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 /** After the floor marks and burning-room tints, before the flames (3). */
 const SMOKE_ORDER = 2
@@ -69,7 +70,7 @@ function grayTexture(cols: number, rows: number, data: Uint8Array): THREE.DataTe
  * the density times the smoke opacity setting (and the ghost view's share for a faint floor).
  */
 function CeilingSmoke({ layer, runKey }: { layer: SmokeLayer; runKey: string }) {
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const visible = useApp((s) => s.visibleFloors)
   const place = usePlace()
   const floor = building?.floors.find((f) => f.id === layer.floor)

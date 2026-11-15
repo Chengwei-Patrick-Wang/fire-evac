@@ -5,8 +5,8 @@ import type { Mode } from '../data/loader'
 import { buildRunIndex } from '../replay/runIndex'
 import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
-import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
-import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
+import { ApiError, listDemoRuns, loadBatch, loadBuilding, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
+import { defaultFire, makeDraft, nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
 import { spotPosition } from '../model/spots'
 import type { HeadlinePack } from '../model/headlines'
 import { DEFAULT_MATERIAL, materialName, materialPair } from '../model/fireSpread'
@@ -41,6 +41,23 @@ export type View = 'replay' | 'tracer'
 export type ResultsTab = 'results' | 'risk' | 'report'
 /** The floating card open over the viewer, if any (one at a time). */
 export type Card = 'scenario' | 'layers' | 'visibility' | null
+/** The two panes of the split view. */
+export type Side = 'L' | 'R'
+
+/** The run each pane of the split view shows: a side's own pick, else the left is the baseline of the active run and the right is the active run. */
+export function splitKeys(s: Pick<AppState, 'runs' | 'runOrder' | 'activeRunKey' | 'splitLeft' | 'splitRight'>): { left: string | null; right: string | null } {
+  const active = s.activeRunKey
+  const right = s.splitRight && s.runs[s.splitRight] ? s.splitRight : active
+  const base = active ? s.runs[active]?.whatIf?.baselineKey ?? s.runOrder.find((k) => k !== active) : undefined
+  const derived = right === active ? base : active
+  const left = s.splitLeft && s.runs[s.splitLeft] && s.splitLeft !== right ? s.splitLeft : derived
+  return { left: left ?? null, right: right ?? null }
+}
+
+/** The scenario a side edits: the left is the loaded building's, the right has its own once it is edited (until then it starts from the left's). */
+export function sideDraft(s: Pick<AppState, 'draft' | 'rightDraft'>, side: Side | null | undefined): Scenario | null {
+  return side === 'R' ? s.rightDraft ?? s.draft : s.draft
+}
 
 /** Phones (900 px and under) start with the analytics sidebar collapsed, so it doesn't cover the 3D view. */
 const phoneAtStart = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 900px)').matches
@@ -92,6 +109,27 @@ interface AppState {
   layers: Layers
   topView: number
   split: boolean
+  /** The split view's own pick of what each pane shows (null: derived from the active run, see splitKeys). */
+  splitLeft: string | null
+  splitRight: string | null
+  /** The building the right pane draws when it is not the loaded one. Its run is kept out of `runOrder`, so the analytics stay on the loaded building. */
+  rightBuilding: Building | null
+  /** The right side's scenario (null until edited: it starts from the left's) and building material; the left side's are `draft` and `material`. */
+  rightDraft: Scenario | null
+  rightMaterial: Material
+  setRightMaterial: (m: Material) => void
+  patchRightDraft: (p: Partial<Scenario>) => void
+  /** The pane the Fire and scenario card edits while the view is split (null: the left). */
+  editSide: Side | null
+  editSideOpen: (side: Side) => void
+  /** Puts the right pane on another building, with that building's first precomputed run (the loaded building's id puts it back on it). */
+  setRightBuilding: (id: string) => Promise<void>
+  /** Shows one precomputed run on a side (loading it first). */
+  pickSideRun: (side: Side, entry: DemoRun) => Promise<void>
+  /** Runs a side's scenario: live runs it on the side's building, static shows the nearest precomputed run of it. */
+  runSide: (side: Side) => Promise<void>
+  /** Adds a run kept out of the loaded building's run list and shows it on a side; `building` (the right side's) is set with it. */
+  addSideRun: (r: Omit<LoadedRun, 'index'>, side: Side, building?: Building) => void
   draft: Scenario | null
   placing: boolean
   running: string | null
@@ -138,7 +176,7 @@ interface AppState {
   setDraft: (d: Scenario | null) => void
   patchDraft: (p: Partial<Scenario>) => void
   setPlacing: (b: boolean) => void
-  runScenario: (s: Scenario) => Promise<void>
+  runScenario: (s: Scenario, opts?: { side?: Side; building?: Building }) => Promise<void>
   /** Set while a comparison's two precomputed runs load (showMaterialPair, showBrainPair), and the error when they do not. */
   pairBusy: string | null
   pairError: string | null
@@ -201,6 +239,19 @@ export const useApp = create<AppState>((set) => ({
   layers: { rooms: false, labels: true, smoke: true, fire: true, heatmap: false, queues: true, risk: false },
   topView: 0,
   split: false,
+  splitLeft: null,
+  splitRight: null,
+  rightBuilding: null,
+  rightDraft: null,
+  rightMaterial: DEFAULT_MATERIAL,
+  setRightMaterial: (rightMaterial) => set({ rightMaterial }),
+  patchRightDraft: (p) =>
+    set((s) => {
+      const d = s.rightDraft ?? s.draft
+      return d ? { rightDraft: { ...(s.rightDraft ? d : (JSON.parse(JSON.stringify(d)) as Scenario)), ...p } } : {}
+    }),
+  editSide: null,
+  editSideOpen: (editSide) => set({ editSide, card: 'scenario', placing: false }),
   draft: null,
   placing: false,
   running: null,
@@ -274,9 +325,14 @@ export const useApp = create<AppState>((set) => ({
   setDraft: (draft) => set(draft && !draft.fire.floor ? { draft, placing: true } : { draft }),
   patchDraft: (p) => set((s) => (s.draft ? { draft: { ...s.draft, ...p } } : {})),
   setPlacing: (placing) => set({ placing }),
-  runScenario: async (scenario) => {
+  runScenario: async (scenario, opts) => {
     const st = useApp.getState()
-    const b = st.building
+    const side = opts?.side
+    // The right pane can be on another building: its run is made on that one and kept out of the loaded building's runs. (`opts.building` is a
+    // building the right pane is about to move to, with no saved run: it moves there when this first run lands.)
+    const other = side === 'R' ? opts?.building ?? st.rightBuilding : null
+    const adopting = !!opts?.building
+    const b = other ?? st.building
     if (!b || st.running) return
     // Who decides for the crowd rides in the scenario's `brain`. Only a live run asks Claude: static mode shows a precomputed run of the rules.
     const brain = crowdOf(scenario.brain)
@@ -288,28 +344,41 @@ export const useApp = create<AppState>((set) => ({
       return
     }
     set({ running: live ? runStatus(brain, total) : 'Running…', runError: null, runNote: null, runFallback: false })
-    // The material setting rides in the scenario's fire (illustrative spread speed); only the live backend reads it.
-    const material = st.material
+    // The material setting rides in the scenario's fire (illustrative spread speed); only the live backend reads it. Each side has its own.
+    const material = side === 'R' ? st.rightMaterial : st.material
     const sc: Scenario = { ...scenario, buildingId: b.id, occupants: { ...scenario.occupants, mix: normalizeMix(scenario.occupants.mix) }, fire: { ...scenario.fire, material } }
+    const before = splitKeys(st)
+    /** The side's building is still the one this run was made for (a late answer must not land on another building). */
+    const here = () => (adopting ? useApp.getState().building?.id === st.building?.id : other ? useApp.getState().rightBuilding?.id === b.id : useApp.getState().building?.id === b.id)
+    /** Adds a run, or shows the one already loaded; on a side, that pane shows it and the other keeps what it showed. */
+    const put = (r: Omit<LoadedRun, 'index'>) => {
+      const app = useApp.getState()
+      if (app.runs[r.key]) {
+        if (!other) app.switchRun(r.key)
+      } else if (other) app.addSideRun(r, 'R', adopting ? other : undefined)
+      else app.addRun(r)
+      if (side === 'L') useApp.setState({ splitLeft: r.key, splitRight: before.right })
+      else if (side === 'R') useApp.setState({ splitRight: r.key, splitLeft: before.left })
+    }
     // The precomputed run nearest this fire (static mode's rule), loaded, made active and explained in runNote. False when the building
     // has none, or when it is no longer the loaded building (a late fallback must not add its run to another one).
     const showNearest = async (afterLiveFailure: boolean): Promise<boolean> => {
       const hit = nearestPrecomputedRun(await listDemoRuns(b.id), sc.fire)
-      if (!hit || useApp.getState().building?.id !== b.id) return false
+      if (!hit || !here()) return false
       const { entry, distance } = hit
       if (!useApp.getState().runs[entry.id]) {
         const run = await loadDemoRun(entry)
-        if (useApp.getState().building?.id !== b.id) return false
-        useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {} })
-      } else useApp.getState().switchRun(entry.id)
-      const here = sc.fire.x !== undefined ? `, ${distance.toFixed(1)} m from your click` : ''
+        if (!here()) return false
+        put({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {} })
+      } else put({ key: entry.id, label: entry.label, run: useApp.getState().runs[entry.id].run, doors: entry.doors ?? {} })
+      const place = sc.fire.x !== undefined ? `, ${distance.toFixed(1)} m from your click` : ''
       // Precomputed runs of the rules are what is shown: say so when the scenario asked for Claude.
       const crowd = brain === 'rules' ? '' : ' That run uses the rules crowd, not Claude.'
       set({
         runFallback: afterLiveFailure,
         runNote: afterLiveFailure
           ? `Live run unavailable: showing the nearest precomputed fire (room ${entry.fire.room}).${crowd}`
-          : `Static mode: nearest precomputed run, fire in ${entry.fire.room}${here}${crowd}`,
+          : `Static mode: nearest precomputed run, fire in ${entry.fire.room}${place}${crowd}`,
       })
       return true
     }
@@ -324,8 +393,16 @@ export const useApp = create<AppState>((set) => ({
           const runId = await startRun(sc)
           // A Claude crowd waits on a model for its decisions, so it is waited for longer (fifteen minutes against three).
           const run = await pollRun(runId, (el) => set({ running: runStatus(brain, total, el) }), runWaitS(brain))
+          if (!here()) return
           const how = material === DEFAULT_MATERIAL ? '' : ` · ${materialName(material)}`
-          useApp.getState().addRun({ key: id, label: runLabel(`Your run ${id.slice(3, 7)}${how}`, brain), run, doors: sc.doors ?? {}, scenario: sc })
+          const on = other ? ` · ${b.name}` : ''
+          const lr: Omit<LoadedRun, 'index'> = { key: id, label: runLabel(`Your run ${id.slice(3, 7)}${on}${how}`, brain), run, doors: sc.doors ?? {}, scenario: sc }
+          if (other) useApp.getState().addSideRun(lr, 'R', adopting ? other : undefined)
+          else {
+            useApp.getState().addRun(lr)
+            if (side === 'L') useApp.setState({ splitLeft: id, splitRight: before.right })
+            else if (side === 'R') useApp.setState({ splitRight: id, splitLeft: before.left })
+          }
           return
         } catch (e) {
           // Spec §8 beat 3: the judge's fire "runs live, or loads the nearest precomputed run". Whatever went wrong (no backend, an HTTP
@@ -348,6 +425,87 @@ export const useApp = create<AppState>((set) => ({
       set({ running: null })
     }
   },
+  runSide: async (side) => {
+    const st = useApp.getState()
+    const d = sideDraft(st, side)
+    if (d) await st.runScenario(d, { side })
+  },
+  addSideRun: (r, side, building) =>
+    set((s) => {
+      const index = buildRunIndex(r.run)
+      r.run.frames = [] // free the parsed frames; the typed arrays hold them now
+      return { runs: { ...s.runs, [r.key]: { ...r, index } }, ...(side === 'R' ? { splitRight: r.key, ...(building ? { rightBuilding: building } : {}) } : { splitLeft: r.key }) }
+    }),
+  pickSideRun: async (side, entry) => {
+    const st = useApp.getState()
+    const other = side === 'R' ? st.rightBuilding : null
+    const b = other ?? st.building
+    if (!b || entry.buildingId !== b.id) return
+    const before = splitKeys(st)
+    const prevT = useClock.getState().t
+    const prevActive = st.activeRunKey
+    const here = () => (other ? useApp.getState().rightBuilding?.id === b.id : useApp.getState().building?.id === b.id)
+    try {
+      if (!useApp.getState().runs[entry.id]) {
+        const run = await loadDemoRun(entry)
+        if (!here()) return
+        const lr = { key: entry.id, label: runLabel(entry.label, entry.brain), run, doors: entry.doors ?? {} }
+        if (other) useApp.getState().addSideRun(lr, 'R')
+        else useApp.getState().addRun(lr)
+      }
+      if (side === 'R') {
+        useApp.setState({ splitRight: entry.id, splitLeft: before.left })
+        if (!other) useApp.getState().switchRun(entry.id)
+      } else {
+        useApp.setState({ splitLeft: entry.id, splitRight: before.right, activeRunKey: prevActive ?? entry.id })
+      }
+      useClock.getState().seek(prevT)
+    } catch (e) {
+      useApp.setState({ runError: e instanceof Error ? e.message : String(e) })
+    }
+  },
+  setRightBuilding: async (id) => {
+    const st = useApp.getState()
+    const left = st.building
+    if (!left || st.pairBusy) return
+    useApp.setState({ pairBusy: 'Loading building…', pairError: null })
+    try {
+      const before = splitKeys(st)
+      if (id === left.id) {
+        // Back on the loaded building: a precomputed run of it other than the left one.
+        const entries = (await listDemoRuns(left.id)).filter((e) => e.whatIf !== 'propped' && e.id !== before.left)
+        const entry = entries.find((e) => e.whatIf === null) ?? entries[0]
+        if (!entry) throw new ApiError('No other precomputed run for this building')
+        useApp.setState({ rightBuilding: null, rightDraft: null })
+        await useApp.getState().pickSideRun('R', entry)
+        return
+      }
+      const b = await loadBuilding(id)
+      const entries = (await listDemoRuns(id)).filter((e) => e.whatIf !== 'propped')
+      const entry = entries.find((e) => e.whatIf === null) ?? entries[0]
+      if (!entry) {
+        // No saved run for this building: static mode has nothing to show, live mode makes the first run now, from the building's own fire
+        // (or the default one), and the right pane moves to the building when it lands.
+        if (st.mode !== 'live') throw new ApiError(`${b.name} has no saved run yet. Live mode can run one.`)
+        const batch = await loadBatch(id).catch(() => null)
+        const draft = makeDraft(b, batch && batch.buildingId === id ? batch.base : null)
+        if (!draft.fire.floor) draft.fire = defaultFire(b) ?? draft.fire
+        useApp.setState({ rightDraft: draft, splitLeft: before.left, pairBusy: null })
+        await useApp.getState().runScenario(draft, { side: 'R', building: b })
+        return
+      }
+      const [run, batch] = await Promise.all([useApp.getState().runs[entry.id] ? null : loadDemoRun(entry), loadBatch(id).catch(() => null)])
+      if (useApp.getState().building?.id !== left.id) return
+      useApp.setState({ rightBuilding: b, rightDraft: makeDraft(b, batch && batch.buildingId === id ? batch.base : null) })
+      if (run) useApp.getState().addSideRun({ key: entry.id, label: runLabel(entry.label, entry.brain), run, doors: entry.doors ?? {} }, 'R')
+      else useApp.setState({ splitRight: entry.id })
+      useApp.setState({ splitLeft: before.left })
+    } catch (e) {
+      useApp.setState({ pairError: e instanceof Error ? e.message : String(e) })
+    } finally {
+      useApp.setState({ pairBusy: null })
+    }
+  },
   showMaterialPair: () =>
     showPair('No precomputed wood and drywall pair for this building', (entries, id) => {
       const pair = materialPair(entries, id)
@@ -363,7 +521,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, placing: false, fromTracer: null, runNote: null, runFallback: false, runError: null, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, placing: false, fromTracer: null, runNote: null, runFallback: false, runError: null, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [], splitLeft: null, splitRight: null, rightBuilding: null, rightDraft: null, editSide: null })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
@@ -419,7 +577,7 @@ async function showPair(
     // Both panes share one clock, as long as the longer run: keep the time the page was at.
     useClock.setState({ duration: Math.max(runs[pair.base.id].index.duration, runs[pair.variant.id].index.duration) })
     useClock.getState().seek(prev)
-    useApp.setState({ split: true, compareKeys: [pair.base.id, pair.variant.id] })
+    useApp.setState({ split: true, compareKeys: [pair.base.id, pair.variant.id], splitLeft: null, splitRight: null, rightBuilding: null, rightDraft: null })
   } catch (e) {
     useApp.setState({ pairError: e instanceof Error ? e.message : String(e) })
   } finally {

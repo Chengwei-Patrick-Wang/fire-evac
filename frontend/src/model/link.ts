@@ -95,6 +95,8 @@ export function decodeLink(hash: string): LinkState | null {
 
 /** Live camera pose, overwritten in place by CameraRig. */
 export const cameraPose = { p: [0, 0, 0], t: [0, 0, 0] }
+/** The same for each pane of the split view, by side (the link carries no camera while the view is split; the QA reads these). */
+export const panePoses: Record<string, { p: number[]; t: number[] }> = {}
 
 /** True from decoding a link until restoreLink returns. */
 export const linkCtl = { restoring: false }

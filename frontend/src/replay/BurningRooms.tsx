@@ -12,6 +12,7 @@ import type { FlameSource } from './fx/FlameSprites'
 import { readHeat } from './fx/heat'
 import type { Spread } from '../model/fireSpread'
 import type { Building, BuildingFloor, Run, Vec2 } from '../data/types'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 /**
  * What the replay draws of the spread right now, for the qa step: `burning` is the rooms of `fire.rooms` with `ignite <= t`, `drawn`
@@ -121,7 +122,7 @@ function Tints({ spread, run, building, runKey }: { spread: Spread; run: Run; bu
 export default function BurningRooms({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)
   const on = useApp((s) => s.layers.fire)
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const key = runKey ?? activeKey
   const lr = useApp((s) => (key ? s.runs[key] : undefined))
   const spread = useMemo(() => readSpread(lr?.run), [lr])

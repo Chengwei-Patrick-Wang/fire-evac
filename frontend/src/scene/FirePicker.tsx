@@ -1,24 +1,31 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
-import { useApp } from '../store/app'
+import { sideDraft, useApp } from '../store/app'
+import type { Side } from '../store/app'
 import { buildingBounds, floorAlpha, fromPlaced, toPlaced } from './geometry'
 import { usePlace } from './usePlace'
 import { roomAt } from '../model/scenarioDraft'
+import { useSceneBuilding } from './sceneBuilding'
 
-export default function FirePicker() {
-  const building = useApp((s) => s.building)
+/**
+ * Picks the fire's room by a click on a floor, and marks where the scenario's fire is. In the split view each pane has one, for its own side:
+ * it is on only while that side's Fire and scenario card is placing a fire (and marks the spot only while that card is open).
+ */
+export default function FirePicker({ side }: { side?: Side }) {
+  const building = useSceneBuilding()
   const visible = useApp((s) => s.visibleFloors)
   const viewMode = useApp((s) => s.viewMode)
   const focusFloor = useApp((s) => s.focusFloor)
   const place = usePlace()
   const placing = useApp((s) => s.placing)
   const risk = useApp((s) => s.layers.risk)
-  const draft = useApp((s) => s.draft)
+  const draft = useApp((s) => sideDraft(s, side))
+  const editing = useApp((s) => s.card === 'scenario' && (s.editSide ?? 'L') === side)
   // One pick plane per floor, as big as that floor (not the whole building): a plane that reaches past its floor would catch the clicks
   // meant for the floor below it, whose front part shows from under the one above.
   const bounds = useMemo(() => (building ? new Map(building.floors.map((f) => [f.id, buildingBounds(building, [f.id])])) : null), [building])
   if (!building || !bounds) return null
-  const enabled = placing && !risk
+  const enabled = placing && !risk && (!side || editing)
   const f = draft?.fire
   const ghostFloor = building.floors.find((x) => x.id === f?.floor)
 
@@ -42,11 +49,12 @@ export default function FirePicker() {
                   const room = roomAt(building, fl.id, x, y)
                   if (!room) return st.setNotice('Click inside a room')
                   st.setNotice(null)
-                  const d = st.draft
-                  if (d)
-                    st.patchDraft({
-                      fire: { ...d.fire, floor: fl.id, room: room.id, x: +x.toFixed(2), y: +y.toFixed(2), start: 0 },
-                    })
+                  const d = sideDraft(st, side)
+                  if (d) {
+                    const fire = { ...d.fire, floor: fl.id, room: room.id, x: +x.toFixed(2), y: +y.toFixed(2), start: 0 }
+                    if (side === 'R') st.patchRightDraft({ fire })
+                    else st.patchDraft({ fire })
+                  }
                   // The fire is placed: the next click is no longer a placement ("Move fire" on the scenario card turns it back on).
                   st.setPlacing(false)
                 }}
@@ -56,7 +64,7 @@ export default function FirePicker() {
               </mesh>
             )
           })}
-      {ghostFloor && f?.x !== undefined && f.y !== undefined && (!visible || visible.includes(ghostFloor.id)) && (
+      {(!side || editing) && ghostFloor && f?.x !== undefined && f.y !== undefined && (!visible || visible.includes(ghostFloor.id)) && (
         <mesh position={toPlaced(place(ghostFloor), f.x, f.y, 0.4)}>
           <sphereGeometry args={[0.35, 16, 12]} />
           <meshBasicMaterial color="#fb923c" transparent opacity={0.55 * floorAlpha(viewMode, focusFloor, ghostFloor.id)} />

@@ -187,7 +187,7 @@ export function buildingBounds(b: Building, floorIds?: string[] | null, explode 
   return { minX, minY, maxX, maxY, minZ, maxZ, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, span: Math.max(maxX - minX, maxY - minY, maxZ - minZ) }
 }
 
-/** Camera distance that fits the box's bounding sphere-ish diagonal in both the vertical and horizontal FOV. */
+/** Camera distance that fits the box's bounding sphere-ish diagonal in both the vertical and horizontal FOV. (Kept for callers that only need a rough distance; the camera frames with frameView.) */
 export function fitDistance(
   b: { minX: number; minY: number; maxX: number; maxY: number; minZ: number; maxZ: number },
   fovDeg: number,
@@ -198,6 +198,110 @@ export function fitDistance(
   const v = (fovDeg * Math.PI) / 360
   const limit = Math.min(v, Math.atan(Math.tan(v) * aspect))
   return (half / Math.sin(limit)) * margin
+}
+
+/** The outline of the drawn floors as scene points (x, y, z, ...): every outer-ring vertex of every shown floor at the floor's bottom and at its top, each floor in its place. */
+export function framePoints(b: Building, floorIds?: string[] | null, explode = 0, mode: ViewMode = 'stacked'): number[] {
+  const pts: number[] = []
+  for (const f of b.floors) {
+    if (floorIds && !floorIds.includes(f.id)) continue
+    const p = floorPlace(b, f, mode, explode)
+    for (const w of f.walkable) for (const [x, y] of w.outer) pts.push(x + p.dx, p.y, -y, x + p.dx, p.y + f.height, -y)
+  }
+  if (pts.length === 0) pts.push(0, 0, 0, 10, 0, 0, 0, 0, -10, 10, 3, -10)
+  return pts
+}
+
+export interface FrameView {
+  /** where the camera looks */
+  target: [number, number, number]
+  /** how far the camera is from the target, along `dir` */
+  distance: number
+}
+
+/**
+ * Where to put a perspective camera so the points fill the visible part of the viewer. The camera sits at target + dir * distance
+ * (`dir` points from the target to the eye) and looks at the target. `width` and `height` are the viewport in pixels, `inset` the
+ * pixels of it that a panel or a label hides on each side, and `pad` the share of the visible part left empty on each side (0.045: the
+ * building fills 91 %). The distance is the smallest one at which every point lies inside the padded part (found by bisection, the
+ * target shifted so the points' outline is centred in it); the points are projected exactly, so a long flat building and a tall tower
+ * both fill their limiting side.
+ */
+export function frameView(
+  pts: number[],
+  dir: [number, number, number],
+  fovDeg: number,
+  view: { width: number; height: number; pad?: number; inset?: { left?: number; right?: number; top?: number; bottom?: number } },
+): FrameView {
+  const n = Math.floor(pts.length / 3)
+  const w = Math.max(1, view.width)
+  const h = Math.max(1, view.height)
+  const tanV = Math.tan((fovDeg * Math.PI) / 360)
+  const tanH = tanV * (w / h)
+  const pad = view.pad ?? 0.045
+  const ins = view.inset ?? {}
+  // the visible part of the viewport in normalised device coordinates (-1 to 1), and the half extents the points may fill in it
+  const x0 = -1 + (2 * (ins.left ?? 0)) / w
+  const x1 = 1 - (2 * (ins.right ?? 0)) / w
+  const y0 = -1 + (2 * (ins.bottom ?? 0)) / h
+  const y1 = 1 - (2 * (ins.top ?? 0)) / h
+  const cx = (x0 + x1) / 2
+  const cy = (y0 + y1) / 2
+  const hw = Math.max(0.05, ((x1 - x0) / 2) * (1 - 2 * pad))
+  const hh = Math.max(0.05, ((y1 - y0) / 2) * (1 - 2 * pad))
+  // camera basis: forward f = -dir, right r, up v
+  const dl = Math.hypot(...dir) || 1
+  const ux = dir[0] / dl, uy = dir[1] / dl, uz = dir[2] / dl
+  let rx = uz, rz = -ux
+  const rl = Math.hypot(rx, rz)
+  if (rl < 1e-6) { rx = 1; rz = 0 } else { rx /= rl; rz /= rl }
+  const fx = -ux, fy = -uy, fz = -uz
+  const vx = -rz * fy, vy = rz * fx - rx * fz, vz = rx * fy
+  // bounding box centre and radius: the start
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity, c0 = Infinity, c1 = -Infinity
+  for (let i = 0; i < n; i++) {
+    const x = pts[3 * i], y = pts[3 * i + 1], z = pts[3 * i + 2]
+    a0 = Math.min(a0, x); a1 = Math.max(a1, x); b0 = Math.min(b0, y); b1 = Math.max(b1, y); c0 = Math.min(c0, z); c1 = Math.max(c1, z)
+  }
+  const R = Math.max(0.5, Math.hypot(a1 - a0, b1 - b0, c1 - c0) / 2)
+  const t: [number, number, number] = [(a0 + a1) / 2, (b0 + b1) / 2, (c0 + c1) / 2]
+  /** the outline's extent in the padded part at distance d with the target in `tt` (moved to centre it); ratio <= 1 fits */
+  const settle = (d: number, tt: [number, number, number]): number => {
+    for (let pass = 0; pass < 4; pass++) {
+      const ex = tt[0] + ux * d, ey = tt[1] + uy * d, ez = tt[2] + uz * d
+      let nx0 = Infinity, nx1 = -Infinity, ny0 = Infinity, ny1 = -Infinity
+      for (let i = 0; i < n; i++) {
+        const px = pts[3 * i] - ex, py = pts[3 * i + 1] - ey, pz = pts[3 * i + 2] - ez
+        const z = px * fx + py * fy + pz * fz
+        if (z < 0.05) return Infinity
+        const nx = (px * rx + pz * rz) / (z * tanH)
+        const ny = (px * vx + py * vy + pz * vz) / (z * tanV)
+        if (nx < nx0) nx0 = nx
+        if (nx > nx1) nx1 = nx
+        if (ny < ny0) ny0 = ny
+        if (ny > ny1) ny1 = ny
+      }
+      const ox = (nx0 + nx1) / 2 - cx
+      const oy = (ny0 + ny1) / 2 - cy
+      if (pass === 3 || (Math.abs(ox) < 1e-4 && Math.abs(oy) < 1e-4)) return Math.max((nx1 - nx0) / 2 / hw, (ny1 - ny0) / 2 / hh)
+      tt[0] += (rx * ox * tanH + vx * oy * tanV) * d
+      tt[1] += vy * oy * tanV * d
+      tt[2] += (rz * ox * tanH + vz * oy * tanV) * d
+    }
+    return Infinity
+  }
+  let lo = R * 0.3
+  let hi = R * 60
+  let best: FrameView | null = null
+  for (let i = 0; i < 44; i++) {
+    const d = (lo + hi) / 2
+    const tt: [number, number, number] = [t[0], t[1], t[2]]
+    if (settle(d, tt) <= 1) {
+      best = { target: tt, distance: d }
+      hi = d
+    } else lo = d
+  }
+  return best ?? { target: t, distance: hi }
 }
 
 export function gridPlacement(g: { origin: Vec2; cell: number; cols: number; rows: number }) {

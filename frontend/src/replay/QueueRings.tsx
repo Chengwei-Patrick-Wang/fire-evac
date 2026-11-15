@@ -10,6 +10,7 @@ import { nearestIndex } from './runIndex'
 import { queueCounts, queueTargets } from './queues'
 import type { QueueTarget } from './queues'
 import type { Building } from '../data/types'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 const COL = { lo: new THREE.Color('#facc15'), mid: new THREE.Color('#fb923c'), hi: new THREE.Color('#ef4444') }
 
@@ -121,7 +122,7 @@ function Rings({ targets, counts, building }: { targets: QueueTarget[]; counts: 
 export default function QueueRings({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)
   const on = useApp((s) => s.layers.queues)
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const key = runKey ?? activeKey
   const lr = useApp((s) => (key ? s.runs[key] : undefined))
   const targets = useMemo(() => (building ? queueTargets(building) : []), [building])

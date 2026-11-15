@@ -11,6 +11,7 @@ import { usePlace } from '../scene/usePlace'
 import { claudeIdx, decisionAt, decisionText, readDecisions } from '../model/brain'
 import { nearestIndex, sampleAgent } from './runIndex'
 import type { AgentSample } from './runIndex'
+import { useSceneBuilding } from '../scene/sceneBuilding'
 
 const GREEN = '#16A34A'
 const AMBER = '#F59E0B'
@@ -38,7 +39,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)
   const key = runKey ?? activeKey
   const lr = useApp((s) => (key ? s.runs[key] : undefined))
-  const building = useApp((s) => s.building)
+  const building = useSceneBuilding()
   const ix = lr?.index
   const n = ix?.nAgents ?? 0
   const mesh = useRef<THREE.InstancedMesh>(null)

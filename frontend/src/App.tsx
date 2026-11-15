@@ -2,7 +2,7 @@ import { creditParts, loadBuildingIndex } from './model/buildingIndex'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Eye, Layers3 } from 'lucide-react'
 import './App.css'
-import { DEFAULT_EXPLODE, useApp } from './store/app'
+import { DEFAULT_EXPLODE, splitKeys, useApp } from './store/app'
 import { useClock } from './store/clock'
 import type { LoadedRun } from './store/app'
 import TopNav from './ui/TopNav'
@@ -28,7 +28,8 @@ import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
 import { materialPartner } from './model/fireSpread'
 import { brainPartner, runLabel } from './model/brain'
 import { loadHeadlines, readPack } from './model/headlines'
-import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
+import { cameraPose, decodeLink, linkCtl, loadIndexIds, panePoses, useLinkSync } from './model/link'
+import { framePoints } from './scene/geometry'
 import type { LinkState } from './model/link'
 import type { DemoRun } from './data/types'
 import { SAMPLE_BUILDING } from './model/sample'
@@ -45,7 +46,7 @@ import {
 } from './data/loader'
 
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
-  Object.assign(window, { __app: useApp, __clock: useClock, __pose: cameraPose })
+  Object.assign(window, { __app: useApp, __clock: useClock, __pose: cameraPose, __panePoses: panePoses, __geo: { framePoints } })
 
 const PrintReport = lazy(() => import('./ui/PrintReport'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
@@ -340,9 +341,10 @@ function ShellStatus() {
 }
 
 export default function App() {
-  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView, navOpen, sidebarOpen, sidebarWide, card } = useApp()
-  const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
-  const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
+  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView, navOpen, sidebarOpen, sidebarWide, card, splitLeft, splitRight, editSide } = useApp()
+  const keys = splitKeys({ runs, runOrder, activeRunKey, splitLeft, splitRight })
+  const splitOn = split && !!keys.left && !!keys.right && !!runs[keys.left] && !!runs[keys.right] && keys.left !== keys.right
+  const side = splitOn ? editSide ?? 'L' : undefined
   const onOpenBuilding = useCallback(async (id: string) => {
     try {
       if (getMode() !== 'live') useApp.getState().setMode(await detectMode())
@@ -411,7 +413,7 @@ export default function App() {
       <AnalyticsSidebar />
       <main className="center">
         <ErrorBoundary label="3D view">
-          {splitOn ? <SplitView leftKey={base as string} rightKey={activeRunKey as string} /> : <Scene />}
+          {splitOn ? <SplitView leftKey={keys.left as string} rightKey={keys.right as string} /> : <Scene />}
         </ErrorBoundary>
         {notice && (
           <div className="banner" role="status">
@@ -460,8 +462,8 @@ export default function App() {
           </div>
         </div>
         {card === 'scenario' && (
-          <FloatingCard id="scenario" title="Fire and scenario" className="scenariocard">
-            <ScenarioPanel />
+          <FloatingCard key={side ?? 'one'} id="scenario" title={side ? `${side === 'L' ? 'Left' : 'Right'} side: fire and scenario` : 'Fire and scenario'} className={'scenariocard' + (side === 'R' ? ' side-r' : '')}>
+            <ScenarioPanel side={side} />
           </FloatingCard>
         )}
         <NewBuildingCard />
