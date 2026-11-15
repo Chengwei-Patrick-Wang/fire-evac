@@ -212,3 +212,14 @@ interior cut - width: median 0.016 m, maximum 1.023 m
 ## Plan images and trace
 
 Run `python -m buildings.plan_images` to regenerate the scale-preserving example and office PNGs and example trace and plan in `data/buildings/plans/`. Run `python -m buildings.plan_images --check` to check the JSON metadata without drawing. The example images are 40 px/m and the office images 30 px/m; each includes a 10 m scale bar. The example trace preserves the source's 4 m interior opening; the public-building validator accepts door widths from 0.6 to 6.0 m.
+
+## Example office + extra stair
+
+`example-office-plus` (`data/buildings/`, synthetic) is the example office with one more stairwell and exit, to compare
+side by side. Stair C (group SC, SC1 and SC2) takes the east 4 m of the lounge R106 and the open office R207
+(x 18-22, y 9.5-16, on the corridor's mid-point), with a 1 m fire door from each corridor (DSC1, DSC2), and exit E3
+("South stair exit", 1 m) in SC1's south wall. All other rooms, doors, stairs and exits keep their coordinates. Its
+scenario is the example's with every room's headcount pinned (`perRoom`, still 160 people), so the smaller R106 and R207 do
+not move people. Regenerate with `python -m buildings.make_example_plus`, then `python -m buildings.summary`. The kitchen
+fire in R101, seed 1, rules crowd: the example gets t90 120.7 s, 159 out, 1 trapped, stair door peak queue 2; the copy
+t90 113.9 s, 159 out, 1 trapped, stair peak 4 (DSC1), 58 of the 159 leave by E3. Illustrative, like all times here.
