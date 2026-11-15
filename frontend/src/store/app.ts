@@ -11,6 +11,8 @@ import { doorLabels, spotPosition } from '../model/spots'
 import type { HeadlinePack } from '../model/headlines'
 import { findPrecomputedVariant, makeVariant } from '../model/whatif'
 import { DEFAULT_MATERIAL, materialName, materialPair, runMaterial } from '../model/fireSpread'
+import { WHATIF_RULES_ONLY, brainPair, claudeCrowdLimit, crowdOf, crowdTooBig, runLabel, runStatus, runWaitS } from '../model/brain'
+import type { Brain } from '../model/brain'
 import { floorsByLevel } from '../model/floors'
 import type { ViewMode } from '../scene/geometry'
 
@@ -29,8 +31,11 @@ export interface LoadedRun {
   index: RunIndex
   doors: Record<string, DoorState>
   scenario?: Scenario
-  /** The run this one is a variant of. A material variant (the precomputed wood run) has `material` and no door: `door` is '' there. */
-  whatIf?: { baselineKey: string; door: string; state: DoorState; material?: Material }
+  /**
+   * The run this one is a variant of. A material variant (the precomputed wood run) has `material` and no door, and so has a crowd
+   * variant (the precomputed Claude crowd) with `brain`: `door` is '' there.
+   */
+  whatIf?: { baselineKey: string; door: string; state: DoorState; material?: Material; brain?: Brain }
 }
 
 export type View = 'replay' | 'tracer'
@@ -148,6 +153,8 @@ interface AppState {
   setMaterial: (m: Material) => void
   /** Loads the precomputed wood and drywall runs of the loaded building and shows them side by side, at the clock time they were at. */
   showMaterialPair: () => Promise<void>
+  /** The same for the precomputed rules run and Claude crowd run of the loaded building. */
+  showBrainPair: () => Promise<void>
   setMode: (m: Mode) => void
   setView: (v: View) => void
   setLoading: (s: string | null) => void
@@ -201,7 +208,7 @@ export const useApp = create<AppState>((set) => ({
   topView: 0,
   split: false,
   draft: null,
-  placing: true,
+  placing: false,
   running: null,
   runError: null,
   whatIfBusy: null,
@@ -273,14 +280,24 @@ export const useApp = create<AppState>((set) => ({
       set({ batchRunning: null })
     }
   },
-  setDraft: (draft) => set({ draft }),
+  // A draft with no fire yet starts in placing mode: the first click on a room puts the fire there (the scenario card and the new-building card both say so).
+  setDraft: (draft) => set(draft && !draft.fire.floor ? { draft, placing: true } : { draft }),
   patchDraft: (p) => set((s) => (s.draft ? { draft: { ...s.draft, ...p } } : {})),
   setPlacing: (placing) => set({ placing }),
   runScenario: async (scenario) => {
     const st = useApp.getState()
     const b = st.building
     if (!b || st.running) return
-    set({ running: 'Running…', runError: null, runNote: null, runFallback: false })
+    // Who decides for the crowd rides in the scenario's `brain`. Only a live run asks Claude: static mode shows a precomputed run of the rules.
+    const brain = crowdOf(scenario.brain)
+    const live = st.mode === 'live'
+    const total = scenario.occupants.total
+    // Everyone asks Claude holds up to 200 people. Refused here, before anything is sent (the Run buttons are off for it too).
+    if (crowdTooBig(scenario, live)) {
+      set({ runError: claudeCrowdLimit(total), runNote: null, runFallback: false })
+      return
+    }
+    set({ running: live ? runStatus(brain, total) : 'Running…', runError: null, runNote: null, runFallback: false })
     // The material setting rides in the scenario's fire (illustrative spread speed); only the live backend reads it.
     const material = st.material
     const sc: Scenario = { ...scenario, buildingId: b.id, occupants: { ...scenario.occupants, mix: normalizeMix(scenario.occupants.mix) }, fire: { ...scenario.fire, material } }
@@ -296,11 +313,13 @@ export const useApp = create<AppState>((set) => ({
         useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {} })
       } else useApp.getState().switchRun(entry.id)
       const here = sc.fire.x !== undefined ? `, ${distance.toFixed(1)} m from your click` : ''
+      // Precomputed runs of the rules are what is shown: say so when the scenario asked for Claude.
+      const crowd = brain === 'rules' ? '' : ' That run uses the rules crowd, not Claude.'
       set({
         runFallback: afterLiveFailure,
         runNote: afterLiveFailure
-          ? `Live run unavailable: showing the nearest precomputed fire (room ${entry.fire.room}).`
-          : `Static mode: nearest precomputed run, fire in ${entry.fire.room}${here}`,
+          ? `Live run unavailable: showing the nearest precomputed fire (room ${entry.fire.room}).${crowd}`
+          : `Static mode: nearest precomputed run, fire in ${entry.fire.room}${here}${crowd}`,
       })
       return true
     }
@@ -313,9 +332,10 @@ export const useApp = create<AppState>((set) => ({
           const id = 'ui-' + Date.now().toString(36)
           sc.id = id
           const runId = await startRun(sc)
-          const run = await pollRun(runId, (el) => set({ running: `Running… ${el} s` }))
+          // A Claude crowd waits on a model for its decisions, so it is waited for longer (six minutes against three).
+          const run = await pollRun(runId, (el) => set({ running: runStatus(brain, total, el) }), runWaitS(brain))
           const how = material === DEFAULT_MATERIAL ? '' : ` · ${materialName(material)}`
-          useApp.getState().addRun({ key: id, label: `Your run ${id.slice(3, 7)}${how}`, run, doors: sc.doors ?? {}, scenario: sc })
+          useApp.getState().addRun({ key: id, label: runLabel(`Your run ${id.slice(3, 7)}${how}`, brain), run, doors: sc.doors ?? {}, scenario: sc })
           return
         } catch (e) {
           // Spec §8 beat 3: the judge's fire "runs live, or loads the nearest precomputed run". Whatever went wrong (no backend, an HTTP
@@ -344,6 +364,12 @@ export const useApp = create<AppState>((set) => ({
     const active = st.activeRunKey ? st.runs[st.activeRunKey] : null
     if (!b || !active || st.whatIfBusy) return
     const base = active.whatIf ? st.runs[active.whatIf.baselineKey] ?? active : active
+    // A door what-if is measured against a rules baseline. With a Claude crowd the door would not be the only change between the two runs
+    // (Claude's answers differ from run to run), and a second Claude run would take minutes: not offered.
+    if (crowdOf(base.scenario?.brain) !== 'rules') {
+      set({ whatIfError: WHATIF_RULES_ONLY, whatIfNote: null, whatIfFallback: false })
+      return
+    }
     set({ whatIfBusy: 'Running…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
     // Set when the live what-if failed, and whether the backend could not be reached at all (which also ends live mode).
     let failure: Error | null = null
@@ -405,45 +431,22 @@ export const useApp = create<AppState>((set) => ({
       set({ whatIfBusy: null })
     }
   },
-  showMaterialPair: async () => {
-    const st = useApp.getState()
-    const b = st.building
-    if (!b || st.whatIfBusy) return
-    set({ whatIfBusy: 'Loading precomputed pair…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
-    // Loads (once) and shows one precomputed run; false when another building was loaded meanwhile.
-    const show = async (entry: DemoRun, whatIf?: LoadedRun['whatIf']): Promise<boolean> => {
-      if (useApp.getState().runs[entry.id]) {
-        if (whatIf && !useApp.getState().runs[entry.id].whatIf) set((s) => ({ runs: { ...s.runs, [entry.id]: { ...s.runs[entry.id], whatIf } } }))
-        useApp.getState().switchRun(entry.id)
-        return true
-      }
-      const run = await loadDemoRun(entry)
-      if (useApp.getState().building?.id !== b.id) return false
-      useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
-      return true
-    }
-    try {
-      const pair = materialPair(await listDemoRuns(b.id), b.id)
-      if (!pair) throw new ApiError('No precomputed wood and drywall pair for this building')
-      const prev = useClock.getState().t
-      if (!(await show(pair.drywall)) || !(await show(pair.wood, { baselineKey: pair.drywall.id, door: '', state: 'propped', material: 'wood' }))) return
-      const runs = useApp.getState().runs
-      // Both panes share one clock, as long as the longer run: keep the time the page was at.
-      useClock.setState({ duration: Math.max(runs[pair.drywall.id].index.duration, runs[pair.wood.id].index.duration) })
-      useClock.getState().seek(prev)
-      set({ split: true, compareKeys: [pair.drywall.id, pair.wood.id] })
-    } catch (e) {
-      set({ whatIfError: e instanceof Error ? e.message : String(e) })
-    } finally {
-      set({ whatIfBusy: null })
-    }
-  },
+  showMaterialPair: () =>
+    showPair('No precomputed wood and drywall pair for this building', (entries, id) => {
+      const pair = materialPair(entries, id)
+      return pair && { base: pair.drywall, variant: pair.wood, whatIf: { baselineKey: pair.drywall.id, door: '', state: 'propped', material: 'wood' } }
+    }),
+  showBrainPair: () =>
+    showPair('No precomputed rules and Claude crowd pair for this building', (entries, id) => {
+      const pair = brainPair(entries, id)
+      return pair && { base: pair.rules, variant: pair.claude, whatIf: { baselineKey: pair.rules.id, door: '', state: 'propped', brain: 'llm' } }
+    }),
   setMode: (mode) => set({ mode }),
   setView: (view) => set({ view }),
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, fromTracer: null, runNote: null, runFallback: false, runError: null, whatIfNote: null, whatIfFallback: false, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, placing: false, fromTracer: null, runNote: null, runFallback: false, runError: null, whatIfNote: null, whatIfFallback: false, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
@@ -465,6 +468,47 @@ export const useApp = create<AppState>((set) => ({
       return { activeRunKey: key }
     }),
 }))
+
+/**
+ * Loads the two precomputed runs of a pair (a baseline and its variant: the same fire with another material, or another crowd) and shows
+ * them side by side, at the clock time the page was at. `pick` finds the pair in the building's demo entries; null when it has none.
+ */
+async function showPair(
+  missing: string,
+  pick: (entries: DemoRun[], buildingId: string) => { base: DemoRun; variant: DemoRun; whatIf: NonNullable<LoadedRun['whatIf']> } | null,
+): Promise<void> {
+  const st = useApp.getState()
+  const b = st.building
+  if (!b || st.whatIfBusy) return
+  useApp.setState({ whatIfBusy: 'Loading precomputed pair…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
+  // Loads (once) and shows one precomputed run; false when another building was loaded meanwhile.
+  const show = async (entry: DemoRun, whatIf?: LoadedRun['whatIf']): Promise<boolean> => {
+    if (useApp.getState().runs[entry.id]) {
+      if (whatIf && !useApp.getState().runs[entry.id].whatIf) useApp.setState((s) => ({ runs: { ...s.runs, [entry.id]: { ...s.runs[entry.id], whatIf } } }))
+      useApp.getState().switchRun(entry.id)
+      return true
+    }
+    const run = await loadDemoRun(entry)
+    if (useApp.getState().building?.id !== b.id) return false
+    useApp.getState().addRun({ key: entry.id, label: runLabel(entry.label, entry.brain), run, doors: entry.doors ?? {}, ...(whatIf ? { whatIf } : {}) })
+    return true
+  }
+  try {
+    const pair = pick(await listDemoRuns(b.id), b.id)
+    if (!pair) throw new ApiError(missing)
+    const prev = useClock.getState().t
+    if (!(await show(pair.base)) || !(await show(pair.variant, pair.whatIf))) return
+    const runs = useApp.getState().runs
+    // Both panes share one clock, as long as the longer run: keep the time the page was at.
+    useClock.setState({ duration: Math.max(runs[pair.base.id].index.duration, runs[pair.variant.id].index.duration) })
+    useClock.getState().seek(prev)
+    useApp.setState({ split: true, compareKeys: [pair.base.id, pair.variant.id] })
+  } catch (e) {
+    useApp.setState({ whatIfError: e instanceof Error ? e.message : String(e) })
+  } finally {
+    useApp.setState({ whatIfBusy: null })
+  }
+}
 
 function makeDraftFallback(buildingId: string): Scenario {
   return { version: 'scenario/v0', buildingId, seed: 1, occupants: { total: 160, mix: { typical: 1 } }, fire: { type: 'kitchen', start: 0 }, sprinklers: false, doors: {}, alarmTime: 30, maxTime: 400 }

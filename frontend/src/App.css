@@ -167,6 +167,7 @@ a { color: var(--primary-text); }
 .sw.dot.ringed { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #DC2626; box-shadow: inset 0 0 0 1.5px var(--surface); }
 .sw.ring { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #FB923C; border-radius: 50%; background: transparent; }
 .sw.ring.red { border-color: #DC2626; }
+.sw.ring.claude { border-color: #E879F9; }
 /* The spread's rows: a burning room (orange turning red), the cone that marks it, and the door the fire closed (a plain swatch). */
 .sw.ramp { border-radius: 2px; background: linear-gradient(135deg, #F97316, #DC2626); }
 .sw.cone { background: #F97316; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
@@ -207,6 +208,9 @@ a { color: var(--primary-text); }
 .agentreadout { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); z-index: 2; padding: var(--s2) var(--s3); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
 .nav-open .agentreadout { top: calc(var(--nav-h) + 36px); }
 .agentreadout button { padding: 4px 10px; margin-top: 4px; }
+/* Claude's latest decision for the person (a run that logged them): the reason can run to two lines. */
+.agentreadout .claude-line { max-width: 300px; }
+.agentreadout .claude-line.rules, .agentreadout .claude-line .action { color: var(--text-2); }
 .tourcap { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; pointer-events: none; max-width: min(720px, 92%); padding: 10px 16px; text-align: center; }
 .tourcap p { margin: 6px 0 0; font-size: 15px; }
 .tourcap .tourhead { display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 18px; }
@@ -240,6 +244,7 @@ a { color: var(--primary-text); }
 .floortag.on { background: var(--primary); border-color: var(--primary); color: #fff; }
 .tip3d { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 8px; font: 12px/1.4 var(--font); }
 .tip3d .why { color: #A21CAF; }
+.tip3d .why.rules { color: var(--text-2); }
 
 /* Floor strip and timeline */
 .floorstrip { display: flex; gap: var(--s2); overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 2px 6px; }
@@ -309,9 +314,20 @@ a { color: var(--primary-text); }
 .scenario .err, .weak .err { color: var(--danger); }
 .scenario .warn { color: var(--warn); }
 .whatif .note, .scenario > .note { margin: 2px 0 6px; font-size: var(--fs-xs); }
-.whatif .material { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: var(--s2); }
-.whatif .material h5 { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
-.whatif .material .note { margin: 0; }
+/* One plain line under a field says what it is; the people mix is a fieldset of percentages; the fire is placed by clicking, with a list as the other way. */
+.scenario .hint, .whatif .hint { margin: -4px 0 4px; font-size: var(--fs-xs); }
+.scenario fieldset.mix { border: 0; padding: 0; margin: 2px 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.scenario fieldset.mix legend { padding: 0; margin-bottom: 4px; font-size: var(--fs-sm); font-weight: 600; }
+.scenario fieldset.mix .note { margin: 0; font-size: var(--fs-xs); }
+.scenario .pct { display: inline-flex; align-items: center; gap: 4px; }
+.scenario .fireplace { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.scenario .fireplace .where { margin: 0; flex: 1; min-width: 0; }
+.scenario .fireplace button { flex: none; }
+.scenario details.roompick summary { cursor: pointer; color: var(--primary-text); font-size: var(--fs-sm); }
+.scenario details.roompick label { margin-top: 6px; }
+.whatif .material, .whatif .claudepair { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: var(--s2); }
+.whatif .material h5, .whatif .claudepair h5 { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
+.whatif .material .note, .whatif .claudepair .note { margin: 0; }
 .whatif .doorrow { flex-wrap: wrap; }
 .whatif .doorrow select:first-child { flex: 1 1 100%; min-width: 0; }
 ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; font-size: var(--fs-sm); color: var(--muted); }
@@ -330,6 +346,12 @@ ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; f
 .badge.ok { background: #DCFCE7; color: #166534; }
 .badge.warn { background: #FEF3C7; color: #92400E; }
 .badge.trade { background: #FFEDD5; color: #9A3412; }
+.badge.ai { background: #EDE9FE; color: #5B21B6; font-size: var(--fs-xs); text-transform: none; }
+/* The report card's "AI summary (Claude)": set apart, with a note that it was written by the model. No fill, so it reads on the printed page too. */
+.aisummary { margin: 8px 0; padding: 6px 10px; border: 1px solid var(--border); border-left: 3px solid #7C3AED; border-radius: var(--r-ctl); }
+.aisummary h3, .aisummary h4 { margin: 0 0 4px; font-size: var(--fs-md); }
+.aisummary p { margin: 4px 0; }
+.aisummary .aisummary-note { margin: 6px 0 0; font-size: var(--fs-xs); }
 .whatif-headline { border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px; margin: 8px 0; }
 .whatif-headline .main { font-size: 16px; font-weight: 700; margin: 4px 0; }
 .whatif-headline ul { margin: 6px 0; padding-left: 18px; }

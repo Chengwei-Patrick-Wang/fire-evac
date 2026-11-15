@@ -9,6 +9,7 @@ import { useTour } from '../tour/tour'
 import { captureView } from '../scene/capture'
 import type { ViewMode } from '../scene/geometry'
 import { useA11y } from './a11y'
+import { claudeCrowdLimit, crowdTooBig } from '../model/brain'
 import MenuBar from './Menu'
 import type { MenuDef } from './Menu'
 
@@ -141,6 +142,9 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
   const priv = !!building?.private
   const pngTitle = split ? 'Turn off Split to save the 3D view' : priv ? 'Private building: do not screenshot or publish' : 'Room labels and queue counts are page overlays and are not in the image'
   const set = useApp.setState
+  // Everyone asks Claude holds up to 200 people: with more, a live run is refused, and so the Run buttons are off (the scenario card says why).
+  const tooMany = crowdTooBig(draft, mode === 'live')
+  const runTitle = tooMany && draft ? claudeCrowdLimit(draft.occupants.total) : undefined
   // Side by side and Ghost need a second floor to lay out or to fade.
   const oneFloor = (building?.floors.length ?? 0) < 2
 
@@ -205,7 +209,7 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
           sepAbove: true,
         },
         { kind: 'item', label: 'Scenario setup…', onSelect: () => openScenario(), sepAbove: true },
-        { kind: 'item', label: 'Run simulation', onSelect: runSimulation, disabled: !draft || !!running },
+        { kind: 'item', label: 'Run simulation', onSelect: runSimulation, disabled: !draft || !!running || tooMany, title: runTitle },
         { kind: 'item', label: touring ? 'Stop guided demo' : 'Guided demo', onSelect: toggleTour, sepAbove: true },
       ],
     },
@@ -242,7 +246,7 @@ function NavBody({ onSelectBuilding, openFile }: { onSelectBuilding: (id: string
   const tools: Tool[] = [
     { id: 'open', label: 'Open file', icon: Upload, onClick: openFile },
     { id: 'fire', label: 'Set fire', icon: Flame, onClick: () => openScenario(true) },
-    { id: 'run', label: 'Run simulation', icon: Play, onClick: runSimulation, disabled: !draft || !!running, primary: true },
+    { id: 'run', label: 'Run simulation', icon: Play, onClick: runSimulation, disabled: !draft || !!running || tooMany, primary: true, title: runTitle },
     { id: 'layers', label: 'Layers', icon: Layers3, onClick: () => s.setCard(card === 'layers' ? null : 'layers'), expanded: card === 'layers' },
     { id: 'visibility', label: 'Visibility', icon: Eye, onClick: () => s.setCard(card === 'visibility' ? null : 'visibility'), expanded: card === 'visibility', title: 'Fire and smoke visibility' },
     { id: 'top', label: 'Top view', icon: Camera, onClick: () => set((st) => ({ topView: st.topView + 1 })) },

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import Markdown from 'react-markdown'
 import { useApp } from '../store/app'
+import ReportMarkdown from './ReportMarkdown'
 import WhatIfHeadline from './WhatIfHeadline'
 import HeadlinePack from './HeadlinePack'
 import MeasuredFixes from './MeasuredFixes'
@@ -72,7 +72,7 @@ export default function ReportCard() {
       {md !== null && !err && (md.trim() ? (
         <>
           <p className="dim">AI-written summary of the numbers shown; check it against them.</p>
-          <Markdown>{md}</Markdown>
+          <ReportMarkdown md={md} />
         </>
       ) : (
         <div className="empty"><b>No report for this result</b><span>Reports need a run with a saved report.</span></div>
