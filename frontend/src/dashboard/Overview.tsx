@@ -1,7 +1,9 @@
+import { useMemo } from 'react'
 import { ChevronRight, Clock, DoorOpen, TriangleAlert, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useApp } from '../store/app'
 import { floorName, floorsByLevel } from '../model/floors'
+import { burningAt, materialName, readSpread } from '../model/fireSpread'
 import EvacCurve from './EvacCurve'
 import ExitBars from './ExitBars'
 import RunStats from './RunStats'
@@ -55,6 +57,12 @@ export default function Overview() {
     },
   ]
 
+  // The spread line: how many rooms burn at the clock time, and how many by the last frame of the run (a run without fire.rooms has none).
+  const spread = useMemo(() => readSpread(lr?.run), [lr])
+  const burning = spread && stats ? burningAt(spread, stats.t).length : 0
+  const byEnd = spread && lr ? burningAt(spread, lr.index.duration).length : 0
+  const rooms = (n: number) => `${n} ${n === 1 ? 'room' : 'rooms'}`
+
   const floors = building ? floorsByLevel(building) : []
   const queued = (id: string) => stats?.queuedByFloor.get(id) ?? 0
   const total = floors.reduce((n, f) => n + queued(f.id), 0)
@@ -78,6 +86,11 @@ export default function Overview() {
           )
         })}
       </dl>
+      {spread && stats && (
+        <p className="spreadline dim">
+          Fire spread (illustrative, {spread.material ? materialName(spread.material) : 'material not set'}): {rooms(burning)} burning · {byEnd} by the end of the run
+        </p>
+      )}
 
       <h4>Evacuation progress</h4>
       <EvacCurve />

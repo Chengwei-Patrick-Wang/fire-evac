@@ -805,6 +805,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
       - a run/v0 for one demo building, with `fire.material` and several `fire.rooms` igniting at different times.
 
       If it's missing, stop and report BLOCKED on A11 part 1.
+      Per the Lead rulings the fixture is `contracts/run.spread.fixture.json`: qa reads it from disk and serves it with `page.route`, and it is never copied into `frontend/public`.
     - `src/data/types.ts` is shared:
       - If A11 part 1 added these fields there, use them.
       - Otherwise read them through local types in `model/fireSpread.ts`, and never edit `src/data/`.
@@ -819,7 +820,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - `BurningRooms`, `BlockedDoors`, and `spreadStats` (`window.__spread` in dev and with `?qa`).
     - Store: `material` ('drywall'), `setMaterial`, `showMaterialPair()`, `whatIfNote`, `whatIfFallback`, and `LoadedRun.whatIf.material?`.
     - qa steps `fire-spread`, `material-pair` and `whatif-fallback`.
-- [ ] **Step 1: Read the spread.** In `model/fireSpread.ts`:
+- [x] **Step 1: Read the spread.** In `model/fireSpread.ts`:
   - `Material = 'concrete' | 'drywall' | 'wood'`. `MATERIALS` lists Concrete, Drywall and Wood; the default is drywall.
   - `readSpread(run)` returns `{rooms, material}`, or null:
     - It keeps entries with a string `room` and `floor` and a finite `ignite` ≥ 0, sorted by `ignite`.
@@ -830,28 +831,28 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - The colour runs from #F97316 to #DC2626 over the 60 s after ignition; call that progress k, from 0 to 1.
     - The opacity is `min(0.85, (0.35 + 0.25k) × (0.5 + 0.5 × glow))`.
   - Never extrapolate. A room missing from `fire.rooms` never burns on screen, and a run without `fire.rooms` looks exactly as today.
-- [ ] **Step 2: Burning rooms.** `replay/BurningRooms.tsx` mounts in `Scene` after `Fire`, keyed by `runKey` like the other layers. It draws only while `layers.fire` is on.
+- [x] **Step 2: Burning rooms.** `replay/BurningRooms.tsx` mounts in `Scene` after `Fire`, keyed by `runKey` like the other layers. It draws only while `layers.fire` is on.
   - **Tints:**
     - For each spread room on a drawn floor: its polygon (`ShapeGeometry`, built once per run), 0.05 m above the floor through `toPlaced`, with a transparent `meshBasicMaterial` and `depthWrite={false}`.
     - In `useFrame`, a tint is visible once `ignite <= t`. It takes its colour and opacity from `spreadTint` with `fireGlow`, multiplied by `GHOST` on ghost floors.
     - A room id that the building lacks is skipped, with one `console.warn` per run.
   - **Markers:**
-    - One InstancedMesh of cones (radius 0.35, height 0.9, emissive #F97316) at `insidePoint(polygon)`, 0.45 m up.
+    - One InstancedMesh of cones (radius 0.35, height 0.9, emissive #F97316) at `insidePoint(polygon)`, standing on the floor (0.45 m up is the cone's centre at scale 1; the base stays on the floor when the glow scales it).
     - Each cone is scaled by `0.6 + 0.4 × fireGlow` and hidden until its room ignites.
     - The room holding `run.fire`'s point gets no cone, because the fire sphere is there.
-  - **`spreadStats = { burning, drawn }`,** updated each frame: the rooms burning at t, and the tints visible.
-- [ ] **Step 3: Doors close on time.** In `replay/BlockedDoors.tsx`, each `door_blocked` event whose door exists gets a #DC2626 overlay:
+  - **`spreadStats = { burning, drawn, closed }`,** updated each frame: the rooms burning at t, the tints visible, and the door overlays shown (Step 3). It follows the active run.
+- [x] **Step 3: Doors close on time.** In `replay/BlockedDoors.tsx`, each `door_blocked` event whose door exists gets a #DC2626 overlay:
   - on `door.rect`, else a 0.3 m strip from `a` to `b`;
   - 0.035 m above the floor;
   - shown from the event's `t`.
 
-  Doors then close on screen when the simulation closes them.
-- [ ] **Step 4: Words and legend.**
+  Doors then close on screen when the simulation closes them. Overlays are drawn for runs that carry a spread (`fire.rooms`); every other run looks as before.
+- [x] **Step 4: Words and legend.**
   - In the Overview, under the KPIs, when the active run has a spread: `p.spreadline` "Fire spread (illustrative, <Material>): 3 rooms burning · 9 by the end of the run".
     - With one room it reads "1 room burning".
     - Without `fire.material` it reads "material not set".
   - LegendCard, when the run has a spread, adds "Burning room (illustrative)" (an orange-to-red ramp swatch), "Fire marker" and "Closed door".
-- [ ] **Step 5: Material setting.**
+- [x] **Step 5: Material setting.**
   - **Store:** `material: Material` ('drywall') and `setMaterial`. The choice is kept across buildings.
   - **ScenarioPanel,** after the fire room: a `label` "Building material (illustrative)" around a `select` with Concrete, Drywall (default) and Wood.
   - **Live mode:**
@@ -859,7 +860,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - A live run's label adds " · Wood" or " · Concrete" when the material isn't drywall.
     - A live what-if keeps its base run's material (`run.fire.material`, else 'drywall').
   - **Static mode:** the select is disabled, with a `p.dim.note`: "Material needs the live backend. In static mode, What if… shows the precomputed wood and drywall pair where a building has one."
-- [ ] **Step 6: The material pair.** It is shown in static and live mode, from the demo index.
+- [x] **Step 6: The material pair.** It is shown in static and live mode, from the demo index.
   - **`materialPair(entries, buildingId)`:**
     - The wood run is an entry with `whatIf: 'material'` and `material: 'wood'`.
     - Its drywall partner has the same building and fire room and `material: 'drywall'` (with `whatIf` 'material' or null). Failing that, the partner is that room's `whatIf: null` entry.
@@ -876,7 +877,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - `p.dim.note`: "Precomputed pair, fire in <room name> (<room id>). Spread speeds are illustrative, not engineering values."
   - **Headline:** a material variant's headline is the main line of `pairHeadline(base, variant, 'Wood instead of drywall')`, else "Wood instead of drywall". The t90 and trapped line stays as today. The tour's `variantCaption` uses the same words for a material variant; scene 4 still shows the propped door.
   - **`restoreLink`:** an `r` that names a wood entry loads its drywall partner, then the wood run as above. Split comes from the link.
-- [ ] **Step 7: Live what-if fallback,** as E35 did for runs.
+- [x] **Step 7: Live what-if fallback,** as E35 did for runs.
   - In `runWhatIf`, any live failure falls through to today's precomputed path, with a `console.warn`.
     - A refused connection or a timeout still ends live mode, with the banner "Backend unreachable: precomputed runs only".
     - Other failures keep live mode.
@@ -884,7 +885,7 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
   - Without one, `whatIfError` is the live failure itself, or "No precomputed what-if for this fire" after a refused connection.
   - `whatIfNote` and `whatIfFallback` reset when a what-if starts and in `setBuilding`.
   - A live what-if that succeeds behaves as before.
-- [ ] **Step 8: qa.**
+- [x] **Step 8: qa.**
   - **New step `fire-spread`,** in a fresh page. Stay in the stacked view throughout.
     - Read the fixture from disk. If it's missing, report "fire-spread: fixture missing (A11 part 1)" and skip the rest of the step.
     - On the default run, paused at 60 s, `__spread.drawn` must equal that run's own count: the rooms of its `fire.rooms` with `ignite <= 60`. That is 0 for demo runs without `fire.rooms`.
@@ -917,14 +918,14 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - Shot `whatif-fallback.png`.
     - Console errors from the routed 500 and the refused connection are expected in this page only.
   - **`whatif-static`** also checks that the material select is disabled and that its note says "Material needs the live backend".
-- [ ] **Step 9: Verify.**
+- [x] **Step 9: Verify.**
   - `npm run build` passes with no type errors.
   - `npm run qa` (shim) exits 0 with 0 axe violations. Then check the screenshots:
-    - `qa/fire-spread.png` shows orange-to-red rooms with cones, the spread line in the sidebar and the legend row.
+    - `qa/fire-spread.png` shows orange-to-red rooms with cones, the spread line in the sidebar and the legend row. (The cones are small at the default zoom, and at the second ignition plus 1 s the fixture's burning corridor sits under the upper floor: `qa/fire-spread-close.png` shows the cones close up, and `fire-spread-end`, `-single`, `-side` and `-ghost` the tints in every floor view.)
     - `qa/material-pair.png` shows the split view, drywall on the left and wood on the right, under the "Wood instead of drywall" headline.
     - `qa/whatif-fallback.png` shows the amber note under "Run what-if".
   - `python tools/check_all.py frontend privacy` ends with `ALL OK`.
   - Manual, if the backend runs (`VITE_API_URL=http://localhost:8000/api npm run dev`, with A's backend passing `fire.material` through):
     - Pick Wood and run.
     - The run label ends " · Wood", and the room tints spread faster than in a drywall run of the same fire.
-- [ ] **Step 10: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "feat(frontend): spreading fire on screen, building material setting and the wood vs drywall pair"` (no attribution lines). Say in the commit body that the demo runs show the spread once A11 part 2 lands.
+- [x] **Step 10: Commit** `git add frontend docs/superpowers/plans/2026-11-13-ws-e-frontend.md && git commit -m "feat(frontend): spreading fire on screen, building material setting and the wood vs drywall pair"` (no attribution lines). Say in the commit body that the demo runs show the spread once A11 part 2 lands.

@@ -64,13 +64,16 @@ export function compareRuns(a: Run, b: Run): Compare {
   }
 }
 
-/** Precomputed what-if for the same building and fire room; `door` is the key whose state differs. */
+/**
+ * Precomputed door what-if for the same building and fire room; `door` is the key whose state differs. Only `whatIf: 'propped'`
+ * entries count: a material entry (the wood run) is the same fire at another material, never a door what-if.
+ */
 export function findPrecomputedVariant(
   entries: DemoRun[],
   baseline: { buildingId: string; room?: string; doors: Record<string, DoorState> },
 ): { entry: DemoRun; door: string; state: DoorState } | null {
   for (const e of entries) {
-    if (e.whatIf === null || e.buildingId !== baseline.buildingId) continue
+    if (e.whatIf !== 'propped' || e.buildingId !== baseline.buildingId) continue
     if (baseline.room && e.fire.room !== baseline.room) continue
     const keys = new Set([...Object.keys(e.doors), ...Object.keys(baseline.doors)])
     for (const k of keys) {

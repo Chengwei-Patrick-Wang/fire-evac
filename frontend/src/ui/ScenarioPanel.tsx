@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { useApp } from '../store/app'
 import { FIRE_TYPES, insidePoint, roomAt } from '../model/scenarioDraft'
+import { DEFAULT_MATERIAL, MATERIALS } from '../model/fireSpread'
 import WhatIfCard from './WhatIfCard'
-import type { DoorState, Profile } from '../data/types'
+import type { DoorState, Material, Profile } from '../data/types'
 
 const MIX: Profile[] = ['typical', 'older', 'visitor']
 const STATES: DoorState[] = ['open', 'closed', 'propped', 'blocked']
 
 export default function ScenarioPanel() {
-  const { draft, building, patchDraft, placing, setPlacing, running, runError, runNote, runFallback, runScenario } = useApp()
+  const { draft, building, patchDraft, placing, setPlacing, running, runError, runNote, runFallback, runScenario, mode, material, setMaterial } = useApp()
   const [doorPick, setDoorPick] = useState('')
   if (!draft || !building) return <p className="dim">Load a building to set up a scenario.</p>
   const doorIds = building.floors.flatMap((f) => f.doors.map((d) => d.id))
@@ -24,6 +25,7 @@ export default function ScenarioPanel() {
       return { f, rs: f.rooms.filter((r) => r.type !== 'stair' && !sr.has(r.id) && insidePoint(r.polygon) && roomAt(building, f.id, ...(insidePoint(r.polygon) as [number, number]))) }
     })
     .filter((o) => o.rs.length)
+  const live = mode === 'live'
   const num = (v: string, d: number) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : d)
 
   return (
@@ -67,6 +69,21 @@ export default function ScenarioPanel() {
       <p className="dim">
         {fire.floor ? `Fire: ${(room ?? ghost)?.name ?? fire.room ?? '?'} on ${fire.floor}` : 'No fire placed yet'}
       </p>
+      <label>
+        Building material (illustrative)
+        <select value={live ? material : DEFAULT_MATERIAL} disabled={!live} onChange={(e) => setMaterial(e.target.value as Material)}>
+          {MATERIALS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!live && (
+        <p className="dim note">
+          Material needs the live backend. In static mode, What if… shows the precomputed wood and drywall pair where a building has one.
+        </p>
+      )}
       <label>
         Occupants
         <input

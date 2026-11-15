@@ -10,6 +10,8 @@ const AXE_ALLOW = []
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = join(root, 'qa')
+// A11's run/v0 with fire.rooms (the room-to-room spread), kept in contracts/ and never copied into public/.
+const FIXTURE = join(root, '..', 'contracts', 'run.spread.fixture.json')
 const opens = []
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--open' && process.argv[i + 1]) opens.push(resolve(process.argv[++i]))
@@ -83,8 +85,8 @@ try {
       problems.push(`step "${name}" failed: ${String(e).split('\n')[0]}`)
     }
   }
-  const shot = async (name) => {
-    await page.screenshot({ path: join(out, name + '.png') })
+  const shot = async (name, pg = page) => {
+    await pg.screenshot({ path: join(out, name + '.png') })
     shots.push(name)
   }
   const tabShots = async (prefix) => {
@@ -124,8 +126,8 @@ try {
     }
     lines.push(`axe ${label}: ${res.length} violations`)
   }
-  const changedShare = (b64) =>
-    page.evaluate(async (b64) => {
+  const changedShare = (b64, pg = page) =>
+    pg.evaluate(async (b64) => {
         const img = new Image()
         img.src = 'data:image/png;base64,' + b64
         await img.decode()
@@ -156,8 +158,8 @@ try {
         }
         return diff / (d.length / 4)
     }, b64)
-  const blankCheck = async (name) => {
-    const canvases = page.locator('main.center canvas')
+  const blankCheck = async (name, pg = page) => {
+    const canvases = pg.locator('main.center canvas')
     const n = await canvases.count()
     if (n === 0) {
       problems.push(`no canvas in ${name}`)
@@ -166,7 +168,7 @@ try {
     }
     for (let i = 0; i < n; i++) {
       const buf = await canvases.nth(i).screenshot()
-      const share = await changedShare(buf.toString('base64'))
+      const share = await changedShare(buf.toString('base64'), pg)
       lines.push(`${name}: canvas ${i} changed ${(share * 100).toFixed(1)}%`)
       if (share < 0.01) problems.push(`blank canvas in ${name}`)
     }
@@ -266,6 +268,10 @@ try {
     const note = (await notes.count()) > 0 ? ((await notes.first().textContent()) ?? '') : ''
     if (!/Sprinklers need the live backend/.test(note)) problems.push(`whatif-static: note lacks "Sprinklers need the live backend": "${note}"`)
     if (!/fires:/.test(note)) problems.push(`whatif-static: note lacks the measured "fires:" quote: "${note}"`)
+    // The building material needs the live backend too: the select is off, and says so.
+    const mat = page.locator('.scenario label', { hasText: 'Building material (illustrative)' }).locator('select')
+    if ((await mat.count()) !== 1 || (await mat.isEnabled())) problems.push('whatif-static: the material select is missing or enabled in static mode')
+    if ((await page.locator('.scenario p.note', { hasText: 'Material needs the live backend' }).count()) !== 1) problems.push('whatif-static: the note "Material needs the live backend" is missing')
     await shot('whatif-static')
     await page.evaluate(() => window.__app.setState({ card: null }))
   })
@@ -388,6 +394,302 @@ try {
       window.__clock.getState().seek(60)
     })
     await page.waitForTimeout(500)
+  })
+  // The room-to-room spread on screen, in a fresh page and the stacked view. The fixture is A11's run/v0 with fire.rooms: it is read from disk
+  // (contracts/run.spread.fixture.json) and opened through File > Open, so it never has to be copied into public/ (which would publish it).
+  await step('fire-spread', async () => {
+    if (!existsSync(FIXTURE)) return void problems.push('fire-spread: fixture missing (A11 part 1)')
+    const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'))
+    const bad = (m) => problems.push(`fire-spread: ${m}`)
+    const pf = await ctx.newPage()
+    pf.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[fire-spread] ${m.text()}`)
+    })
+    pf.on('pageerror', (e) => errors.push(`[fire-spread] ${String(e)}`))
+    try {
+      await pf.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await pf.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      const seek = async (t) => {
+        await pf.evaluate((t) => {
+          window.__clock.setState({ playing: false })
+          window.__clock.getState().seek(t)
+        }, t)
+        return pf.evaluate(() => window.__clock.getState().t)
+      }
+      // What the active run itself lists at t: the rooms of its fire.rooms with ignite <= t, those the building has, and per floor.
+      const own = (t) =>
+        pf.evaluate((t) => {
+          const a = window.__app.getState()
+          const run = a.runs[a.activeRunKey].run
+          const has = (r) => !!a.building.floors.find((f) => f.id === r.floor)?.rooms.some((x) => x.id === r.room)
+          const rooms = (run.fire.rooms ?? []).filter((r) => r.ignite <= t)
+          const byFloor = {}
+          for (const r of rooms) if (has(r)) byFloor[r.floor] = (byFloor[r.floor] ?? 0) + 1
+          // The doors the run has closed by t, that the building has (BlockedDoors draws each once).
+          const closed = new Set()
+          for (const e of run.events) if (e.type === 'door_blocked' && e.t <= t && a.building.floors.some((f) => (!e.floor || f.id === e.floor) && f.doors.some((d) => d.id === e.door))) closed.add(`${e.floor}|${e.door}`)
+          return { hasRooms: !!run.fire.rooms?.length, burning: rooms.length, drawn: rooms.filter(has).length, byFloor, closed: closed.size }
+        }, t)
+      // The frame loop writes __spread: wait for it to reach the wanted numbers (or give up), then read it.
+      const spread = async (want) => {
+        await pf.waitForFunction(([b, d]) => window.__spread.burning === b && window.__spread.drawn === d, [want.burning, want.drawn], { timeout: 10000 }).catch(() => {})
+        return pf.evaluate(() => ({ ...window.__spread }))
+      }
+      const openRun = async (run, file = null) => {
+        await pf.locator('#open-file').setInputFiles(file ?? { name: `${run.id}.json`, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(run)) })
+        await pf.waitForFunction((id) => {
+          const a = window.__app.getState()
+          return !!a.activeRunKey && a.runs[a.activeRunKey].run.id === id && a.loading === null
+        }, run.id, { timeout: 60000 })
+      }
+
+      // 1. The default run, paused at 60 s: it draws exactly the rooms its own fire.rooms lists by then (none for a run without the field).
+      const t60 = await seek(60)
+      const w60 = await own(t60)
+      const g60 = await spread(w60)
+      if (g60.drawn !== w60.drawn) bad(`the default run at ${t60} s draws ${g60.drawn} burning rooms, its own fire.rooms lists ${w60.drawn}`)
+      if (!w60.hasRooms) {
+        if ((await pf.locator('p.spreadline').count()) !== 0) bad('a run without fire.rooms shows the spread line')
+        if ((await pf.locator('section.legendcard', { hasText: 'Burning room' }).count()) !== 0) bad('a run without fire.rooms shows the burning-room legend row')
+      }
+      lines.push(`fire-spread: the default run has ${w60.hasRooms ? 'fire.rooms' : 'no fire.rooms'}; ${g60.drawn} rooms drawn at ${t60} s`)
+
+      // 2. The fixture, opened through the file input in the building it was made for.
+      const bid = await pf.evaluate(() => window.__app.getState().building.id)
+      if (bid !== fx.buildingId) {
+        await nav(pf, true)
+        await pf.locator('select[aria-label="Building"]').selectOption(fx.buildingId)
+        await pf.waitForFunction((id) => {
+          const a = window.__app.getState()
+          return a.building?.id === id && a.loading === null && !!a.activeRunKey
+        }, fx.buildingId, { timeout: 60000 })
+        await nav(pf, false)
+      }
+      await openRun(fx, FIXTURE)
+      const times = (fx.fire.rooms ?? []).map((r) => r.ignite).sort((a, b) => a - b)
+      const dur = await pf.evaluate(() => window.__clock.getState().duration)
+      if (times.length === 0) return void bad('the fixture lists no fire.rooms')
+      // The second ignition (one second past it); with one room, the first. Never past the end of the run.
+      const t1 = await seek(Math.min(dur, times.length > 1 ? times[1] + 1 : times[0]))
+      const want = await own(t1)
+      const wantFile = times.filter((x) => x <= t1).length
+      if (want.burning !== wantFile) bad(`at ${t1} s the page's run lists ${want.burning} burning rooms, the fixture file ${wantFile}`)
+      const got = await spread(want)
+      if (got.burning !== want.burning || got.drawn !== want.drawn) bad(`at ${t1} s __spread is ${JSON.stringify(got)}, want burning ${want.burning} and drawn ${want.drawn}`)
+      const sayN = new RegExp(`\\b${want.burning} rooms? burning`)
+      await pf.waitForFunction((src) => new RegExp(src).test(document.querySelector('p.spreadline')?.textContent ?? ''), sayN.source, { timeout: 8000 }).catch(() => {})
+      const line = (await pf.locator('p.spreadline').allInnerTexts()).join(' | ')
+      if (!sayN.test(line) || !/illustrative/.test(line)) bad(`the spread line reads "${line}", want "${want.burning} room(s) burning" and "illustrative"`)
+      const matName = fx.fire.material ? fx.fire.material[0].toUpperCase() + fx.fire.material.slice(1) : null
+      if (matName && !line.includes(matName)) bad(`the spread line reads "${line}", want the material ${matName}`)
+      const legend = await pf.locator('section.legendcard').innerText()
+      for (const row of ['Burning room (illustrative)', 'Fire marker', 'Closed door']) if (!legend.includes(row)) bad(`the legend lacks "${row}"`)
+      if ((await pf.evaluate(() => window.__app.getState().viewMode)) !== 'stacked') bad('the page left the stacked view')
+      // The doors the run closes show as they close: none before the first, all of them at the end.
+      if (got.closed !== want.closed) bad(`at ${t1} s ${got.closed} closed doors are drawn, the run has closed ${want.closed}`)
+      // The Fire layer off draws no tint.
+      await pf.evaluate(() => window.__app.setState((s) => ({ layers: { ...s.layers, fire: false } })))
+      await pf.waitForFunction(() => window.__spread.drawn === 0, null, { timeout: 8000 }).catch(() => {})
+      const off = await pf.evaluate(() => window.__spread.drawn)
+      if (off !== 0) bad(`with the Fire layer off ${off} burning rooms are still drawn`)
+      await pf.evaluate(() => window.__app.setState((s) => ({ layers: { ...s.layers, fire: true } })))
+      await spread(want)
+      await pf.waitForTimeout(800)
+      await shot('fire-spread', pf)
+      await blankCheck('fire-spread', pf)
+      await axeOn(pf, 'fire-spread', '.app')
+      await pf.evaluate(() => window.__app.setState({ fireGlow: 2 }))
+      await pf.waitForTimeout(800)
+      await shot('fire-spread-high', pf)
+      await pf.evaluate(() => window.__app.setState({ fireGlow: 1 }))
+
+      // The end of the run: every burning room, and the doors closed by then.
+      const tEnd = await seek(dur)
+      const wEnd = await own(tEnd)
+      const gEnd = await spread(wEnd)
+      if (gEnd.drawn !== wEnd.drawn || gEnd.closed !== wEnd.closed) bad(`at the end (${tEnd} s) __spread is ${JSON.stringify(gEnd)}, want drawn ${wEnd.drawn} and closed ${wEnd.closed}`)
+      await pf.waitForTimeout(500)
+      await shot('fire-spread-end', pf)
+
+      // 3. Hidden floors. The fixture's ignition times are halved so that every floor it lists burns within the run; then each floor view must draw
+      // only the burning rooms of the floors it shows (fire on a hidden floor never shows on another one), and the tints must read on the slabs.
+      const fast = { ...fx, id: `${fx.id}-fast`, fire: { ...fx.fire, rooms: fx.fire.rooms.map((r) => ({ ...r, ignite: Math.round(r.ignite / 2) })) } }
+      await openRun(fast)
+      const tFast = await seek(dur)
+      const wFast = await own(tFast)
+      const floorsBurning = Object.keys(wFast.byFloor)
+      const views = [['stacked', undefined, wFast.drawn]]
+      for (const f of floorsBurning) views.push(['single', f, wFast.byFloor[f]])
+      views.push(['side', undefined, wFast.drawn], ['ghost', floorsBurning[0], wFast.drawn])
+      for (const [mode, floor, n] of views) {
+        await pf.evaluate(([m, f]) => window.__app.getState().setViewMode(m, f), [mode, floor])
+        const g = await spread({ burning: wFast.burning, drawn: n })
+        if (g.drawn !== n) bad(`${mode}${floor ? ' ' + floor : ''} view: ${g.drawn} burning rooms drawn, want ${n} (rooms on the floors that view shows)`)
+        if (mode !== 'stacked' && !(mode === 'single' && floor !== floorsBurning[0])) {
+          await pf.waitForTimeout(1500)
+          await shot(`fire-spread-${mode}`, pf)
+          await blankCheck(`fire-spread-${mode}`, pf)
+        }
+      }
+      lines.push(`fire-spread: views draw ${views.map(([m, f, n]) => `${m}${f ? ' ' + f : ''} ${n}`).join(', ')} of ${wFast.drawn} burning rooms`)
+      // A close-up on a burning room other than the ignition room (the fire sphere stands there): it carries the marker cone.
+      const near = await pf.evaluate((rooms) => {
+        const a = window.__app.getState()
+        for (const r of rooms.slice(1)) {
+          const room = a.building.floors.find((f) => f.id === r.floor)?.rooms.find((x) => x.id === r.room)
+          if (!room || ['stair', 'corridor'].includes(room.type)) continue
+          const n = room.polygon.length
+          return { floor: r.floor, at: [room.polygon.reduce((s, p) => s + p[0], 0) / n, room.polygon.reduce((s, p) => s + p[1], 0) / n] }
+        }
+        return null
+      }, fast.fire.rooms)
+      if (near) {
+        await pf.evaluate((t) => window.__app.getState().flyTo(t.floor, t.at), near)
+        await pf.waitForTimeout(3500)
+        await shot('fire-spread-close', pf)
+      }
+      await pf.evaluate(() => window.__app.getState().setViewMode('stacked'))
+
+      // 4. A run without fire.rooms (an old precomputed run, an older backend) draws no spread at all, and nothing fails.
+      const plain = { ...fx, id: `${fx.id}-plain`, fire: { floor: fx.fire.floor, x: fx.fire.x, y: fx.fire.y, hrr: fx.fire.hrr } }
+      await openRun(plain)
+      await seek(dur)
+      await pf.waitForTimeout(1200)
+      const none = await pf.evaluate(() => ({ ...window.__spread }))
+      if (none.drawn !== 0 || none.burning !== 0 || none.closed !== 0) bad(`a run without fire.rooms reports ${JSON.stringify(none)}`)
+      if ((await pf.locator('p.spreadline').count()) !== 0) bad('a run without fire.rooms shows the spread line')
+      if ((await pf.locator('section.legendcard').innerText()).includes('Burning room')) bad('a run without fire.rooms shows the burning-room legend row')
+      await blankCheck('fire-spread-none', pf)
+    } finally {
+      await pf.close()
+    }
+  })
+  // The wood-against-drywall pair. The fixture stands in for the wood run: the index is the real one plus one entry for it, and the file is served from disk.
+  await step('material-pair', async () => {
+    const bad = (m) => problems.push(`material-pair: ${m}`)
+    const before = problems.length
+    if (!existsSync(FIXTURE)) return void problems.push('material-pair: fixture missing (A11 part 1)')
+    const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'))
+    const realIndex = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    const base = realIndex.runs.find((r) => r.buildingId === fx.buildingId && r.whatIf === null)
+    if (!base) return void bad(`the demo index has no baseline run for building ${fx.buildingId}`)
+    const entry = { id: 'qa-wood', buildingId: fx.buildingId, label: 'Wood (qa fixture)', file: 'fixtures/fire-spread.run.json', whatIf: 'material', material: 'wood', fire: base.fire, doors: {} }
+    const watch = (pg, tag) => {
+      pg.on('console', (m) => {
+        if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[${tag}] ${m.text()}`)
+      })
+      pg.on('pageerror', (e) => errors.push(`[${tag}] ${String(e)}`))
+    }
+    // Compares in a fresh page: clicks the button, waits for the split view with `wood` active and its partner loaded, and returns the .whatif text.
+    const compare = async (pg, woodId, shotName) => {
+      await pg.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      await pg.evaluate(() => {
+        window.__clock.setState({ playing: false })
+        window.__clock.getState().seek(30)
+        window.__app.setState({ card: 'scenario' })
+      })
+      const before = await pg.evaluate(() => window.__clock.getState().t)
+      const btn = pg.getByRole('button', { name: 'Compare wood with drywall' })
+      await btn.scrollIntoViewIfNeeded()
+      await btn.click()
+      await pg.waitForFunction((id) => {
+        const a = window.__app.getState()
+        const w = a.runs[id]
+        return a.split && a.activeRunKey === id && !!w?.whatIf && !!a.runs[w.whatIf.baselineKey] && a.whatIfBusy === null
+      }, woodId, { timeout: 60000 })
+      const s = await pg.evaluate((id) => {
+        const a = window.__app.getState()
+        const w = a.runs[id]
+        return { keys: a.compareKeys, base: w.whatIf.baselineKey, material: w.whatIf.material, door: w.whatIf.door, t: window.__clock.getState().t, err: a.whatIfError, canvases: document.querySelectorAll('main.center canvas').length }
+      }, woodId)
+      if (s.err) bad(`whatIfError "${s.err}"`)
+      if (s.keys.join() !== `${s.base},${woodId}`) bad(`compareKeys ${s.keys.join()}, want ${s.base},${woodId}`)
+      if (s.material !== 'wood' || s.door !== '') bad(`the wood run's whatIf is ${JSON.stringify({ material: s.material, door: s.door })}`)
+      if (Math.abs(s.t - before) > 0.2) bad(`the clock moved from ${before} s to ${s.t} s`)
+      if (s.canvases !== 2) bad(`${s.canvases} canvases in the split view, want 2`)
+      const text = await pg.locator('.scenario .whatif').innerText()
+      if (!text.includes('Wood instead of drywall')) bad(`.whatif lacks "Wood instead of drywall": "${text.slice(0, 160)}"`)
+      await pg.locator('.scenario .whatif .whatif-card').first().scrollIntoViewIfNeeded()
+      await pg.waitForTimeout(1500)
+      await shot(shotName, pg)
+      await blankCheck(shotName, pg)
+      await axeOn(pg, shotName, '.app')
+    }
+    // The real index with the material entry FIRST: it must never pass for a door what-if, wherever it stands in the list.
+    const routes = async (pg) => {
+      await pg.route('**/demo/index.json', async (route) => {
+        const res = await route.fetch()
+        const idx = await res.json()
+        idx.runs = [entry, ...idx.runs]
+        await route.fulfill({ response: res, json: idx })
+      })
+      await pg.route('**/demo/fixtures/fire-spread.run.json', (route) => route.fulfill({ path: FIXTURE, contentType: 'application/json' }))
+    }
+    const pm = await ctx.newPage()
+    watch(pm, 'material-pair')
+    try {
+      await routes(pm)
+      await pm.goto(`${server.resolvedUrls.local[0]}?qa&building=${fx.buildingId}`)
+      await pm.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      // The static what-if still finds the door what-if of the baseline (its propped run), not the material entry.
+      const propped = realIndex.runs.find((r) => r.buildingId === fx.buildingId && r.whatIf === 'propped' && r.fire.room === base.fire.room)
+      if (propped) {
+        await pm.evaluate(() => window.__app.setState({ card: 'scenario' }))
+        await pm.locator('.scenario .whatif button.run').click()
+        await pm.waitForFunction(() => window.__app.getState().whatIfBusy === null, null, { timeout: 60000 })
+        const w = await pm.evaluate(() => {
+          const a = window.__app.getState()
+          return { key: a.activeRunKey, material: !!a.runs['qa-wood'], err: a.whatIfError }
+        })
+        if (w.key !== propped.id || w.material || w.err) bad(`the static what-if loaded ${w.key} (material run loaded: ${w.material}, error "${w.err}"), want the propped run ${propped.id}`)
+      }
+      await compare(pm, 'qa-wood', 'material-pair')
+      // The link of the pair opens the pair again: a wood entry in `r` loads its drywall partner first, and the link's split keeps the two side by side.
+      await pm.waitForTimeout(1500)
+      const hash = await pm.evaluate(() => location.hash)
+      if (!/(^#|&)r=qa-wood(&|$)/.test(hash) || !/(^#|&)split=1(&|$)/.test(hash)) bad(`the link of the pair reads "${hash}", want r=qa-wood and split=1`)
+      const pl = await ctx.newPage()
+      watch(pl, 'material-pair-link')
+      try {
+        await routes(pl)
+        await pl.goto(`${server.resolvedUrls.local[0]}?qa${hash}`)
+        await pl.waitForFunction(() => {
+          const a = window.__app?.getState()
+          const w = a?.runs['qa-wood']
+          return !!w?.whatIf && a.activeRunKey === 'qa-wood' && a.split && !!a.runs[w.whatIf.baselineKey] && a.loading === null
+        }, null, { timeout: 60000 })
+        const l = await pl.evaluate(() => ({ whatIf: window.__app.getState().runs['qa-wood'].whatIf, canvases: document.querySelectorAll('main.center canvas').length }))
+        if (l.whatIf.material !== 'wood' || l.whatIf.door !== '' || l.canvases !== 2) bad(`the pair's link restored ${JSON.stringify(l)}, want the wood variant in a split view`)
+      } catch (e) {
+        bad(`the pair's link did not restore the pair: ${String(e).split('\n')[0]}`)
+      } finally {
+        await pl.close()
+      }
+    } finally {
+      await pm.close()
+    }
+    // The main page reads the real index: the section is there exactly when the loaded building has a wood run in it.
+    const loaded = await page.evaluate(() => window.__app.getState().building.id)
+    const woods = realIndex.runs.filter((r) => r.whatIf === 'material' && r.material === 'wood' && realIndex.runs.some((b) => b.buildingId === r.buildingId && b.whatIf === null && b.fire.room === r.fire.room))
+    await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
+    await page.waitForTimeout(600)
+    const shown = (await page.locator('.scenario .whatif .material').count()) > 0
+    const wanted = woods.some((r) => r.buildingId === loaded)
+    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the material section for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a wood run for it`)
+    await page.evaluate(() => window.__app.setState({ card: null }))
+    lines.push(`material-pair: the real index has ${woods.length} wood run(s); the main page (${loaded}) ${shown ? 'shows' : 'hides'} the section`)
+    if (problems.length === before) lines.push('material-pair ok: the static what-if skips the material entry, Compare splits the view at the same time, the link of the pair restores it')
+    // With a real pair in the index (A11 part 2's rerun), it is compared the same way.
+    if (woods[0]) {
+      const pr = await ctx.newPage()
+      watch(pr, 'material-pair-real')
+      try {
+        await pr.goto(`${server.resolvedUrls.local[0]}?qa&building=${woods[0].buildingId}`)
+        await compare(pr, woods[0].id, 'material-pair-real')
+      } finally {
+        await pr.close()
+      }
+    }
   })
   await tabShots('')
   await step('cred', async () => {
@@ -867,6 +1169,92 @@ try {
       if (problems.length === before) lines.push('live-fallback ok: http, failed, slow and down end on the nearest precomputed fire; none keeps the error')
     } finally {
       await p3.close()
+    }
+  })
+  await step('whatif-fallback', async () => {
+    // As live-fallback, for what-ifs, in a fresh page with the same routes: every way a live what-if can fail must end on the baseline's precomputed
+    // propped-door run with an amber note (and live mode kept, unless the connection itself was refused); with none for the building, the live error stays.
+    const p5 = await ctx.newPage()
+    const before = problems.length
+    p5.on('console', (m) => {
+      if (m.type() === 'error' && !/calibration\.json|status of 500|ERR_CONNECTION_REFUSED/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[whatif-fallback] ${m.text()}`)
+    })
+    p5.on('pageerror', (e) => errors.push(`[whatif-fallback] ${String(e)}`))
+    try {
+      let how = 'http'
+      const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+      await p5.route('**/runs', (r) => (how === 'down' ? r.abort('connectionrefused') : how === 'http' ? json(r, { detail: 'qa: backend error' }, 500) : json(r, { runId: 'qa-run' })))
+      await p5.route('**/runs/qa-run', (r) => json(r, how === 'failed' ? { status: 'error', error: 'qa: run failed' } : { status: 'running' }))
+      await p5.goto(`${server.resolvedUrls.local[0]}?qa`)
+      await p5.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
+      const first = await p5.evaluate(() => {
+        // pollRun's wait is 180 s of Date.now: this lets the page's clock jump over it
+        const real = Date.now.bind(Date)
+        let skew = 0
+        Date.now = () => real() + skew
+        window.__skew = (ms) => (skew += ms)
+        return window.__app.getState().activeRunKey
+      })
+      // The baseline's own precomputed what-if: the propped-door entry of the same fire in the index.
+      const want = await p5.evaluate(async (first) => {
+        const idx = await (await fetch('demo/index.json')).json()
+        const st = window.__app.getState()
+        const baseline = idx.runs.find((r) => r.id === first)
+        return idx.runs.find((r) => r.buildingId === st.building.id && r.whatIf === 'propped' && r.fire.room === baseline?.fire.room) ?? null
+      }, first)
+      if (!want) return void problems.push('whatif-fallback: the first baseline has no propped what-if in the demo index')
+      await p5.evaluate(() => window.__app.setState({ card: 'scenario' }))
+      const runButton = p5.locator('.whatif button.run')
+      const read = () =>
+        p5.evaluate(() => {
+          const a = window.__app.getState()
+          return { key: a.activeRunKey, note: a.whatIfNote, fallback: a.whatIfFallback, err: a.whatIfError, mode: a.mode, notice: a.notice, busy: a.whatIfBusy }
+        })
+      const settle = () => p5.waitForFunction(() => window.__app.getState().whatIfBusy === null, null, { timeout: 30000 })
+      const prefix = 'Live what-if unavailable: showing the precomputed what-if'
+      for (const name of ['http', 'failed', 'slow', 'down']) {
+        how = name
+        await p5.evaluate((first) => {
+          window.__app.getState().switchRun(first)
+          window.__app.setState({ mode: 'live', notice: null })
+        }, first)
+        await runButton.click()
+        if (name === 'slow') {
+          await p5.waitForFunction(() => /Running… \d+ s/.test(window.__app.getState().whatIfBusy ?? ''), null, { timeout: 15000 })
+          await p5.evaluate(() => window.__skew(200000))
+        }
+        await settle()
+        const s = await read()
+        const dom = await p5.locator('.whatif p.warn').allInnerTexts()
+        const wantMode = name === 'down' ? 'static' : 'live'
+        if (s.key !== want.id) problems.push(`whatif-fallback (${name}): active run ${s.key}, want ${want.id}`)
+        if (!s.note?.startsWith(prefix) || !s.fallback) problems.push(`whatif-fallback (${name}): note "${s.note}", fallback ${s.fallback}, want a note starting "${prefix}"`)
+        if (dom.length !== 1 || dom[0] !== s.note) problems.push(`whatif-fallback (${name}): the note is on screen as ${JSON.stringify(dom)}, want "${s.note}"`)
+        if ((await p5.locator('.whatif p.warn[role=status]').count()) !== 1) problems.push(`whatif-fallback (${name}): the note is not a p.warn[role=status]`)
+        if (s.err) problems.push(`whatif-fallback (${name}): whatIfError "${s.err}" beside a precomputed what-if`)
+        if (s.mode !== wantMode) problems.push(`whatif-fallback (${name}): mode ${s.mode}, want ${wantMode}`)
+        if (name === 'down' && s.notice !== 'Backend unreachable: precomputed runs only') problems.push(`whatif-fallback (down): notice "${s.notice}"`)
+        if (name === 'http') {
+          await p5.locator('.whatif p.warn').scrollIntoViewIfNeeded()
+          await p5.screenshot({ path: join(out, 'whatif-fallback.png') })
+          shots.push('whatif-fallback')
+          await axeOn(p5, 'whatif-fallback', '.app')
+        }
+      }
+      // No precomputed what-if for the building: today's error, and no note.
+      how = 'http'
+      await p5.evaluate(() => {
+        const a = window.__app
+        a.setState({ mode: 'live', notice: null, building: { ...a.getState().building, id: 'qa-none' } })
+      })
+      await runButton.click()
+      await settle()
+      const s = await read()
+      if (s.err !== 'Request failed (500): qa: backend error' || s.note || s.fallback) problems.push(`whatif-fallback (none): whatIfError "${s.err}", note "${s.note}", fallback ${s.fallback}`)
+      if (!(await p5.locator('.whatif p.err').allInnerTexts()).includes('Request failed (500): qa: backend error')) problems.push('whatif-fallback (none): the error is not on screen')
+      if (problems.length === before) lines.push('whatif-fallback ok: http, failed, slow and down end on the precomputed what-if; none keeps the error')
+    } finally {
+      await p5.close()
     }
   })
   if (FPS && opens.length > 0)

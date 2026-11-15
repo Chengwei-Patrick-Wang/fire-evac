@@ -28,10 +28,11 @@ import { useTour, useTourKeys } from './tour/tour'
 import ShareCard from './ui/ShareCard'
 import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
 import { findPrecomputedVariant } from './model/whatif'
+import { materialPartner } from './model/fireSpread'
 import { loadHeadlines, readPack } from './model/headlines'
 import { cameraPose, decodeLink, linkCtl, loadIndexIds, useLinkSync } from './model/link'
 import type { LinkState } from './model/link'
-import type { DemoRun, DoorState } from './data/types'
+import type { DemoRun } from './data/types'
 import { SAMPLE_BUILDING } from './model/sample'
 import {
   ApiError,
@@ -81,7 +82,7 @@ async function selectBuilding(id: string) {
   }
 }
 
-async function ensureRun(entry: DemoRun, whatIf?: { baselineKey: string; door: string; state: DoorState }) {
+async function ensureRun(entry: DemoRun, whatIf?: LoadedRun['whatIf']) {
   const st = useApp.getState()
   if (st.runs[entry.id]) {
     if (st.activeRunKey !== entry.id) st.switchRun(entry.id)
@@ -100,7 +101,14 @@ export async function restoreLink(link: LinkState) {
     if (entry) {
       if (st0.activeRunKey !== entry.id || !st0.runs[entry.id]) {
         if (entry.whatIf === null) await ensureRun(entry)
-        else {
+        else if (entry.whatIf === 'material') {
+          // A material run (the wood one) opens against its drywall partner; the link says whether the two are side by side.
+          const partner = materialPartner(entries, entry)
+          if (partner) {
+            await ensureRun(partner)
+            await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', material: entry.material ?? 'wood' })
+          } else await ensureRun(entry)
+        } else {
           const base = entries.find((e) => e.buildingId === entry.buildingId && e.fire.room === entry.fire.room && e.whatIf === null)
           if (base) {
             await ensureRun(base)

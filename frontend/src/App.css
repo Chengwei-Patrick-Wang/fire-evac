@@ -167,6 +167,9 @@ a { color: var(--primary-text); }
 .sw.dot.ringed { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #DC2626; box-shadow: inset 0 0 0 1.5px var(--surface); }
 .sw.ring { width: 12px; height: 12px; margin: 0 -1px; border: 2px solid #FB923C; border-radius: 50%; background: transparent; }
 .sw.ring.red { border-color: #DC2626; }
+/* The spread's rows: a burning room (orange turning red), the cone that marks it, and the door the fire closed (a plain swatch). */
+.sw.ramp { border-radius: 2px; background: linear-gradient(135deg, #F97316, #DC2626); }
+.sw.cone { background: #F97316; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .lc-note { margin: 6px 0 0; font-size: var(--fs-xs); color: var(--text-2); }
 .lc-switch { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 0; font-size: var(--fs-sm); }
 .lc-track { position: relative; width: 28px; height: 16px; flex: none; border-radius: 8px; background: var(--border-strong); }
@@ -283,6 +286,7 @@ a { color: var(--primary-text); }
 .kpi-ico { flex: none; color: var(--text-2); }
 .kpi-ico.safe { color: var(--safe); }
 .kpi-ico.severe { color: var(--severe); }
+.spreadline { margin: 0 0 8px; font-size: var(--fs-sm); }
 .congestion, .alerts { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .congestion li { display: grid; grid-template-columns: 56px minmax(0, 1fr) 76px; align-items: center; gap: var(--s2); font-size: var(--fs-sm); }
 .cbar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
@@ -304,7 +308,10 @@ a { color: var(--primary-text); }
 .scenario .doorrow { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
 .scenario .err, .weak .err { color: var(--danger); }
 .scenario .warn { color: var(--warn); }
-.whatif .note { margin: 2px 0 6px; font-size: var(--fs-xs); }
+.whatif .note, .scenario > .note { margin: 2px 0 6px; font-size: var(--fs-xs); }
+.whatif .material { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: var(--s2); }
+.whatif .material h5 { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
+.whatif .material .note { margin: 0; }
 .whatif .doorrow { flex-wrap: wrap; }
 .whatif .doorrow select:first-child { flex: 1 1 100%; min-width: 0; }
 ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; font-size: var(--fs-sm); color: var(--muted); }
