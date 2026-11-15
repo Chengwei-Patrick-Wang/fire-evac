@@ -1,5 +1,12 @@
 # Overnight status
 
+## Sun 01:50: two frontend branches waiting; demo rerun running
+
+- **Ready, held until the rerun finishes (around 03:00):**
+  - **ws-e (E40):** a simpler app. The What-if section, Share, Save PNG, Agent view, the Credibility tab, the Edit and Settings menus, the door-state legend rows and the demo tour are gone. The wood/drywall and rules/Claude comparisons now sit next to their settings, the analytics panel can expand, and the user's logo is the favicon.
+  - **ws-e2 (E41):** a flickering fire light, flame sprites and ceiling smoke (57-59 FPS on the clinic).
+- **Demo rerun with fire-safe routing,** in the main checkout since 01:00: example building done, clinic nearly done, office next. Both frontend builds write into frontend/public/demo, so they merge after the rerun.
+
 ## Sat 23:30: Althan's fire-safe routing is merged
 
 **Merged:** codex/fire-safe-routing (Althan; af311c6, 74b04ac), combined with tonight's main through merge-routing.
