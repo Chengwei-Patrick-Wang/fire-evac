@@ -709,12 +709,21 @@ def check_decide():
                 {"i": 9, "action": "go", "target": "E1", "reason": "no such observation"},
             ]}
             out = features.decide_batch(obs)
+            # obs[2] has one option (E2; its current target E1 is gone): decided in code, never sent, whatever the answer says
+            only = {"target": "E2", "action": "reroute", "reason": features.ONLY_OPTION_REASON}
             assert out == [{"target": "E2", "action": "go", "reason": "E1 has a queue"},
                            {"target": "SB", "action": "reroute", "reason": "Stair A is smoky and queued"},
-                           None], out
+                           only], out
             prompt, kwargs = calls[-1]
             assert len(calls) == 1 and kwargs["schema"] == features.DECISION_SCHEMA and kwargs["thinking"] == "minimal"
-            assert kwargs["timeout"] >= 30 and all(f'"id":"{o["id"]}"' in prompt for x in obs for o in x["options"]), prompt
+            assert kwargs["timeout"] >= 30 and all(f'"id":"{o["id"]}"' in prompt for x in obs[:2] for o in x["options"]), prompt
+            assert '"i":2,' not in prompt and '"i":0,' in prompt and '"i":1,' in prompt, prompt
+            asked = len(calls)
+            assert features.decide(obs[2]) == only and llm_pkg.decide(obs[2]) == only and len(calls) == asked
+
+            # a target that is not an option of its observation is dropped (None, the rules)
+            answer["value"] = {"decisions": [{"i": 0, "action": "go", "target": "E9", "reason": "E9 is not an option here"}]}
+            assert features.decide_batch(obs) == [None, None, only]
 
             answer["value"] = {"decisions": [{"i": 0, "action": "wait", "target": "SB", "reason": "keep going"}]}
             assert features.decide(obs[1]) == {"target": "SA", "action": "wait", "reason": "keep going"}
@@ -726,15 +735,146 @@ def check_decide():
 
             for value in (None, {"decisions": "junk"}, {"no": "decisions"}, "text"):
                 answer["value"] = value
-                assert features.decide_batch(obs) == [None, None, None], value
+                assert features.decide_batch(obs) == [None, None, only], value  # the one-option obs needs no answer
             answer["raise"] = RuntimeError("smoke: the model call blew up")
-            assert features.decide_batch(obs) == [None, None, None] and features.decide(obs[0]) is None
+            assert features.decide_batch(obs) == [None, None, only] and features.decide(obs[0]) is None
             answer.pop("raise")
             asked = len(calls)
             assert features.decide_batch([None, {}, {"options": []}, {"options": [{"name": "no id"}]}]) == [None] * 4
             assert len(calls) == asked, "malformed observations reached the model"
     finally:
         llm.complete = real
+
+
+def check_decide_reasons():
+    """What decide_batch does with a decision's reason and with an obs that has one option (offline: hand-made reasons
+    in a stubbed model's answer, no API call). A field name (estS, queueWaitS, distM, visibilityM) becomes plain words;
+    a reason about age, walking pace, ability, other traits or panic, or one that argues with itself ("?", "No,"), or an
+    empty one, is replaced by a plain reason built from the option numbers; a long one is cut to 12 words; a plain one
+    stands as written. An obs with exactly one usable option is decided in code and never sent: go to it, or keep it,
+    "Only one way out from here"; the list keeps its length and order."""
+    import re
+
+    from backend.llm import client as llm
+    from backend.llm import features
+
+    def option(oid, dist, queue=0, tail=0.0, kind="exit"):
+        return {"id": oid, "kind": kind, "name": oid + " name", "dist": dist, "queue": queue, "flow": 1.0, "tail": tail}
+
+    def make(options, current=None, trigger="start"):
+        return {"idx": 1, "t": 40.0, "floor": "F1", "x": 1.0, "y": 1.0, "profile": "typical", "visibility": 30.0,
+                "speed": 1.2, "current": current, "trigger": trigger, "options": options}
+
+    two = make([option("E1", 12.0, queue=2), option("E2", 30.0)])  # estS 12.0 and 25.0: E1 is the shortest
+    fields = re.compile(r"\b(est_?s|queue_?wait_?s|dist_?m|visibility_?m)\b", re.I)
+    plain = "Shortest estimated time"  # what two[E1] gets when its reason is dropped
+    cases = [  # (the model's reason, what the decision carries)
+        ("E1 has a queue", "E1 has a queue"),  # plain: as written
+        ("keep going", "keep going"),
+        ("E1 estS 14.0 beats E2 25.0", "E1 estimated time 14.0 beats E2 25.0"),
+        ("EstS 14.0 is lower at E1", "Estimated time 14.0 is lower at E1"),
+        ("lower queueWaitS and distM at E1; visibilityM is fine", "lower queue wait and distance at E1; visibility is fine"),
+        ("E1 est_s 14 vs E2 est_s 25", "E1 estimated time 14 vs E2 estimated time 25"),
+        ("East stair exit has much shorter walk and estS, 10.0s versus 17.0s.",  # 13 words: cut at the clause
+         "East stair exit has much shorter walk and estimated time"),
+        ("one two three four five six seven eight nine ten eleven twelve thirteen", "one two three four five six seven eight nine ten eleven twelve"),
+        ("Main entrance estS 14.0 beats East stair exit 24.3 by over 20%.",  # 13 words: cut, and not left on "by over"
+         "Main entrance estimated time 14.0 beats East stair exit 24.3"),
+        ("Thick smoke and long queue at Stair A; Stair B has a shorter queue and clearer path",  # 15 words: the name stays
+         "Thick smoke and long queue at Stair A"),
+        ("Only option available; 19.4m walk, but stair queue and smoke slow progress.",  # route words only: stands (12 words)
+         "Only option available; 19.4m walk, but stair queue and smoke slow progress."),
+        ("Short walking distance, clear air", "Short walking distance, clear air"),
+        ("Older person with a slow walking pace, so the near exit", plain),
+        ("Elderly occupant needs the closest exit", plain),
+        ("Main entrance is nearer and has lower estimated time for older occupant.", plain),
+        ("His age makes the stairs hard", plain),
+        ("Keep current stair despite slower walking speed", plain),
+        ("Slow walker, so E1", plain),
+        ("Her pace is low", plain),
+        ("Visitor does not know the building", plain),
+        ("Stair assist needed, long queue accepted", plain),
+        ("Mobility limits mean the nearer exit", plain),
+        ("Avoid panic, take E1", plain),
+        ("Scared of the smoke, go to E1", plain),
+        ("East stair exit estS 19.1 is lower than main entrance at 16.6? No, E1 is lower", plain),
+        ("E2 is lower? E1 is quicker at 14.0", plain),
+        ("No, E1 is lower", plain),
+        ("Hmm, actually E1 is better", plain),
+        ("", plain),
+        (None, plain),
+    ]
+
+    def ask(observations, reasons):
+        answer = {"decisions": [{"i": i, "action": "go", "target": "E1", "reason": r} for i, r in enumerate(reasons)]}
+        calls = []
+
+        def fake_complete(prompt, **kwargs):
+            calls.append(prompt)
+            return answer
+
+        real = llm.complete
+        llm.complete = fake_complete
+        try:
+            with env(LLM_PROVIDER="claude"), redirect_stderr(io.StringIO()):
+                return features.decide_batch(observations), calls
+        finally:
+            llm.complete = real
+
+    out, calls = ask([two] * len(cases), [reason for reason, _ in cases])
+    assert len(out) == len(cases) and len(calls) == len(features._chunks(list(range(len(cases))))), (len(out), len(calls))
+    for (reason, want), decision in zip(cases, out):
+        assert decision == {"target": "E1", "action": "go", "reason": want}, (reason, decision)
+        got = decision["reason"]
+        assert not fields.search(got) and not features._PERSONAL.search(got) and not features._SELF_CONTRADICTION.search(got), got
+        assert 0 < len(got.split()) <= features.REASON_WORDS, got
+
+    # the reason built from the option numbers: what the chosen option has over the one with the shortest estimated time
+    def plain_reason(options, target, current=None):
+        compact = features._compact(0, make(options, current))
+        return features._plain_reason(compact, target, current)
+
+    best = option("E1", 12.0, queue=6)  # estS 16.0
+    table = [
+        (plain_reason([option("E1", 12.0), option("E2", 30.0)], "E1"), "Shortest estimated time"),
+        (plain_reason([best, option("E2", 24.0)], "E2"), "Shorter queue, a bit farther"),  # estS 20.0, no queue
+        (plain_reason([option("E1", 14.0), option("E2", 6.0, queue=20)], "E2"), "Closer, though the queue is longer"),
+        (plain_reason([option("E1", 14.0), option("E2", 6.0, tail=20.0)], "E2"), "Closer way out"),
+        (plain_reason([option("E1", 10.0, queue=4), option("E2", 10.0, tail=20.0)], "E2"), "Shorter queue"),
+        (plain_reason([option("E1", 10.0), option("E2", 10.0, tail=5.0)], "E2", "E2"), "Keeps the current way out"),
+        (plain_reason([option("E1", 10.0), option("E2", 10.0, tail=5.0)], "E2", "E1"), "Estimated times are close"),
+        (plain_reason([option("E1", 10.0)], "E1"), features.ONLY_OPTION_REASON),
+    ]
+    for got, want in table:
+        assert got == want, (got, want)
+        assert not features._PERSONAL.search(got) and not features._SELF_CONTRADICTION.search(got) and len(got.split()) <= 12
+
+    # one option: decided in code, in place, with no call; the others still go to the model
+    keep = make([option("E2", 9.0, queue=4)], current="E2", trigger="tick")
+    go = make([option("E1", 12.0)])
+    moved = make([option("E2", 9.0)], current="E1", trigger="blocked")
+    twin = make([option("E3", 5.0), option("E3", 5.0)])  # the same option twice is still one way out
+    nothing = {"options": [{"name": "no id"}]}
+    only = features.ONLY_OPTION_REASON
+    out, calls = ask([go, two, keep, None, moved, nothing, twin], [None, "E1 is closer", None, None, None, None, None])
+    assert out == [{"target": "E1", "action": "go", "reason": only},
+                   {"target": "E1", "action": "go", "reason": "E1 is closer"},
+                   {"target": "E2", "action": "wait", "reason": only},
+                   None,
+                   {"target": "E2", "action": "reroute", "reason": only},
+                   None,
+                   {"target": "E3", "action": "go", "reason": only}], out
+    assert len(calls) == 1 and '"i":1,' in calls[0], calls
+    for k in (0, 2, 3, 4, 5, 6):
+        assert f'"i":{k},' not in calls[0], (k, calls[0])
+    out, calls = ask([go, keep, moved], [None] * 3)
+    assert [d["reason"] for d in out] == [only] * 3 and calls == [], (out, calls)  # all one-option: no call at all
+    prompt = features._decide_prompt([features._compact(0, two)])
+    assert "at most 12 plain words" in prompt and "Never use field names" in prompt and "Never mention age" in prompt, prompt
+    for name in ("estS", "queueWaitS", "distM", "visibilityM"):
+        assert name in prompt  # the fields are named for the model, and the reason may not use them
+    with env(LLM_PROVIDER="off"), redirect_stderr(io.StringIO()):
+        assert features.decide_batch([go, two, keep]) == [None, None, None]  # off means off: the rules decide
 
 
 def check_llm_client():
@@ -1270,11 +1410,12 @@ def check_llm(client):
     doors = check_door_names()
     check_report_summary(client)
     check_decide()
+    check_decide_reasons()
     check_decide_chunks()
     check_llm_client()
     check_llm_claude()
     print(f"OK  llm: report card (template, AI path stubbed, AI summary, cache, private building), run card, "
-          f"door names (D's, {doors} doors), decide_batch (chunks, parallel), Gemini retries and fallback, "
+          f"door names (D's, {doors} doors), decide_batch (one-option obs decided in code, plain reasons, chunks, parallel), Gemini retries and fallback, "
           f"Claude client (roles, structured output, fallbacks, refusals, spend, budget), {time.time() - t0:.1f} s")
 
 
