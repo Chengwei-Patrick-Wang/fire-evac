@@ -463,7 +463,8 @@ def check_spread_slow(building, scenario):
     ten = ("R102", "L1", "R103", "R104", "R105", "R106", "R107", "R108", "SA1", "SB1")
     pinned = {"drywall": [("F1", "R101", 0.0), ("F1", "C1", 180.0)] + [("F1", r, 360.0) for r in ten],
               "wood": ([("F1", "R101", 0.0), ("F1", "C1", 90.0)] + [("F1", r, 180.0) for r in ten]
-                       + [("F2", "SA2", 270.0), ("F2", "SB2", 270.0), ("F2", "C2", 360.0)])}
+                       # D26: R201 stands over R101, so with wood it ignites through the floor at 300 s
+                       + [("F2", "SA2", 270.0), ("F2", "SB2", 270.0), ("F2", "R201", 300.0), ("F2", "C2", 360.0)])}
     rooms = {(f["id"], r["id"]): Polygon(r["polygon"]).buffer(0.01) for f in building["floors"] for r in f["rooms"]}
     trapped = {}
     for material, wanted in pinned.items():
@@ -473,7 +474,7 @@ def check_spread_slow(building, scenario):
         assert burning["occupants"]["total"] == 160
         result = run(building, burning, FireModel(building, burning))
         assert [(e["floor"], e["room"], e["ignite"]) for e in result["fire"]["rooms"]] == wanted, material
-        assert len(wanted) == {"drywall": 12, "wood": 15}[material] and result["fire"]["material"] == material
+        assert len(wanted) == {"drywall": 12, "wood": 16}[material] and result["fire"]["material"] == material  # wood was 15
         ignite = {(e["floor"], e["room"]): e["ignite"] for e in result["fire"]["rooms"]}
         reasons, terminal = Counter(), Counter()
         for event in result["events"]:

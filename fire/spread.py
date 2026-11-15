@@ -1,4 +1,4 @@
-"""Room-to-room fire spread: an illustrative ignition schedule (D25).
+"""Room-to-room fire spread: an illustrative ignition schedule (D25), through doors, walls and floors (D26).
 
 `FireModel` turns the schedule into closed doors and extra heat. The presets below are round numbers picked for a legible
 demo: not engineering values, not validated, not for compliance.
@@ -15,14 +15,16 @@ from pathlib import Path
 import shapely
 from shapely.geometry import Polygon
 
-# Seconds. flashover: a room is fully involved this long after it ignites. door / wall: the delay before a burning
-# room ignites a neighbor across a door (or a stair link) / across a shared wall.
-MATERIALS = {"concrete": {"flashover": 600.0, "door": 300.0, "wall": 1200.0},
-             "drywall": {"flashover": 300.0, "door": 180.0, "wall": 600.0},
-             "wood": {"flashover": 150.0, "door": 90.0, "wall": 240.0}}
+# Seconds. flashover: a room is fully involved this long after it ignites. door / wall / floor: the delay before a
+# burning room ignites a neighbor across a door (or a stair link) / across a shared wall / through the floor into the
+# room above it (upward only, see floor_links; a concrete slab practically never passes fire within a run).
+MATERIALS = {"concrete": {"flashover": 600.0, "door": 300.0, "wall": 1200.0, "floor": 3600.0},
+             "drywall": {"flashover": 300.0, "door": 180.0, "wall": 600.0, "floor": 900.0},
+             "wood": {"flashover": 150.0, "door": 90.0, "wall": 240.0, "floor": 300.0}}
 DEFAULT_MATERIAL = "drywall"
 WALL_GAP_M = 0.25   # two rooms whose polygons are at most this far apart can share a wall (an IFC wall is 0.12 m)
 WALL_MIN_M = 1.0    # ... when each room's boundary runs along the other at least this far
+FLOOR_MIN_M2 = 2.0  # a room links up to a room on the level above when their plans overlap at least this much (m2)
 CACHE_SIZE = 4
 
 _CACHE = OrderedDict()
@@ -104,21 +106,65 @@ def _build_links(building: dict) -> dict:
     return links
 
 
+def _level_rooms(floor: dict) -> list:
+    """[(room id, polygon)] of the floor's rooms without its stair rooms (those a stair names, and those typed "stair")."""
+    stairs = {stair.get("room") for stair in floor.get("stairs", [])}
+    return [(room["id"], _shape(room)) for room in floor.get("rooms", [])
+            if room["id"] not in stairs and room.get("type") != "stair"]
+
+
+def _build_floor_links(building: dict) -> dict:
+    floors = building["floors"]
+    rises = {(floor["id"], room["id"]): {} for floor in floors for room in floor.get("rooms", [])}
+    # Like the stair links: each floor to the next one up by level (two floors on one level never link).
+    order = sorted(range(len(floors)), key=lambda i: floors[i]["level"])
+    for low, high in zip(order, order[1:]):
+        if floors[low]["level"] == floors[high]["level"]:
+            continue
+        lower, upper = _level_rooms(floors[low]), _level_rooms(floors[high])
+        if not lower or not upper:
+            continue
+        near = shapely.STRtree([shape for _, shape in upper]).query([shape for _, shape in lower], predicate="intersects")
+        for i, j in sorted({(int(i), int(j)) for i, j in zip(*near)}):
+            if shapely.intersection(lower[i][1], upper[j][1]).area >= FLOOR_MIN_M2:
+                rises[(floors[low]["id"], lower[i][0])][(floors[high]["id"], upper[j][0])] = "floor"
+    return rises
+
+
+def _graph(building: dict) -> tuple:
+    """(building, room links, floor links), cached by object identity like fire.grid.get_graph, which retains buildings
+    so ids are not reused."""
+    key = id(building)
+    if key not in _CACHE:
+        _CACHE[key] = (building, _build_links(building), _build_floor_links(building))
+        if len(_CACHE) > CACHE_SIZE:
+            _CACHE.popitem(last=False)
+    _CACHE.move_to_end(key)
+    return _CACHE[key]
+
+
 def room_links(building: dict) -> dict:
     """{(floor id, room id): {(floor id, room id): "door" | "wall"}} for every room, symmetric, in building order.
 
     A door link joins the two rooms of a door that connects two rooms of its floor, and, as stair links, the stair
     rooms of one group on consecutive floors. A wall link joins two rooms of one floor that stand within WALL_GAP_M
-    of each other along at least WALL_MIN_M. A pair with both keeps "door". Read-only: cached by object identity like
+    of each other along at least WALL_MIN_M. A pair with both keeps "door". Floors link only through stairs here: the
+    floor links between rooms (D26) are one-way and come from `floor_links`. Read-only: cached by object identity like
     fire.grid.get_graph, which retains buildings so ids are not reused; treat a building as immutable after its first lookup.
     """
-    key = id(building)
-    if key not in _CACHE:
-        _CACHE[key] = (building, _build_links(building))
-        if len(_CACHE) > CACHE_SIZE:
-            _CACHE.popitem(last=False)
-    _CACHE.move_to_end(key)
-    return _CACHE[key][1]
+    return _graph(building)[1]
+
+
+def floor_links(building: dict) -> dict:
+    """{(floor id, room id): {(floor id, room id): "floor"}} for every room, in building order: the upward links (D26).
+
+    A room links to each room on the next level up whose plan polygon overlaps its own by at least FLOOR_MIN_M2 square
+    meters (shapely intersection area). Stair rooms are left out on both levels: stair links already join them.
+    The links go one way, up: heat rises, and fire passing down through a floor is much slower and rare, so the room
+    above never links back (it is left out of the model, not just made slow). Only the next level up is linked, so a
+    room two floors up burns after the room between them. Same cache and the same rules as `room_links`: read-only.
+    """
+    return _graph(building)[2]
 
 
 def origin_room(building: dict, fire: dict) -> tuple[str, str] | None:
@@ -144,9 +190,10 @@ def origin_room(building: dict, fire: dict) -> tuple[str, str] | None:
 def ignition_schedule(building: dict, scenario: dict) -> list[dict]:
     """Rooms on fire by maxTime: [{"room", "floor", "ignite"}], origin first, then by (ignite, floor, room) in building order.
 
-    Dijkstra over `room_links` from the ignition room at `fire.start`: ignite(n) = ignite(r) + the material's delay
-    for the link. Only rooms with ignite <= scenario maxTime (default 600, the sim's) are listed, except the ignition
-    room, which is always first. Sprinklers keep the fire in the ignition room. No ignition room gives [].
+    Dijkstra over `room_links` and the upward `floor_links` from the ignition room at `fire.start`: ignite(n) = ignite(r)
+    + the material's delay for the link. Only rooms with ignite <= scenario maxTime (default 600, the sim's) are listed,
+    except the ignition room, which is always first. Sprinklers keep the fire in the ignition room. No ignition room
+    gives [].
     """
     fire = scenario["fire"]
     material = material_name(fire)
@@ -163,6 +210,7 @@ def ignition_schedule(building: dict, scenario: dict) -> list[dict]:
     if scenario.get("sprinklers"):
         return [entry(origin, 0.0)]
     links = room_links(building)
+    rises = floor_links(building)  # one way, up: the rooms above a room, never the rooms below
     nodes = list(links)  # building order: the heap key is (time, floor index, room index)
     rank = {key: n for n, key in enumerate(nodes)}
     delays = MATERIALS[material]
@@ -175,7 +223,7 @@ def ignition_schedule(building: dict, scenario: dict) -> list[dict]:
         if delay > best[key]:
             continue
         settled.append((delay, n))
-        for other, kind in links[key].items():
+        for other, kind in (*links[key].items(), *rises[key].items()):
             later = delay + delays[kind]
             if later < best.get(other, math.inf) and round(start + later, 2) <= limit:
                 best[other] = later
