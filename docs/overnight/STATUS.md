@@ -1,5 +1,22 @@
 # Overnight status
 
+## Sun 07:30: all overnight work merged; the final demo data is committed; the deploy waits for a Netlify sign-in
+
+**Merged overnight:**
+- D26: fire spreads up through floors.
+- The Claude crowd fixes: stair arrivals like the rules crowd, no calls for one-option decisions, plain checked reasons.
+- C28: people who see others evacuating start sooner and lean toward the exits others take.
+- B16: an example office copy with an extra stairwell and exit (example-office-plus).
+- E40 to E44: the simpler app, fire visuals, the blinking alarm, tabs that lead with the story, and a split view with settings per side and two buildings, with the building filling the viewer.
+- Small fixes: Run needs a placed fire, a flame legend icon, the slow checks.
+
+**Final demo data (3ce175d):** 23 runs, 4 batches, 17.0 MB. It covers every building, including example-office-plus. The rules-vs-Claude pair: 412 Claude decisions, none decided by the rules, 0 trapped in both. Four report cards written by Claude. check_all ALL OK on all 7 packages, and the deploy dry run's privacy scan is clean.
+
+**Waiting on the lead:**
+- **Deploy:** the Netlify session in the browser pane expired. Sign in to app.netlify.com, then deploy: Project configuration > Developer settings > Build settings > Configure > Active builds > Save; Deploys > Trigger deploy > Deploy project; once it says Published, set Stopped builds again.
+- **Drafts:** the Devpost and video drafts and a morning checklist are in docs/submission/ (local only).
+- **Lewis House** is in the laptop's dropdown only (private, data/private/).
+
 ## Sun 01:50: two frontend branches waiting; demo rerun running
 
 - **Ready, held until the rerun finishes (around 03:00):**
