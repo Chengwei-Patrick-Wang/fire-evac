@@ -1,4 +1,4 @@
-"""Downward stair routes and seeded, width-limited admission beside assistance waits."""
+"""Seeded stair transfers; optional bidirectional routes share flight capacity."""
 from __future__ import annotations
 
 from bisect import bisect_right
@@ -9,6 +9,7 @@ import numpy as np
 from shapely.geometry import Point, Polygon
 
 STAIR_SPEED = 0.55
+STAIR_UP_FACTOR = 0.8  # Illustrative ascent assumption; not a measured calibration.
 STAIR_FLOW = 1.1
 WALK_SPEED = 1.2
 
@@ -44,7 +45,7 @@ def stair_blocked(floor, stair, blocked):
 
 
 class StairNet:
-    def __init__(self, building, walkable=None, blocked=frozenset()):
+    def __init__(self, building, walkable=None, blocked=frozenset(), bidirectional=False):
         floors = sorted(building["floors"], key=lambda f: f["level"])
         exits = {f["id"]: [e for e in f["exits"] if e["door"] not in blocked and (walkable is None or
                  reachable_zone(Polygon(e["polygon"]), walkable[f["id"]],
@@ -52,6 +53,7 @@ class StairNet:
         self._links = {f["id"]: [] for f in floors}
         self._reachable = {}
         self._admissions = {}
+        levels = {f['id']: f['level'] for f in floors}
         for floor in floors:
             lower = [f for f in floors if f["level"] < floor["level"]]
             below = lower[-1] if lower else None
@@ -90,6 +92,20 @@ class StairNet:
             self._reachable[floor["id"]] = bool(exits[floor["id"]]) or any(
                 self._reachable[link["to"]] for link in self.links(floor["id"]))
 
+        # Reverse links retain the original stair id for downward travel.
+        # Keep the legacy downward-only API for standalone callers.
+        if bidirectional:
+            by_id = {f['id']: f for f in floors}
+            downward = [(fid, link) for fid in self._links for link in list(self._links[fid])]
+            for fid, link in downward:
+                source = next(s for s in by_id[link['to']]['stairs'] if s['group'] == link['group'])
+                self._links[link['to']].append({**link, 'stair': source['id'] + '@' + fid,
+                    'to': fid, 'polygon': link['arrival'], 'arrival': link['polygon']})
+        self._flights = {}
+        for fid, links in self._links.items():
+            for link in links:
+                link['direction'] = 'up' if levels[link['to']] > levels[fid] else 'down'
+
     def links(self, floor_id):
         return self._links[floor_id]
 
@@ -98,16 +114,28 @@ class StairNet:
             if not self._reachable.get(floor_id, False):
                 raise ValueError(f"floor {floor_id} has no stair route to an exit")
 
-    def enter(self, idx, t, floor_id, group, rng, speed=STAIR_SPEED, hold_until=None):
+    def enter(self, idx, t, floor_id, group, rng, speed=STAIR_SPEED, hold_until=None, to=None):
         if speed <= 0:
             raise ValueError("stair speed must be positive")
-        link = next(link for link in self.links(floor_id) if link["group"] == group)
+        link = next(link for link in self.links(floor_id) if link["group"] == group and (to is None or link["to"] == to))
+        if link["direction"] == "up":
+            speed *= STAIR_UP_FACTOR
         pos = find_spot(link["arrival"], [], rng)
         if pos is None:
             raise ValueError(f"floor {floor_id} stair {group}: cannot sample arrival polygon")
         admissions = self._admissions.setdefault((floor_id, group), [])
         ready = t if hold_until is None else max(t, hold_until)
         gap = 1 / (STAIR_FLOW * link["width"])
+        flight = (tuple(sorted((floor_id, link['to']))), group)
+        reservations = self._flights.setdefault(flight, [])
+        duration = link['length'] / speed
+        # Opposing flows share one flight: do not overlap directions in transit.
+        while True:
+            conflicts = [end for start, end, origin in reservations
+                         if origin != floor_id and ready < end and ready + duration > start]
+            if not conflicts:
+                break
+            ready = max(conflicts)
         slot = bisect_right(admissions, ready)
         enter = max(ready, admissions[slot - 1] + gap) if slot else ready
         # Reserve the earliest free slot; a future assistance reservation must
@@ -115,7 +143,18 @@ class StairNet:
         while slot < len(admissions) and admissions[slot] - enter < gap:
             enter = admissions[slot] + gap
             slot += 1
+        while True:
+            conflicts = [end for start, end, origin in reservations
+                         if origin != floor_id and enter < end and enter + duration > start]
+            if not conflicts:
+                break
+            enter = max(conflicts)
+            slot = bisect_right(admissions, enter)
+            while slot < len(admissions) and admissions[slot] - enter < gap:
+                enter = admissions[slot] + gap
+                slot += 1
         admissions.insert(slot, enter)
+        reservations.append((enter, enter + duration, floor_id))
         entry = {"enter": enter, "arrive": enter + link["length"] / speed,
                  "to": link["to"], "pos": pos}
         if hold_until is not None:
