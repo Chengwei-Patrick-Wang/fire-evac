@@ -339,18 +339,18 @@ Part 1 needs nothing. Part 2 needs D25 and C27 on `main`.
     - a hand-made example batch (base material `wood`, runs for R101 and L1) gives `Fire spread at illustrative wood speeds: 14.0 other rooms per fire on average by 400 s, at most 14 rooms (fire in Kitchen (R101))`;
     - a drywall run with rooms at 0, 180 and 360 s gives `Fire spread at illustrative drywall speeds: 2 other rooms by 360 s`.
 - [x] **Step 9: Regenerate.** Run `python tools/build_examples.py`: `contracts/run.example.json` now carries C27's `fire.rooms` (D25's 12-room drywall list) and `"material": "drywall"`. Then delete `contracts/run.spread.fixture.json` and its writer; from here E builds on real files.
-- [ ] **Step 10: Rerun the demo.** In the background: `OPENBLAS_NUM_THREADS=1 python tools/precompute_demo.py --all --thin > debug/a11-precompute.log 2>&1`.
+- [x] **Step 10: Rerun the demo.** In the background: `OPENBLAS_NUM_THREADS=1 python tools/precompute_demo.py --all --thin > debug/a11-precompute.log 2>&1`.
   - Don't pass `--resume`, except to continue this same rerun.
   - It ends `OK: <n> runs, 3 batches, <x> MB`; seven of the runs are the office's.
   - **Risk:** about 2 h on the shared laptop (per the design), so start by 9 PM. If time runs short, run `--building office` first (it has the pair), then `--building example-office --building clinic`.
-- [ ] **Step 11: Verify Part 2:**
+- [x] **Step 11: Verify Part 2:**
   - `python -m backend.smoke_test` passes.
   - `python -c "import json; r=json.load(open('contracts/run.example.json')); print(len(r['fire']['rooms']), r['fire']['material'])"` prints `12 drywall`.
   - In `frontend/public/demo/index.json`, `office-R143-wood` has `"material": "wood"` and `"whatIf": "material"`, and `office-R143-base` has `"material": "drywall"`. Every `run-*.json` has `fire.rooms`.
   - `report-office.md` contains `illustrative drywall speeds`. The prototype predicts about `6.5 other rooms per fire on average by 400 s, at most 20 rooms (fire in SCIF OPEN OFFICE (R143))`.
   - `python tools/check_all.py` prints `ALL OK` (buildings, sim, fire, backend, tracer, frontend, privacy). Its frontend build runs `sync-demo`, which copies the new `run.example.json` into the demo folder; commit that copy with the data.
   - Put the pair's numbers (t90, trapped, rooms on fire), the run time and the folder size under this heading.
-- [ ] **Step 12: Commit Part 2:**
+- [x] **Step 12: Commit Part 2:**
   - First the code: `git add tools backend contracts docs/superpowers/plans/2026-11-13-ws-a-integration.md && git commit -m "feat(tools): wood-vs-drywall what-if and fire spread in report cards"` (no attribution lines).
   - Then the data: `git add frontend/public/demo && git commit -m "chore(demo): precompute rerun with simulated fire spread"` (no attribution lines).
   - **Risk:** until E handles `whatIf: "material"`, the current app reads a deep link to the wood run as a door what-if (`door ? propped`). Push the data commit to `main` only with or after E's material handling; Netlify redeploys on every push.
