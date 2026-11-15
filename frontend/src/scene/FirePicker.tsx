@@ -47,6 +47,8 @@ export default function FirePicker() {
                     st.patchDraft({
                       fire: { ...d.fire, floor: fl.id, room: room.id, x: +x.toFixed(2), y: +y.toFixed(2), start: 0 },
                     })
+                  // The fire is placed: the next click is no longer a placement ("Move fire" on the scenario card turns it back on).
+                  st.setPlacing(false)
                 }}
               >
                 <planeGeometry args={[b.maxX - b.minX + 1, b.maxY - b.minY + 1]} />

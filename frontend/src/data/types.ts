@@ -78,7 +78,7 @@ export interface Scenario {
   doors?: Record<string, DoorState>
   alarmTime?: number
   maxTime?: number
-  /** Who makes the people's choices: `rules` (default), `mixed` (10 to 20 of them ask the model) or `llm` (all of them, at most 200 people). */
+  /** Who decides where people go: the hard-coded rules (the default), some people asking Claude, or everyone asking Claude. */
   brain?: 'rules' | 'mixed' | 'llm'
 }
 
@@ -220,11 +220,10 @@ export interface DemoRun {
   buildingId: string
   label: string
   file: string
-  /** `'propped'`: a door what-if. `'material'`: the same fire at another (illustrative) material. `'brain'`: the same fire with
-   *  every person's choices made by Claude (`brain: 'llm'`), the baseline's partner. */
+  /** `'propped'`: a door what-if. `'material'`: the same fire at another (illustrative) material. `'brain'`: the same fire with Claude deciding for the crowd. */
   whatIf: null | 'propped' | 'material' | 'brain'
-  brain?: 'rules' | 'mixed' | 'llm'
   material?: Material
+  brain?: 'rules' | 'mixed' | 'llm'
   fire: { floor: string; room: string; x: number; y: number; type: string }
   doors: Record<string, DoorState>
   metrics?: { t50: number | null; t90: number | null; t100: number | null; evacuated: number; trapped: number }
