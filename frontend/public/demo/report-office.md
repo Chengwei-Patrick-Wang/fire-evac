@@ -1,6 +1,10 @@
+## AI summary (Claude)
+
+Across 297 simulated fires in the NIBS Office, most people got out, but queues formed where the two stairs empty to the outside. Exit Stair S1 (west) was the worst, with 17 people queued at peak, because one ground-floor door takes the whole stair's flow. Exit Stair S2 (east) also backed up. Fires starting in OPEN OFFICE (R203c) trapped 13.7 people on average. A likely fix is a wider or double discharge door at Exit Stair S1 (west), which is worth checking.
+
 ### Report card: NIBS Office
 
-**Stair doors propped open: smoke exposure +69% (+398 person-seconds in smoke per fire), while 90% out 0.5 s sooner on average (slower in 0 of 24 fires).**
+**Blocking Exit Stair S1 (west) raised smoke exposure by 109% and left 90% of occupants out 12.7 s later on average.**
 
 297 fires simulated (99 rooms × 3 seeds). Smoke: 184 person-seconds in smoke per fire on average; 0.1 people per fire at an illustrative smoke dose of 1 (in 15 of 297 fires). 90% out: median 136 s, worst 191 s. People trapped in 19 of 297 fires. Fire spread at illustrative drywall speeds: 6.5 other rooms per fire on average by 400 s, at most 20 rooms (fire in SCIF OPEN OFFICE (R143)).
 
@@ -8,13 +12,13 @@
 
 1. **Exit Stair S1 (west)** · from STAIR (RS101) to outside, F1
    - Exit Stair S1 (west): 17 people queued at peak; 226 person-seconds of waiting on average, 4 of them in smoke, across 297 fires.
-   - **Fix:** Spread the load: make the other exits as easy to find and reach as this one (signs, lighting, clear routes), or widen this exit.
+   - **Fix:** Replace the single discharge door at the bottom of Exit Stair S1 (west) with a wider double door opening straight outside.
 2. **Fires starting in OPEN OFFICE (R203c)** · F2
    - Fire in OPEN OFFICE (R203c): 13.7 people trapped on average; 90% out after 142 s (3 fires).
-   - **Fix:** Fires starting here hurt the evacuation most: check detection and alarm coverage, and whether nearby rooms need a second way out.
+   - **Fix:** Add a second exit route from OPEN OFFICE (R203c) toward the far stair, and add smoke detection tied to an immediate alarm.
 3. **Exit Stair S2 (east)** · from STAIR (RS102) to outside, F1
    - Exit Stair S2 (east): 13 people queued at peak; 115 person-seconds of waiting on average, 6 of them in smoke, across 297 fires.
-   - **Fix:** Spread the load: make the other exits as easy to find and reach as this one (signs, lighting, clear routes), or widen this exit.
+   - **Fix:** Add signs steering ground-floor occupants to other exits so the Exit Stair S2 (east) discharge door serves mainly people coming down the stair.
 
 Queues mark where the building runs short of capacity, not how people behave.
 
@@ -28,4 +32,4 @@ Queues mark where the building runs short of capacity, not how people behave.
 
 *Numbers come from the simulation, not the model. Illustrative fire model; rule-based agents; fixes are ideas to check with a fire protection engineer, not a compliance result.*
 
-*Template summary (AI unavailable)*
+*Written by Claude*

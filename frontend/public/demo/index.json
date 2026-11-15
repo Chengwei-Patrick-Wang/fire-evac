@@ -1,6 +1,6 @@
 {
   "version": "demo-index/v0",
-  "generated": "2026-11-15T01:46:48Z",
+  "generated": "2026-11-15T02:51:59Z",
   "buildings": [
     {
       "id": "example-office",
@@ -42,6 +42,32 @@
       "metrics": {
         "t50": 95.29,
         "t90": 120.73,
+        "t100": null,
+        "evacuated": 159,
+        "trapped": 1
+      }
+    },
+    {
+      "id": "example-office-R101-claude",
+      "buildingId": "example-office",
+      "label": "Kitchen, Claude crowd (illustrative)",
+      "file": "run-example-office-R101-claude.json",
+      "whatIf": "brain",
+      "brain": "llm",
+      "material": "drywall",
+      "fire": {
+        "floor": "F1",
+        "room": "R101",
+        "x": 8,
+        "y": 3,
+        "type": "kitchen"
+      },
+      "doors": {
+        "DSA1": "closed"
+      },
+      "metrics": {
+        "t50": 93.77,
+        "t90": 122.63,
         "t100": null,
         "evacuated": 159,
         "trapped": 1
