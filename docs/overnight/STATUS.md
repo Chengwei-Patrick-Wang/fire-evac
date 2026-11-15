@@ -1,5 +1,23 @@
 # Overnight status
 
+## Sat 21:05: new demo data merged; the app's AI is switching to Claude
+
+**Merged:**
+- **A11 part 2, the demo rerun:** every demo run now has fire spreading room to room, with C27's traps and the hairline fix.
+  - The office's worst fire, R203c, traps 13.7 people per fire, down from 29.0. R237b now traps nobody.
+  - New office pair, R143 with drywall vs wood: drywall gets 90% out in 134 s with 0 trapped; with wood 90% never get out, 33 are trapped, and 37 rooms burn instead of 21.
+  - Propped stair doors: about 69% more time in smoke, and evacuation is no slower.
+
+**Running on the lead's machine:**
+- **A12, the Claude switch:** the user moved the app's AI from Gemini to the Claude API, paid from their own credits. Opus 5.5 writes the report cards, which gain an AI summary, and does the tracer first pass. Haiku 5.5 drives the "LLM crowd". A spend cap is built in.
+- **E39:**
+  - a Crowd setting (rules, some people ask Claude, everyone asks Claude);
+  - Claude's reasons in the person readout;
+  - a rules-vs-Claude comparison and the AI summary in the Report tab;
+  - the Fire and scenario card review: plain labels, fire size and speed instead of the fire type, click to place the fire, no door overrides.
+
+**Netlify:** builds stay stopped. One deploy goes out after the Claude work lands, with the user's OK already given.
+
 ## Sat 19:45: E38 merged; Netlify builds stopped
 
 - **E38 is merged** (on screen, burning rooms tint orange to red, fire markers appear, and closed doors turn red; the material setting works in live mode), so every UI task in the Ember plan is on main.
