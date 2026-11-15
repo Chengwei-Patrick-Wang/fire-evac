@@ -5,7 +5,7 @@ import { useApp } from '../store/app'
 import { useA11y } from '../ui/a11y'
 import { floorAlpha, toPlaced, toWorld } from './geometry'
 import { usePlace } from './usePlace'
-import { centroidOf, rampColor, riskRange, roomRiskColor, stairScore } from '../model/spots'
+import { centroidOf, rampColor, RISK_NAMES, riskRange, roomRiskColor, stairScore } from '../model/spots'
 import Heatmap from '../replay/Heatmap'
 import type { BuildingFloor, Vec2 } from '../data/types'
 import { readStability, roomRange, span } from '../model/ranges'
@@ -107,7 +107,6 @@ export default function RiskOverlay() {
   const place = usePlace()
   const crowding = useApp((s) => s.crowding)
   const selected = useApp((s) => s.selectedRoom)
-  const metric = useApp((s) => s.riskMetric)
   const heat = useApp((s) => s.layers.heatmap)
   // The crowding toggle shows the batch heatmap through the shared Heatmap layer.
   useEffect(() => {
@@ -135,14 +134,13 @@ export default function RiskOverlay() {
           <div className="tip3d" style={{ whiteSpace: 'nowrap' }}>
             <b>{sel.id}</b> {selRoom.name}
             <br />
-            riskT90: {sel.riskT90 === null ? 'not reached' : `${sel.riskT90.toFixed(0)} s`}
-            {t90r ? ` (${span(t90r)}${stab ? ` over ${stab.n} seeds` : ''})` : ''}
-            <br />
-            riskTrapped: {sel.riskTrapped === null ? 'n/a' : sel.riskTrapped}
+            {RISK_NAMES.riskTrapped}: {sel.riskTrapped === null ? 'n/a' : sel.riskTrapped}
             {trr ? ` (${span(trr, '', 1)})` : ''}
             <br />
-            fires started here: {sel.n}
-            {metric === 'riskT90' ? '' : ''}
+            {RISK_NAMES.riskT90}: {sel.riskT90 === null ? 'not reached' : `${sel.riskT90.toFixed(0)} s`}
+            {t90r ? ` (${span(t90r)}${stab ? ` over ${stab.n} seeds` : ''})` : ''}
+            <br />
+            Fires started here: {sel.n}
           </div>
         </Html>
       )}

@@ -35,7 +35,8 @@ export function encodeLink(s: LinkState): string {
   if (s.r) p.set('r', s.r)
   if (s.t !== undefined) p.set('t', r1(s.t))
   if (s.tab) p.set('tab', s.tab)
-  if (s.m === 'riskTrapped') p.set('m', s.m)
+  // The default metric is people trapped: a link says so only for the other one (an old link with m=riskTrapped still decodes).
+  if (s.m === 'riskT90') p.set('m', s.m)
   if (s.l) p.set('l', s.l.join('_'))
   if (s.x !== undefined) p.set('x', s.x.toFixed(2))
   if (s.f) p.set('f', s.f)

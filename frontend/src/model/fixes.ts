@@ -52,6 +52,9 @@ export function readSkipped(src: unknown): { id: string; reason: string }[] {
   return f.filter((e): e is { id: string; reason: string } => isObj(e) && typeof e.id === 'string' && typeof e.reason === 'string')
 }
 
+/** "Keep X clear (vs blocked)" is the "X blocked" what-if turned round, so the fix list leaves it out. */
+export const isKeepClear = (fix: Fix): boolean => fix.kind === 'keepClear' || fix.id.startsWith('keepClear')
+
 export function fixDoor(fix: Fix): string | null {
   if (typeof fix.door === 'string') return fix.door
   for (const p of ['widen-', 'keepClear-']) if (fix.id.startsWith(p) && fix.id.length > p.length) return fix.id.slice(p.length)

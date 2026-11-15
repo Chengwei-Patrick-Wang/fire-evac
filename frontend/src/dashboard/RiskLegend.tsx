@@ -1,9 +1,9 @@
 import { useApp } from '../store/app'
-import { NEVER_COLOR, NODATA_COLOR, riskRange } from '../model/spots'
+import { NEVER_COLOR, NODATA_COLOR, RISK_NAMES, riskRange } from '../model/spots'
 
 const UNITS = {
-  riskT90: 'riskT90: mean time to 90 % out when the fire starts here, s',
-  riskTrapped: 'riskTrapped: mean people trapped when the fire starts here',
+  riskT90: `${RISK_NAMES.riskT90}: average seconds when the fire starts here`,
+  riskTrapped: `${RISK_NAMES.riskTrapped}: average number when the fire starts here`,
 }
 
 export function Stamps() {

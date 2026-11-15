@@ -1,5 +1,5 @@
 import { useApp } from '../store/app'
-import { fixLine, fixTarget, fixVerdict, skippedLine } from '../model/fixes'
+import { fixLine, fixTarget, fixVerdict, isKeepClear, skippedLine } from '../model/fixes'
 import type { Fix, Verdict } from '../model/fixes'
 import type { SpotLike } from '../model/spots'
 
@@ -16,9 +16,11 @@ const BADGE: Record<Verdict, { cls: string; text: string }> = {
   nogain: { cls: 'badge warn', text: 'no gain' },
 }
 
-export default function MeasuredFixes({ fixes, skipped = [], top, print = false }: Props) {
+export default function MeasuredFixes({ fixes: all, skipped = [], top, print = false }: Props) {
   const building = useApp((s) => s.building)
   const activeSpot = useApp((s) => s.activeSpot)
+  // "Keep the exit clear" says what the "blocked" what-if says; each line below is bold only (its grey twin restated it), but for a fix no fire matched.
+  const fixes = all.filter((f) => !isKeepClear(f))
   if (!fixes.length) return null
   const body = (
     <>
@@ -38,7 +40,7 @@ export default function MeasuredFixes({ fixes, skipped = [], top, print = false 
                   <span className="target">→ {t.rank != null ? `#${t.rank} ${t.label}` : `${print ? 'on' : 'show on'} ${t.floor}`}</span>
                 </>
               )}
-              <div className="dim">{f.why}</div>
+              {f.n === 0 && <div className="dim">{f.why}</div>}
             </>
           )
           return (

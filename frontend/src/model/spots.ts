@@ -138,6 +138,9 @@ import type { Batch } from '../data/types'
 
 export type RiskMetric = 'riskT90' | 'riskTrapped'
 
+/** The two risk metrics in words, for the select, the legend and the room tooltip (the ids are for the batch file and links only). */
+export const RISK_NAMES: Record<RiskMetric, string> = { riskT90: 'Time to get 90% out', riskTrapped: 'People trapped' }
+
 /** Min and max of the metric over rooms that have data (n > 0, non-null). */
 export function riskRange(batch: Batch, metric: RiskMetric): { min: number; max: number } | null {
   let min = Infinity

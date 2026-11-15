@@ -4,6 +4,9 @@ import type { LucideIcon } from 'lucide-react'
 import { useApp } from '../store/app'
 import { floorName, floorsByLevel } from '../model/floors'
 import { burningAt, materialName, readSpread } from '../model/fireSpread'
+import { busiestExit } from '../model/exitUse'
+import { pairVerdict } from '../model/pairVerdict'
+import { usePairs } from '../ui/PairCompare'
 import EvacCurve from './EvacCurve'
 import ExitBars from './ExitBars'
 import RunStats from './RunStats'
@@ -37,10 +40,11 @@ export default function Overview() {
       sub: stats ? `${stats.out} of ${stats.n} out` : none,
     },
     {
-      label: 'Remaining',
+      label: 'Trapped',
       icon: Users,
-      value: stats ? String(stats.inside) : DASH,
-      sub: stats ? `${stats.trapped} trapped · ${stats.waiting} waiting` : none,
+      tone: stats && stats.trapped > 0 ? 'severe' : undefined,
+      value: stats ? String(stats.trapped) : DASH,
+      sub: stats ? `${stats.inside} still inside · ${stats.waiting} waiting` : none,
     },
     {
       label: 'Chokepoints',
@@ -62,6 +66,11 @@ export default function Overview() {
   const burning = spread && stats ? burningAt(spread, stats.t).length : 0
   const byEnd = spread && lr ? burningAt(spread, lr.index.duration).length : 0
   const rooms = (n: number) => `${n} ${n === 1 ? 'room' : 'rooms'}`
+
+  // Two lines of story under the tiles: the exit most people used (the run's exit events, so it does not move with the clock), and for a run that is
+  // half of a precomputed pair (wood against drywall, rules against Claude) how the pair came out.
+  const busiest = useMemo(() => (lr ? busiestExit(lr.run, building) : null), [lr, building])
+  const verdict = pairVerdict(lr?.key, usePairs())
 
   const floors = building ? floorsByLevel(building) : []
   const queued = (id: string) => stats?.queuedByFloor.get(id) ?? 0
@@ -86,6 +95,16 @@ export default function Overview() {
           )
         })}
       </dl>
+      {busiest && (
+        <p className="exitline">
+          Busiest exit: <b>{busiest.name}</b>, {busiest.n} of {busiest.total} people
+        </p>
+      )}
+      {verdict && (
+        <p className="pairline">
+          <b>{verdict}</b> <span className="dim">(precomputed pair, illustrative)</span>
+        </p>
+      )}
       {spread && stats && (
         <p className="spreadline dim">
           Fire spread (illustrative, {spread.material ? materialName(spread.material) : 'material not set'}): {rooms(burning)} burning · {byEnd} by the end of the run

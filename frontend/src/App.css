@@ -280,6 +280,7 @@ a { color: var(--primary-text); }
 .kpi-ico.safe { color: var(--safe); }
 .kpi-ico.severe { color: var(--severe); }
 .spreadline { margin: 0 0 8px; font-size: var(--fs-sm); }
+.exitline, .pairline { margin: 0 0 6px; font-size: var(--fs-sm); }
 .congestion, .alerts { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .congestion li { display: grid; grid-template-columns: 56px minmax(0, 1fr) 76px; align-items: center; gap: var(--s2); font-size: var(--fs-sm); }
 .cbar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
@@ -322,6 +323,11 @@ a { color: var(--primary-text); }
 .risklegend .row { display: flex; justify-content: space-between; font-size: var(--fs-xs); }
 .risklegend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; }
 .weak .check { display: block; margin: 6px 0; }
+/* The risk map in the Risk tab: one small plan a floor, side by side while the panel is wide enough for two (the printed report sets its own). */
+.weak .riskmaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--s2); margin: 6px 0; }
+.weak figure.riskmap { margin: 0; text-align: center; min-width: 0; }
+.weak figure.riskmap svg { display: block; width: 100%; height: auto; max-height: 260px; border: 1px solid var(--border); border-radius: var(--r-ctl); }
+.weak figure.riskmap figcaption { font-size: var(--fs-xs); color: var(--text-2); }
 .spots { padding-left: 0; list-style: none; }
 .spots li { padding: 6px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; font-size: var(--fs-sm); }
 .spots li:hover { background: var(--surface-2); }

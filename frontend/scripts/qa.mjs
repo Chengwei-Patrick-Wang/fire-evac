@@ -1106,6 +1106,112 @@ try {
     }
   })
   await tabShots('')
+  // The three tabs tell the story fast. "This fire": a Trapped tile (not Remaining), the busiest exit and, for a precomputed pair, its verdict. "All fires": the risk map
+  // first, coloured by people trapped (on while the tab is open, off again after), then "Where people get stuck" with no score or seed badges, no doubled names, no
+  // restated fix lines or "keep clear" fix, then the what-if in relative terms. "Report": the AI summary first, and no copy of the Risk tab.
+  await step('story', async () => {
+    const bad = (m) => problems.push(`story: ${m}`)
+    const ps = await ctx.newPage()
+    watchPage(ps, 'story')
+    try {
+    await ps.goto(`${server.resolvedUrls.local[0]}?qa`)
+    await ps.waitForFunction(() => window.__app?.getState().activeRunKey && window.__app.getState().loading === null, null, { timeout: 60000 })
+    await ps.waitForTimeout(800)
+    await ps.evaluate(() => window.__app.setState((s) => ({ card: null, navOpen: false, sidebarOpen: true, resultsTab: 'results', layers: { ...s.layers, risk: false } })))
+    await ps.waitForTimeout(600)
+    const tiles = (await ps.locator('dl.kpis dt').allInnerTexts()).map((t) => t.trim()).join('|')
+    if (tiles !== 'Evacuated|Trapped|Chokepoints|Evacuation time') bad(`the tiles read "${tiles}", want Evacuated|Trapped|Chokepoints|Evacuation time`)
+    const exitLine = await ps.locator('.overview .exitline').innerText().catch(() => '')
+    if (!/^Busiest exit: .+, \d+ of \d+ people$/.test(exitLine)) bad(`the busiest-exit line reads "${exitLine}"`)
+    lines.push(`story: "${exitLine}"; pair line "${await ps.locator('.overview .pairline').innerText().catch(() => '(none)')}"`)
+    await shot('story-overview', ps)
+    await ps.locator('.results [role=tab]').nth(1).click()
+    await ps.waitForTimeout(1200)
+    const r = await ps.evaluate(() => {
+      const s = window.__app.getState()
+      const w = document.querySelector('.weak')
+      const list = w?.querySelector('ol.spots:not(.fixes)')
+      const head = w?.querySelector('.whatif-headline')
+      const norm = (t) => t.replace(/\s+/g, ' ').trim()
+      return {
+        metric: s.riskMetric,
+        layer: s.layers.risk,
+        select: w?.querySelector('select')?.value ?? null,
+        options: [...(w?.querySelectorAll('select option') ?? [])].map((o) => o.textContent).join('|'),
+        maps: w?.querySelectorAll('.riskmaps figure svg').length ?? 0,
+        floors: s.building.floors.length,
+        heads: [...(w?.querySelectorAll('h4') ?? [])].map((h) => norm(h.textContent ?? '')),
+        badges: list?.querySelectorAll('.badge').length ?? 0,
+        spots: [...(list?.querySelectorAll('button.spot') ?? [])].map((b) => norm(b.innerText)),
+        fixes: [...(w?.querySelectorAll('ol.fixes li') ?? [])].map((li) => norm(li.innerText)),
+        fixDim: w?.querySelectorAll('ol.fixes li .dim').length ?? 0,
+        headline: head ? norm(head.querySelector('.main')?.textContent ?? '') : null,
+        order: list && head ? !!(list.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING) : null,
+        mapFirst: w && list ? !!(w.querySelector('.riskmaps')?.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING) : null,
+        text: norm(w?.innerText ?? ''),
+      }
+    })
+    if (r.metric !== 'riskTrapped' || r.select !== 'riskTrapped') bad(`the risk metric is ${r.metric} (select ${r.select}), want riskTrapped`)
+    if (r.options !== 'People trapped|Time to get 90% out') bad(`the metric options read "${r.options}"`)
+    if (!r.layer) bad('the risk map is not on in the Risk tab')
+    if (r.maps !== r.floors || r.maps === 0) bad(`${r.maps} risk maps in the tab for ${r.floors} floors`)
+    if (!r.mapFirst) bad('the risk map does not come before the weak-spot list')
+    if (!r.heads.includes('Where people get stuck') || r.heads.includes('Weak spots')) bad(`the headings read ${JSON.stringify(r.heads)}`)
+    if (r.badges) bad(`${r.badges} badges in the weak-spot cards (the score, seed and kind ones are gone)`)
+    for (const t of r.spots) {
+      if (/score \d|of \d+ seeds/i.test(t)) bad(`a weak-spot card shows a score or seed badge: "${t}"`)
+      if (/^#\d+ (\w+) \1\b/i.test(t)) bad(`a weak-spot card doubles its name: "${t}"`)
+    }
+    if (r.spots.length === 0) bad('no weak-spot cards')
+    if (r.fixes.some((t) => /keep .* clear/i.test(t))) bad(`a "keep clear" fix is listed: ${JSON.stringify(r.fixes)}`)
+    if (r.fixDim) bad(`${r.fixDim} grey lines under the fixes (each restated its bold line)`)
+    if (r.headline && /person-seconds|smoke dose/i.test(r.headline)) bad(`the what-if headline reads "${r.headline}"`)
+    if (r.headline && r.order === false) bad('the what-if headline comes before the weak-spot list')
+    if (/riskT90|riskTrapped/.test(r.text)) bad('a raw metric id shows in the Risk tab')
+    lines.push(`story: Risk tab, ${r.maps} maps, cards ${JSON.stringify(r.spots.slice(0, 2))}, headline "${r.headline}"`)
+    await shot('story-risk', ps)
+    // The Risk tab (the map, its legend, the cards) in the high-contrast theme: no axe violation either.
+    await ps.evaluate(() => (document.documentElement.dataset.contrast = 'high'))
+    await ps.waitForTimeout(300)
+    await shot('story-risk-contrast', ps)
+    await axeOn(ps, 'story risk high contrast', '.app')
+    await ps.evaluate(() => delete document.documentElement.dataset.contrast)
+    await ps.locator('.results [role=tab]').nth(0).click()
+    await ps.waitForTimeout(400)
+    if (await ps.evaluate(() => window.__app.getState().layers.risk)) bad('the risk map stayed on after leaving the Risk tab')
+    await ps.locator('.results [role=tab]').nth(2).click()
+    await ps.locator('.results .report .aisummary').waitFor({ timeout: 15000 })
+    const rep = await ps.locator('.results .report').evaluate((el) => ({ first: el.firstElementChild?.className ?? '', copy: !!el.querySelector('.whatif-headline, ol.spots') }))
+    if (!/\baisummary\b/.test(rep.first) || rep.copy) bad(`the Report tab starts with "${rep.first}" and ${rep.copy ? 'carries' : 'has no'} copy of the Risk tab`)
+    await shot('story-report', ps)
+    await ps.locator('.results [role=tab]').nth(0).click()
+    } finally {
+      await ps.close()
+    }
+    // A run that is half of a precomputed pair says how the pair came out, from the index numbers: the wood run (people trapped lead) and the Claude crowd run (the time to 90% out).
+    const idx = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    for (const [pick, want] of [
+      [(e) => e.whatIf === 'material' && e.material === 'wood', (e) => `Wood instead of drywall: ${e.metrics.trapped} ${e.metrics.trapped === 1 ? 'person' : 'people'} trapped instead of `],
+      [(e) => e.whatIf === 'brain' && e.brain === 'llm', () => 'Claude crowd instead of rules: '],
+    ]) {
+      const e = idx.runs.find(pick)
+      if (!e?.metrics) continue
+      const pw = await ctx.newPage()
+      watchPage(pw, 'story-pair')
+      try {
+        await pw.goto(`${server.resolvedUrls.local[0]}?qa#b=${e.buildingId}&r=${e.id}`)
+        await pw.waitForFunction((id) => window.__app?.getState().activeRunKey === id && window.__app.getState().loading === null, e.id, { timeout: 60000 })
+        await pw.locator('.overview .pairline').waitFor({ timeout: 15000 })
+        const line = await pw.locator('.overview .pairline b').innerText()
+        if (!line.startsWith(want(e))) bad(`the pair verdict of ${e.id} reads "${line}", want it to start "${want(e)}"`)
+        else lines.push(`story: ${e.id}: "${line}"`)
+      } catch (err) {
+        bad(`the pair verdict of ${e.id}: ${String(err).split('\n')[0]}`)
+      } finally {
+        await pw.close()
+      }
+    }
+  })
   // What the app no longer has, checked on the screen: the menus and tools, the legend rows and the sidebar tab, and the old links that used to open them.
   await step('removed', async () => {
     const bad = (m) => problems.push(`removed: ${m}`)
@@ -1138,8 +1244,8 @@ try {
     const legend = await page.locator('section.legendcard').innerText()
     if (/Door (open|closed|propped|blocked)/i.test(legend)) bad(`the legend still has door-state rows: "${legend.replace(/\n/g, ' | ')}"`)
     const tabs = (await page.locator('.results [role=tab]').allInnerTexts()).map((t) => t.trim()).join('|')
-    if (tabs !== 'Overview|Risk|Report') bad(`the sidebar tabs read "${tabs}", want Overview|Risk|Report`)
-    // Old links. tab=cred and tab=credibility open the Overview; ?demo is ignored (no tour, no Demo button); a link to a door what-if still loads, as the plain run.
+    if (tabs !== 'This fire|All fires|Report') bad(`the sidebar tabs read "${tabs}", want This fire|All fires|Report`)
+    // Old links. tab=cred and tab=credibility open the first tab ("This fire", id results); ?demo is ignored (no tour, no Demo button); a link to a door what-if still loads, as the plain run.
     const bid = await page.evaluate(() => window.__app.getState().building.id)
     const base = page.url().split('#')[0].split('?')[0]
     // `ready` says when the link has been restored: by default once a run is shown and nothing is loading.
@@ -1158,7 +1264,7 @@ try {
     for (const tab of ['cred', 'credibility'])
       await opened(`${base}?qa#b=${bid}&tab=${tab}`, 'removed-link', async (pg) => {
         const got = await pg.evaluate(() => ({ tab: window.__app.getState().resultsTab, sel: document.querySelector('.results [role=tab][aria-selected=true]')?.textContent ?? null }))
-        if (got.tab !== 'results' || got.sel !== 'Overview') bad(`a link with tab=${tab} opened ${JSON.stringify(got)}, want the Overview`)
+        if (got.tab !== 'results' || got.sel !== 'This fire') bad(`a link with tab=${tab} opened ${JSON.stringify(got)}, want the first tab, This fire`)
       }, () => /(^#|&)tab=results(&|$)/.test(location.hash)) // (the link sync rewrites the hash once the old link has been restored)
     await opened(`${base}?qa&demo`, 'removed-demo', async (pg) => {
       const got = await pg.evaluate(() => ({ cap: !!document.querySelector('.tourcap'), tour: typeof window.__tour, nav: window.__app.getState().navOpen }))
@@ -1335,6 +1441,11 @@ try {
       const box = pa.locator('.results .aisummary')
       await box.waitFor({ timeout: 15000 })
       if ((await box.locator('h4').allInnerTexts()).join('|') !== 'AI summary (Claude)') bad('the Report tab heading is not an h4 "AI summary (Claude)"')
+      // The AI summary comes first: nothing of the pack, the what-ifs or the fixes (the Risk tab's) is in front of it or anywhere in the tab.
+      const first = await pa.locator('.results .report > *').first().getAttribute('class')
+      if (!/\baisummary\b/.test(first ?? '')) bad(`the Report tab starts with class "${first}", want the AI summary first`)
+      const dup = await pa.locator('.results .report').evaluate((el) => ({ pack: !!el.querySelector('.whatif-headline, .fixes, ol.spots'), h4: [...el.querySelectorAll('h4')].map((h) => h.textContent).filter((t) => /Measured fixes/.test(t ?? '')).length }))
+      if (dup.pack || dup.h4) bad(`the Report tab still carries a copy of the Risk tab: ${JSON.stringify(dup)}`)
       if ((await box.locator('p').first().innerText()) !== para) bad(`the Report tab paragraph reads "${await box.locator('p').first().innerText()}"`)
       if (!/AI-written/.test(await box.locator('.aisummary-note').innerText())) bad('the Report tab summary lacks the "AI-written" note')
       if (!(await pa.locator('.results .report').innerText()).includes('Report card: Example office')) bad('the card below the AI summary is gone')
