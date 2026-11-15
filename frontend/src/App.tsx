@@ -10,6 +10,7 @@ import TracerBar from './ui/TracerBar'
 import AnalyticsSidebar from './ui/AnalyticsSidebar'
 import FloorStrip from './ui/FloorStrip'
 import Timeline from './ui/Timeline'
+import AlarmBadge from './ui/AlarmBadge'
 import LegendCard from './ui/LegendCard'
 import FloatingCard from './ui/FloatingCard'
 import LayersCard from './ui/LayersCard'
@@ -465,6 +466,7 @@ export default function App() {
         )}
         <NewBuildingCard />
         <ReplaySummary />
+        <AlarmBadge split={splitOn} />
       </main>
       <footer className="dock">
         <FloorStrip />
