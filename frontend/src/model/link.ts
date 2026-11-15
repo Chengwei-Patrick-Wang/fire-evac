@@ -4,8 +4,6 @@ import type { Layers, ResultsTab } from '../store/app'
 import { useClock } from '../store/clock'
 import { loadIndex } from '../data/loader'
 
-export const SITE_URL = (import.meta.env.VITE_SITE_URL as string | undefined) ?? ''
-
 export interface LinkState {
   b: string
   r?: string
@@ -26,7 +24,7 @@ export interface LinkState {
   fy?: number
 }
 
-const TABS: ResultsTab[] = ['results', 'risk', 'report', 'cred']
+const TABS: ResultsTab[] = ['results', 'risk', 'report']
 const LAYER_KEYS: (keyof Layers)[] = ['rooms', 'labels', 'smoke', 'fire', 'heatmap', 'queues', 'risk']
 
 const r1 = (n: number) => n.toFixed(1)
@@ -67,6 +65,8 @@ export function decodeLink(hash: string): LinkState | null {
   if (t !== undefined && t >= 0) out.t = t
   const tab = p.get('tab')
   if (tab && (TABS as string[]).includes(tab)) out.tab = tab as ResultsTab
+  // The Credibility tab is gone: an old link to it (tab=cred, or tab=credibility) opens the Overview.
+  else if (tab === 'cred' || tab === 'credibility') out.tab = 'results'
   const m = p.get('m')
   if (m === 'riskT90' || m === 'riskTrapped') out.m = m
   const l = p.get('l')
@@ -105,7 +105,6 @@ export function loadIndexIds() {
 }
 let ids: { buildings: Set<string>; runs: Set<string> } | null = null
 void loadIndexIds().then((v) => (ids = v))
-export const cachedIndexIds = () => ids
 
 export function readLinkState(): LinkState | null {
   const s = useApp.getState()
@@ -121,7 +120,7 @@ export function readLinkState(): LinkState | null {
   if ((s.viewMode === 'single' || s.viewMode === 'ghost') && s.focusFloor) out.f = s.focusFloor
   if (s.viewMode === 'side' || s.viewMode === 'ghost') out.v = s.viewMode
   if (s.split) out.split = true
-  if (s.follow === null && !s.split) out.cam = [...cameraPose.p, ...cameraPose.t]
+  if (!s.split) out.cam = [...cameraPose.p, ...cameraPose.t]
   const fire = active?.run.fire
   if (fire) {
     out.ff = fire.floor
@@ -129,19 +128,6 @@ export function readLinkState(): LinkState | null {
     out.fy = fire.y
   }
   return out
-}
-
-export function phoneReachable(): boolean {
-  return !!SITE_URL || !['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname)
-}
-
-export function shareUrl(): string | null {
-  const s = useApp.getState()
-  if (!s.building || s.building.private) return null
-  const st = readLinkState()
-  if (!st) return null
-  const base = SITE_URL ? SITE_URL.replace(/#.*$/, '').replace(/\/?$/, '/') : location.origin + location.pathname
-  return base + '#' + encodeLink(st)
 }
 
 export function useLinkSync() {

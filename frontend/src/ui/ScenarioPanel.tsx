@@ -7,7 +7,7 @@ import type { Brain } from '../model/brain'
 import { FIRE_GROWTHS, FIRE_SIZES, fireGrowthOf, fireSizeOf, withFireGrowth, withFireSize } from '../model/fireSetup'
 import type { FireGrowthId, FireSizeId } from '../model/fireSetup'
 import { floorName } from '../model/floors'
-import WhatIfCard from './WhatIfCard'
+import PairCompare, { usePairs } from './PairCompare'
 import type { Material, Profile } from '../data/types'
 
 /** The people the card lets you mix, in plain words. The scenario keeps their shares as fractions of 1; the card shows percent. */
@@ -19,6 +19,8 @@ const MIX: { id: Profile; label: string }[] = [
 
 export default function ScenarioPanel() {
   const { draft, building, patchDraft, placing, setPlacing, running, runError, runNote, runFallback, runScenario, mode, material, setMaterial } = useApp()
+  // The precomputed comparisons of this building (each shows under its own setting, and only when the demo index has the pair).
+  const pairs = usePairs()
   // A card that opens on a draft with no fire yet starts placing: the first click on a room puts the fire there.
   const noFire = !!draft && !draft.fire.floor
   const buildingId = building?.id
@@ -124,9 +126,10 @@ export default function ScenarioPanel() {
       <p className="dim hint" id="sc-hint-material">How fast the fire spreads from room to room.</p>
       {!live && (
         <p className="dim note">
-          Material needs the live backend. In static mode, What if… shows the precomputed wood and drywall pair where a building has one.
+          Material needs the live backend. In static mode, the comparison below shows the precomputed wood and drywall pair where a building has one.
         </p>
       )}
+      {pairs.material && <PairCompare kind="material" fire={pairs.material.wood.fire} label="Compare wood with drywall" />}
       <label>
         Crowd
         <select value={crowd} disabled={!live} aria-describedby="sc-hint-crowd" onChange={(e) => patchDraft({ brain: e.target.value as Brain })}>
@@ -140,7 +143,7 @@ export default function ScenarioPanel() {
       <p className="dim hint" id="sc-hint-crowd">Who decides where people go.</p>
       {!live && (
         <p className="dim note">
-          Claude crowds need the live backend. In static mode, What if… shows the precomputed comparison where one exists.
+          Claude crowds need the live backend. In static mode, the comparison below shows the precomputed one where a building has it.
         </p>
       )}
       {live && crowd !== 'rules' && <p className="dim note">{CROWD_NOTE[crowd]}</p>}
@@ -149,6 +152,7 @@ export default function ScenarioPanel() {
           {claudeCrowdLimit(draft.occupants.total)}
         </p>
       )}
+      {pairs.claude && <PairCompare kind="brain" fire={pairs.claude.claude.fire} label="Compare rules with Claude crowd" />}
       <label>
         People in the building
         <input
@@ -215,7 +219,6 @@ export default function ScenarioPanel() {
           {runNote}
         </p>
       )}
-      <WhatIfCard />
     </div>
   )
 }

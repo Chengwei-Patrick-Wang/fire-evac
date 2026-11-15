@@ -12,9 +12,7 @@ import Heatmap from '../replay/Heatmap'
 import QueueRings from '../replay/QueueRings'
 import FirePicker from './FirePicker'
 import RiskOverlay from './RiskOverlay'
-import AgentCam from '../replay/AgentCam'
 import { CameraSyncPane } from './cameraSync'
-import { CaptureHook } from './capture'
 import { useA11y } from '../ui/a11y'
 import { perfOn, perfStats } from '../ui/perf'
 import { sceneBg } from '../ui/theme'
@@ -34,7 +32,6 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
   const reduceMotion = useA11y((s) => s.reduceMotion)
   const contrast = useA11y((s) => s.contrast)
   const buildingName = useApp((s) => s.building?.name ?? 'building')
-  const following = useApp((s) => s.follow !== null)
   return (
     <div
       role="img"
@@ -45,13 +42,11 @@ export default function Scene({ runKey, paneId }: { runKey?: string; paneId?: st
         <color attach="background" args={[sceneBg(contrast)]} />
         <hemisphereLight args={['#FFFFFF', '#CBD5E1', 1.8]} />
         <directionalLight position={[20, 40, 20]} intensity={1.6} />
-        <OrbitControls makeDefault enabled={!following} autoRotate={autoRotate && !reduceMotion} autoRotateSpeed={0.5} />
+        <OrbitControls makeDefault autoRotate={autoRotate && !reduceMotion} autoRotateSpeed={0.5} />
         <CameraRig />
-        {!runKey && <AgentCam />}
-        {!paneId && <CaptureHook />}
         {!paneId && <PerfProbe />}
         {paneId && <CameraSyncPane paneId={paneId} />}
-        <Building runKey={runKey} />
+        <Building />
         <Agents runKey={runKey} />
         <Smoke runKey={runKey} />
         <Fire runKey={runKey} />

@@ -100,7 +100,7 @@ try {
     shots.push(name)
   }
   const tabShots = async (prefix) => {
-    const names = ['results', 'risk', 'report', 'cred']
+    const names = ['results', 'risk', 'report']
     for (let i = 0; i < names.length; i++) {
       await step(`${prefix}tab-${names[i]}`, async () => {
         await page.locator('.results [role=tab]').nth(i).click()
@@ -214,7 +214,7 @@ try {
     await toggle.click()
     await page.waitForFunction(() => document.getElementById('nav-toggle')?.getAttribute('aria-label') === 'Collapse navigation', null, { timeout: 5000 }).catch(() => bad('one click did not turn #nav-toggle into "Collapse navigation"'))
     const menus = (await page.locator('#topnav .menus > .menuwrap > button').allInnerTexts()).map((t) => t.trim())
-    if (menus.join(' ') !== 'File Edit View Simulation Analysis Settings') bad(`menus read "${menus.join(' ')}"`)
+    if (menus.join(' ') !== 'File View Simulation Analysis') bad(`menus read "${menus.join(' ')}"`)
     await page.locator('#topnav .menus').getByRole('button', { name: 'View', exact: true }).click()
     await page.locator('[role=menu][aria-label=View]').waitFor({ timeout: 5000 })
     await page.waitForTimeout(300)
@@ -266,32 +266,33 @@ try {
     await page.evaluate(() => window.__clock.getState().seek(0))
     await nav(page, false)
   })
-  await step('whatif-static', async () => {
-    // No VITE_API_URL here, so the app is in static mode: the Sprinklers box must be off and quote the measured what-if.
+  await step('scenario-static', async () => {
+    // No VITE_API_URL here, so the app is in static mode. The What if… section is gone from the card: no door picker, no door state, no Sprinklers, no Run what-if.
     await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
-    const box = page.locator('.scenario .whatif')
+    const box = page.locator('.scenario')
     await box.scrollIntoViewIfNeeded()
-    await page.waitForFunction(() => /fires:/.test(document.querySelector('.scenario .whatif .note')?.textContent ?? ''), null, { timeout: 5000 }).catch(() => {})
-    const check = box.locator('label.check', { hasText: 'Sprinklers' }).locator('input[type=checkbox]')
-    if ((await check.count()) === 0 || (await check.isEnabled())) problems.push('whatif-static: the Sprinklers checkbox is missing or enabled in static mode')
-    const notes = box.locator('p.note')
-    const note = (await notes.count()) > 0 ? ((await notes.first().textContent()) ?? '') : ''
-    if (!/Sprinklers need the live backend/.test(note)) problems.push(`whatif-static: note lacks "Sprinklers need the live backend": "${note}"`)
-    if (!/fires:/.test(note)) problems.push(`whatif-static: note lacks the measured "fires:" quote: "${note}"`)
+    const gone = await box.evaluate((el) => ({
+      section: !!el.querySelector('.whatif'),
+      door: !!el.querySelector('select[aria-label="Door"], select[aria-label="State"]'),
+      sprinklers: /Sprinklers/.test(el.innerText),
+      run: [...el.querySelectorAll('button')].some((b) => /what-if/i.test(b.textContent ?? '')),
+      text: /What if/i.test(el.innerText),
+    }))
+    if (Object.values(gone).some(Boolean)) problems.push(`scenario-static: the What if… section is still in the card ${JSON.stringify(gone)}`)
     // The building material needs the live backend too: the select is off, and says so.
     const mat = page.locator('.scenario label', { hasText: 'Building material (illustrative)' }).locator('select')
-    if ((await mat.count()) !== 1 || (await mat.isEnabled())) problems.push('whatif-static: the material select is missing or enabled in static mode')
-    if ((await page.locator('.scenario p.note', { hasText: 'Material needs the live backend' }).count()) !== 1) problems.push('whatif-static: the note "Material needs the live backend" is missing')
+    if ((await mat.count()) !== 1 || (await mat.isEnabled())) problems.push('scenario-static: the material select is missing or enabled in static mode')
+    if ((await page.locator('.scenario p.note', { hasText: 'Material needs the live backend' }).count()) !== 1) problems.push('scenario-static: the note "Material needs the live backend" is missing')
     // So does the Crowd (who decides where people go): the select is off on the rules, with its three options, and says so.
     const crowd = page.locator('.scenario label', { hasText: 'Crowd' }).locator('select')
-    if ((await crowd.count()) !== 1 || (await crowd.isEnabled())) problems.push('whatif-static: the Crowd select is missing or enabled in static mode')
+    if ((await crowd.count()) !== 1 || (await crowd.isEnabled())) problems.push('scenario-static: the Crowd select is missing or enabled in static mode')
     else {
       const opts = (await crowd.locator('option').allTextContents()).map((t) => t.trim()).join('|')
-      if (opts !== 'Rules (hard-coded)|Some people ask Claude|Everyone asks Claude') problems.push(`whatif-static: the Crowd options read "${opts}"`)
-      if ((await crowd.inputValue()) !== 'rules') problems.push('whatif-static: the Crowd select does not show the rules in static mode')
+      if (opts !== 'Rules (hard-coded)|Some people ask Claude|Everyone asks Claude') problems.push(`scenario-static: the Crowd options read "${opts}"`)
+      if ((await crowd.inputValue()) !== 'rules') problems.push('scenario-static: the Crowd select does not show the rules in static mode')
     }
-    if ((await page.locator('.scenario p.note', { hasText: 'Claude crowds need the live backend' }).count()) !== 1) problems.push('whatif-static: the note "Claude crowds need the live backend" is missing')
-    await shot('whatif-static')
+    if ((await page.locator('.scenario p.note', { hasText: 'Claude crowds need the live backend' }).count()) !== 1) problems.push('scenario-static: the note "Claude crowds need the live backend" is missing')
+    await shot('scenario-static')
     await page.evaluate(() => window.__app.setState({ card: null }))
   })
   await step('replay-60s', async () => {
@@ -502,7 +503,7 @@ try {
       const matName = fx.fire.material ? fx.fire.material[0].toUpperCase() + fx.fire.material.slice(1) : null
       if (matName && !line.includes(matName)) bad(`the spread line reads "${line}", want the material ${matName}`)
       const legend = await pf.locator('section.legendcard').innerText()
-      for (const row of ['Burning room (illustrative)', 'Fire marker', 'Closed door']) if (!legend.includes(row)) bad(`the legend lacks "${row}"`)
+      for (const row of ['Burning room (illustrative)', 'Fire marker', 'Closed by fire']) if (!legend.includes(row)) bad(`the legend lacks "${row}"`)
       if ((await pf.evaluate(() => window.__app.getState().viewMode)) !== 'stacked') bad('the page left the stacked view')
       // The doors the run closes show as they close: none before the first, all of them at the end.
       if (got.closed !== want.closed) bad(`at ${t1} s ${got.closed} closed doors are drawn, the run has closed ${want.closed}`)
@@ -599,7 +600,7 @@ try {
       })
       pg.on('pageerror', (e) => errors.push(`[${tag}] ${String(e)}`))
     }
-    // Compares in a fresh page: clicks the button, waits for the split view with `wood` active and its partner loaded, and returns the .whatif text.
+    // Compares in a fresh page: clicks the button, waits for the split view with `wood` active and its partner loaded, and checks what the comparison under Building material says.
     const compare = async (pg, woodId, shotName) => {
       await pg.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
       await pg.evaluate(() => {
@@ -609,32 +610,43 @@ try {
       })
       const before = await pg.evaluate(() => window.__clock.getState().t)
       const btn = pg.getByRole('button', { name: 'Compare wood with drywall' })
+      // It is there because the index has the pair, and it sits under the Building material setting: after its hint, before the Crowd setting.
+      await btn.waitFor({ timeout: 10000 })
+      const placed = await pg.evaluate(() => {
+        const sc = document.querySelector('.scenario')
+        const b = [...sc.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Compare wood with drywall')
+        const hint = sc.querySelector('#sc-hint-material')
+        const crowd = [...sc.querySelectorAll('label')].find((l) => l.textContent.trim().startsWith('Crowd'))
+        const after = (x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING)
+        return !!b && !!hint && !!crowd && after(hint, b) && after(b, crowd)
+      })
+      if (!placed) bad('"Compare wood with drywall" is not under the Building material setting, before the Crowd setting')
       await btn.scrollIntoViewIfNeeded()
       await btn.click()
       await pg.waitForFunction((id) => {
         const a = window.__app.getState()
         const w = a.runs[id]
-        return a.split && a.activeRunKey === id && !!w?.whatIf && !!a.runs[w.whatIf.baselineKey] && a.whatIfBusy === null
+        return a.split && a.activeRunKey === id && !!w?.whatIf && !!a.runs[w.whatIf.baselineKey] && a.pairBusy === null
       }, woodId, { timeout: 60000 })
       const s = await pg.evaluate((id) => {
         const a = window.__app.getState()
         const w = a.runs[id]
-        return { keys: a.compareKeys, base: w.whatIf.baselineKey, material: w.whatIf.material, door: w.whatIf.door, t: window.__clock.getState().t, err: a.whatIfError, canvases: document.querySelectorAll('main.center canvas').length }
+        return { keys: a.compareKeys, base: w.whatIf.baselineKey, material: w.whatIf.material, door: w.whatIf.door, t: window.__clock.getState().t, err: a.pairError, canvases: document.querySelectorAll('main.center canvas').length }
       }, woodId)
-      if (s.err) bad(`whatIfError "${s.err}"`)
+      if (s.err) bad(`pairError "${s.err}"`)
       if (s.keys.join() !== `${s.base},${woodId}`) bad(`compareKeys ${s.keys.join()}, want ${s.base},${woodId}`)
       if (s.material !== 'wood' || s.door !== '') bad(`the wood run's whatIf is ${JSON.stringify({ material: s.material, door: s.door })}`)
       if (Math.abs(s.t - before) > 0.2) bad(`the clock moved from ${before} s to ${s.t} s`)
       if (s.canvases !== 2) bad(`${s.canvases} canvases in the split view, want 2`)
-      const text = await pg.locator('.scenario .whatif').innerText()
-      if (!text.includes('Wood instead of drywall')) bad(`.whatif lacks "Wood instead of drywall": "${text.slice(0, 160)}"`)
-      await pg.locator('.scenario .whatif .whatif-card').first().scrollIntoViewIfNeeded()
+      const text = await pg.locator('.scenario .paircompare.material').innerText()
+      if (!text.includes('Wood instead of drywall')) bad(`the comparison lacks "Wood instead of drywall": "${text.slice(0, 160)}"`)
+      await pg.locator('.scenario .paircompare.material .whatif-card').first().scrollIntoViewIfNeeded()
       await pg.waitForTimeout(1500)
       await shot(shotName, pg)
       await blankCheck(shotName, pg)
       await axeOn(pg, shotName, '.app')
     }
-    // The real index with the material entry FIRST: it must never pass for a door what-if, wherever it stands in the list.
+    // The real index with the material entry FIRST: it is found wherever it stands in the list.
     const routes = async (pg) => {
       await pg.route('**/demo/index.json', async (route) => {
         const res = await route.fetch()
@@ -650,18 +662,6 @@ try {
       await routes(pm)
       await pm.goto(`${server.resolvedUrls.local[0]}?qa&building=${fx.buildingId}`)
       await pm.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
-      // The static what-if still finds the door what-if of the baseline (its propped run), not the material entry.
-      const propped = realIndex.runs.find((r) => r.buildingId === fx.buildingId && r.whatIf === 'propped' && r.fire.room === base.fire.room)
-      if (propped) {
-        await pm.evaluate(() => window.__app.setState({ card: 'scenario' }))
-        await pm.locator('.scenario .whatif button.run').click()
-        await pm.waitForFunction(() => window.__app.getState().whatIfBusy === null, null, { timeout: 60000 })
-        const w = await pm.evaluate(() => {
-          const a = window.__app.getState()
-          return { key: a.activeRunKey, material: !!a.runs['qa-wood'], err: a.whatIfError }
-        })
-        if (w.key !== propped.id || w.material || w.err) bad(`the static what-if loaded ${w.key} (material run loaded: ${w.material}, error "${w.err}"), want the propped run ${propped.id}`)
-      }
       await compare(pm, 'qa-wood', 'material-pair')
       // The link of the pair opens the pair again: a wood entry in `r` loads its drywall partner first, and the link's split keeps the two side by side.
       await pm.waitForTimeout(1500)
@@ -692,12 +692,12 @@ try {
     const woods = realIndex.runs.filter((r) => r.whatIf === 'material' && r.material === 'wood' && realIndex.runs.some((b) => b.buildingId === r.buildingId && b.whatIf === null && b.fire.room === r.fire.room))
     await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
     await page.waitForTimeout(600)
-    const shown = (await page.locator('.scenario .whatif .material').count()) > 0
+    const shown = (await page.getByRole('button', { name: 'Compare wood with drywall' }).count()) > 0
     const wanted = woods.some((r) => r.buildingId === loaded)
-    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the material section for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a wood run for it`)
+    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the Compare wood with drywall button for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a wood run for it`)
     await page.evaluate(() => window.__app.setState({ card: null }))
     lines.push(`material-pair: the real index has ${woods.length} wood run(s); the main page (${loaded}) ${shown ? 'shows' : 'hides'} the section`)
-    if (problems.length === before) lines.push('material-pair ok: the static what-if skips the material entry, Compare splits the view at the same time, the link of the pair restores it')
+    if (problems.length === before) lines.push('material-pair ok: Compare wood with drywall (under Building material) splits the view at the same time, the link of the pair restores it')
     // With a real pair in the index (A11 part 2's rerun), it is compared the same way.
     if (woods[0]) {
       const pr = await ctx.newPage()
@@ -737,7 +737,7 @@ try {
       ].sort((a, b) => a.t - b.t),
     }
     const entry = { id: 'qa-claude', buildingId: base.buildingId, label: 'Kitchen, Claude (qa)', file: 'fixtures/claude-crowd.run.json', whatIf: 'brain', brain: 'llm', fire: base.fire, doors: base.doors }
-    // The real index with the Claude entry FIRST: it must never pass for a door what-if, wherever it stands in the list.
+    // The real index with the Claude entry FIRST: it is found wherever it stands in the list.
     const routes = async (pg) => {
       await pg.route('**/demo/index.json', async (route) => {
         const res = await route.fetch()
@@ -757,35 +757,45 @@ try {
       })
       const t0 = await pg.evaluate(() => window.__clock.getState().t)
       const btn = pg.getByRole('button', { name: 'Compare rules with Claude crowd' })
+      // It is there because the index has the pair, and it sits under the Crowd setting: after its hint, before the people setting.
+      await btn.waitFor({ timeout: 10000 })
+      const placed = await pg.evaluate(() => {
+        const sc = document.querySelector('.scenario')
+        const b = [...sc.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Compare rules with Claude crowd')
+        const hint = sc.querySelector('#sc-hint-crowd')
+        const people = [...sc.querySelectorAll('label')].find((l) => l.textContent.trim().startsWith('People in the building'))
+        const after = (x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING)
+        return !!b && !!hint && !!people && after(hint, b) && after(b, people)
+      })
+      if (!placed) bad('"Compare rules with Claude crowd" is not under the Crowd setting, before the people setting')
       await btn.scrollIntoViewIfNeeded()
       await btn.click()
       await pg.waitForFunction((id) => {
         const a = window.__app.getState()
         const c = a.runs[id]
-        return a.split && a.activeRunKey === id && !!c?.whatIf && !!a.runs[c.whatIf.baselineKey] && a.whatIfBusy === null
+        return a.split && a.activeRunKey === id && !!c?.whatIf && !!a.runs[c.whatIf.baselineKey] && a.pairBusy === null
       }, claudeId, { timeout: 60000 })
       const s = await pg.evaluate((id) => {
         const a = window.__app.getState()
         const c = a.runs[id]
-        return { keys: a.compareKeys, base: c.whatIf.baselineKey, brain: c.whatIf.brain, material: c.whatIf.material, door: c.whatIf.door, t: window.__clock.getState().t, err: a.whatIfError, canvases: document.querySelectorAll('main.center canvas').length }
+        return { keys: a.compareKeys, base: c.whatIf.baselineKey, brain: c.whatIf.brain, material: c.whatIf.material, door: c.whatIf.door, t: window.__clock.getState().t, err: a.pairError, canvases: document.querySelectorAll('main.center canvas').length }
       }, claudeId)
-      if (s.err) bad(`whatIfError "${s.err}"`)
+      if (s.err) bad(`pairError "${s.err}"`)
       if (s.keys.join() !== `${s.base},${claudeId}`) bad(`compareKeys ${s.keys.join()}, want ${s.base},${claudeId}`)
       if (s.brain !== 'llm' || s.door !== '' || s.material !== undefined) bad(`the Claude run's whatIf is ${JSON.stringify({ brain: s.brain, door: s.door, material: s.material })}`)
       if (Math.abs(s.t - t0) > 0.2) bad(`the clock moved from ${t0} s to ${s.t} s`)
       if (s.canvases !== 2) bad(`${s.canvases} canvases in the split view, want 2`)
-      const text = await pg.locator('.scenario .whatif').innerText()
-      if (!text.includes('Claude crowd instead of rules')) bad(`.whatif lacks "Claude crowd instead of rules": "${text.slice(0, 200)}"`)
-      if (!/t90 .*trapped \d+ → \d+/.test(text)) bad(`.whatif lacks the t90 and trapped line: "${text.slice(-200)}"`)
+      const text = await pg.locator('.scenario .paircompare.claudepair').innerText()
+      if (!text.includes('Claude crowd instead of rules')) bad(`the comparison lacks "Claude crowd instead of rules": "${text.slice(0, 200)}"`)
+      if (!/t90 .*trapped \d+ → \d+/.test(text)) bad(`the comparison lacks the t90 and trapped line: "${text.slice(-200)}"`)
       // With a known difference in the people trapped, the headline leads with it, then the smoke line, then the t90 line.
       if (headline) {
-        // (Each is searched for after the one before it: the card's sprinkler note above already says "person-seconds in smoke".)
         const i0 = text.indexOf(headline)
         const i1 = i0 < 0 ? -1 : text.indexOf('person-seconds in smoke', i0 + headline.length)
         const i2 = i1 < 0 ? -1 : text.indexOf('t90 ', i1)
-        if (i2 < 0) bad(`.whatif does not read "${headline}", then the smoke line, then the t90 line: "${text.slice(Math.max(0, text.indexOf('Claude crowd instead') - 20))}"`)
+        if (i2 < 0) bad(`the comparison does not read "${headline}", then the smoke line, then the t90 line: "${text.slice(Math.max(0, text.indexOf('Claude crowd instead') - 20))}"`)
       }
-      await pg.locator('.scenario .whatif .whatif-card').first().scrollIntoViewIfNeeded()
+      await pg.locator('.scenario .paircompare.claudepair .whatif-card').first().scrollIntoViewIfNeeded()
       await pg.waitForTimeout(1500)
       await shot(shotName, pg)
       await blankCheck(shotName, pg)
@@ -797,29 +807,12 @@ try {
       await routes(pc)
       await pc.goto(`${server.resolvedUrls.local[0]}?qa&building=${base.buildingId}`)
       await pc.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
-      // The static what-if still finds the door what-if of the baseline (its propped run), never the Claude entry.
-      const propped = realIndex.runs.find((r) => r.buildingId === base.buildingId && r.whatIf === 'propped' && r.fire.room === base.fire.room)
-      if (propped) {
-        await pc.evaluate(() => window.__app.setState({ card: 'scenario' }))
-        await pc.locator('.scenario .whatif button.run').click()
-        await pc.waitForFunction(() => window.__app.getState().whatIfBusy === null, null, { timeout: 60000 })
-        const w = await pc.evaluate(() => {
-          const a = window.__app.getState()
-          return { key: a.activeRunKey, claude: !!a.runs['qa-claude'], err: a.whatIfError }
-        })
-        if (w.key !== propped.id || w.claude || w.err) bad(`the static what-if loaded ${w.key} (Claude run loaded: ${w.claude}, error "${w.err}"), want the propped run ${propped.id}`)
-        // The door pair has the same number trapped in both runs (the demo's R101 pair: none), so its headline leads with the smoke, as before.
-        if (base.metrics?.trapped === propped.metrics?.trapped) {
-          const doorHead = (await pc.locator('.scenario .whatif .whatif-card b').allInnerTexts()).join(' | ')
-          if (/trapped instead of/.test(doorHead)) bad(`the door pair led with the trapped count though it is the same in both runs: "${doorHead}"`)
-        }
-      }
       await compare(pc, 'qa-claude', 'claude-pair', `Claude crowd instead of rules: ${trappedMore} people trapped instead of ${baseRun.metrics.trapped}; 90% never get out`)
       // The run is named once for who decides: the Run select, and the caption of its pane.
       const opt = ((await pc.locator('select[aria-label="Run"] option[value="qa-claude"]').textContent()) ?? '').trim()
       if (opt !== 'Kitchen, Claude (qa) · Claude crowd') bad(`the Run select names the Claude run "${opt}", want "Kitchen, Claude (qa) · Claude crowd"`)
       if (!(await pc.locator('.pane-caption').allInnerTexts()).some((t) => t.includes('Claude crowd'))) bad('no pane caption names the Claude crowd')
-      // The link of the pair opens the pair again, never as a door what-if.
+      // The link of the pair opens the pair again.
       await pc.waitForTimeout(1500)
       const hash = await pc.evaluate(() => location.hash)
       if (!/(^#|&)r=qa-claude(&|$)/.test(hash) || !/(^#|&)split=1(&|$)/.test(hash)) bad(`the link of the pair reads "${hash}", want r=qa-claude and split=1`)
@@ -840,66 +833,25 @@ try {
       } finally {
         await pl.close()
       }
-      // Claude's reasons in the readout: one person followed, in a single view, with the clock before Claude's first answer, at it, and at the rules' fallback.
+      // The legend names the people who ask Claude, for the Claude run only.
       const legendHas = async () => (await pc.locator('section.legendcard').innerText()).includes('Asks Claude (pink ring)')
       if (!(await legendHas())) bad('the legend lacks the "Asks Claude" row for a run in which people ask Claude')
-      await pc.evaluate((who) => {
-        window.__app.setState({ split: false })
-        window.__app.getState().setFollow(who)
-      }, who)
-      await pc.locator('.agentreadout').waitFor({ timeout: 15000 })
-      // The line follows the clock within a quarter second, but a page busy drawing the first-person view can be later: wait until the wanted text is there (or
-      // for ten seconds), then judge what is.
-      const readoutAt = async (t, ok) => {
-        await pc.evaluate((t) => window.__clock.getState().seek(t), t)
-        let text = await pc.locator('.agentreadout').innerText()
-        for (let i = 0; i < 50 && !ok(text); i++) {
-          await pc.waitForTimeout(200)
-          text = await pc.locator('.agentreadout').innerText()
-        }
-        return text
-      }
-      const none = (x) => !/Claude|Rules \(/.test(x)
-      const r10 = await readoutAt(10, none)
-      if (!none(r10)) bad(`the readout shows a decision at 10 s, before Claude's first: "${r10}"`)
-      const r30 = await readoutAt(30, (x) => x.includes(`Claude: ${reason}`))
-      if (!r30.includes(`Claude: ${reason}`) || !/\breroute\b/.test(r30)) bad(`at 30 s the readout reads "${r30}", want "Claude: ${reason}" and the action reroute`)
-      await shot('claude-readout', pc)
-      await axeOn(pc, 'claude-readout', '.app')
-      const r70 = await readoutAt(70, (x) => x.includes("Rules (Claude didn't answer in time)"))
-      if (!r70.includes("Rules (Claude didn't answer in time)") || /Claude:/.test(r70)) bad(`at 70 s the readout reads "${r70}", want "Rules (Claude didn't answer in time)" and no "Claude:"`)
-      // The rules' run of the same fire has no decisions: its readout is as before.
-      await pc.evaluate((k) => window.__app.getState().switchRun(k), 'example-office-R101-base')
-      const rb = await readoutAt(30, none)
-      if (!none(rb)) bad(`the rules run's readout mentions Claude: "${rb}"`)
+      await pc.evaluate(() => window.__app.getState().switchRun('example-office-R101-base'))
       if (await legendHas()) bad('the legend shows the "Asks Claude" row for the rules run')
-      // Tour scene 4 never takes the Claude entry for its what-if: with the entry first in the index it still shows the baseline's propped run.
-      await pc.evaluate(() => {
-        window.__app.getState().setFollow(null)
-        window.__tour.getState().go(3, false)
-      })
-      await pc.waitForTimeout(4000)
-      const tour = await pc.evaluate(() => {
-        const a = window.__app.getState()
-        return { active: a.activeRunKey, keys: a.compareKeys, whatIf: a.runs[a.activeRunKey]?.whatIf ?? null }
-      })
-      if (tour.active === 'qa-claude' || tour.keys.includes('qa-claude') || tour.whatIf?.brain) bad(`tour scene 4 took the Claude run: ${JSON.stringify(tour)}`)
-      if (propped && tour.active !== propped.id) bad(`tour scene 4 shows ${tour.active}, want the propped run ${propped.id}`)
-      await pc.evaluate(() => window.__tour.getState().stop())
     } finally {
       await pc.close()
     }
-    // The main page reads the real index: the section is there exactly when the loaded building has a Claude pair in it (today none).
+    // The main page reads the real index: the button is there exactly when the loaded building has a Claude pair in it.
     const loaded = await page.evaluate(() => window.__app.getState().building.id)
     const claudes = realIndex.runs.filter((r) => r.whatIf === 'brain' && r.brain === 'llm' && realIndex.runs.some((b) => b.buildingId === r.buildingId && b.whatIf === null && b.fire.room === r.fire.room))
     await page.evaluate(() => window.__app.setState({ card: 'scenario' }))
     await page.waitForTimeout(600)
-    const shown = (await page.locator('.scenario .whatif .claudepair').count()) > 0
+    const shown = (await page.getByRole('button', { name: 'Compare rules with Claude crowd' }).count()) > 0
     const wanted = claudes.some((r) => r.buildingId === loaded)
-    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the Claude crowd section for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a Claude pair for it`)
+    if (shown !== wanted) bad(`the main page ${shown ? 'shows' : 'lacks'} the Compare rules with Claude crowd button for ${loaded}, but the index ${wanted ? 'has' : 'has no'} a Claude pair for it`)
     await page.evaluate(() => window.__app.setState({ card: null }))
     lines.push(`claude-pair: the real index has ${claudes.length} Claude pair(s); the main page (${loaded}) ${shown ? 'shows' : 'hides'} the section`)
-    if (problems.length === before) lines.push("claude-pair ok: the static what-if and tour scene 4 skip the Claude entry, Compare splits the view, its link restores the pair, the readout carries Claude's reasons")
+    if (problems.length === before) lines.push('claude-pair ok: Compare rules with Claude crowd (under Crowd) splits the view, its link restores the pair, the legend names the people who ask Claude')
     // With a real pair in the index, it is compared the same way.
     if (claudes[0]) {
       const pr = await ctx.newPage()
@@ -999,21 +951,7 @@ try {
         if (sent !== value) bad(`choosing "${value}" sent brain ${sent}`)
         if (/rules crowd, not Claude/.test(st.note ?? '') !== claude) bad(`after a failed ${value} run the note reads "${st.note}"`)
       }
-      // A door what-if is not offered against a live Claude crowd run (its scenario carries the brain): the button is off, and the card says why.
-      await p6.evaluate(() => {
-        const a = window.__app.getState()
-        const k = a.activeRunKey
-        window.__app.setState((s) => ({ runs: { ...s.runs, [k]: { ...s.runs[k], scenario: { ...a.draft, brain: 'llm' } } } }))
-      })
-      const wi = p6.locator('.scenario .whatif')
-      await wi.scrollIntoViewIfNeeded()
-      if (!(await wi.locator('button.run').isDisabled()) || (await wi.locator('p.note', { hasText: 'Door what-ifs compare against a Rules run' }).count()) !== 1) bad('a Claude crowd run still offers a door what-if')
-      await p6.evaluate(() => {
-        const k = window.__app.getState().activeRunKey
-        window.__app.setState((s) => ({ runs: { ...s.runs, [k]: { ...s.runs[k], scenario: undefined } } }))
-      })
-      if (!(await wi.locator('button.run').isEnabled())) bad('the door what-if stays off for a run of the rules')
-      if (problems.length === before) lines.push('crowd-live ok: the Crowd select, the 200-person block, brain in the request, the Claude status and its six minutes, the rules-crowd note, no door what-if against Claude')
+      if (problems.length === before) lines.push('crowd-live ok: the Crowd select, the 200-person block, brain in the request, the Claude status and its six minutes, the rules-crowd note')
     } finally {
       await p6.close()
     }
@@ -1167,13 +1105,113 @@ try {
     }
   })
   await tabShots('')
-  await step('cred', async () => {
-    await page.locator('.results [role=tab]').nth(3).click()
+  // What the app no longer has, checked on the screen: the menus and tools, the legend rows and the sidebar tab, and the old links that used to open them.
+  await step('removed', async () => {
+    const bad = (m) => problems.push(`removed: ${m}`)
+    await nav(page, true)
+    const menus = (await page.locator('#topnav .menus > .menuwrap > button').allInnerTexts()).map((t) => t.trim())
+    for (const w of ['Edit', 'Settings']) if (menus.includes(w)) bad(`the ${w} menu is back`)
+    if ((await page.locator('#topnav .menubar').getByRole('button', { name: 'Demo', exact: true }).count()) !== 0) bad('the Demo button is back')
+    const tools = await page.locator('.ctxbar button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label')))
+    for (const w of ['Agent view', 'Save PNG', 'Share', 'What-if', 'Demo']) if (tools.includes(w)) bad(`the ${w} tool is back`)
+    const items = {}
+    for (const menu of ['File', 'View', 'Simulation', 'Analysis']) {
+      await page.locator('#topnav .menus').getByRole('button', { name: menu, exact: true }).click()
+      await page.locator(`[role=menu][aria-label=${menu}]`).waitFor({ timeout: 5000 })
+      items[menu] = (await page.locator(`[role=menu][aria-label=${menu}] .mi-label`).allInnerTexts()).map((t) => t.trim())
+      await page.keyboard.press('Escape')
+    }
+    const all = Object.values(items).flat().join('|')
+    for (const re of [/Share/, /Save 3D view/, /Agent/, /What-if/, /Credibility/, /demo/i]) if (re.test(all)) bad(`a menu item still matches ${re}: ${all}`)
+    // High contrast and Reduce motion are in View, and work from there.
+    for (const w of ['High contrast', 'Reduce motion']) if (!items.View.includes(w)) bad(`View lacks "${w}" (it has ${items.View.join('|')})`)
+    const motion = () => page.evaluate(() => document.documentElement.dataset.motion ?? null)
+    const wasMotion = await motion()
+    await pickMenu(page, 'View', 'Reduce motion')
+    if ((await motion()) === wasMotion) bad('View > Reduce motion did not change data-motion')
+    await pickMenu(page, 'View', 'Reduce motion')
+    if ((await motion()) !== wasMotion) bad('View > Reduce motion did not toggle back')
+    // (Toggling saved the choice: forget it, so the reduced-motion check in a11y still follows the emulated media preference.)
+    await page.evaluate(() => localStorage.removeItem('fes.a11y'))
+    await nav(page, false)
+    const legend = await page.locator('section.legendcard').innerText()
+    if (/Door (open|closed|propped|blocked)/i.test(legend)) bad(`the legend still has door-state rows: "${legend.replace(/\n/g, ' | ')}"`)
+    const tabs = (await page.locator('.results [role=tab]').allInnerTexts()).map((t) => t.trim()).join('|')
+    if (tabs !== 'Overview|Risk|Report') bad(`the sidebar tabs read "${tabs}", want Overview|Risk|Report`)
+    // Old links. tab=cred and tab=credibility open the Overview; ?demo is ignored (no tour, no Demo button); a link to a door what-if still loads, as the plain run.
+    const bid = await page.evaluate(() => window.__app.getState().building.id)
+    const base = page.url().split('#')[0].split('?')[0]
+    // `ready` says when the link has been restored: by default once a run is shown and nothing is loading.
+    const opened = async (url, tag, fn, ready = () => !!window.__app?.getState().activeRunKey && window.__app.getState().loading === null, arg = null) => {
+      const pg = await ctx.newPage()
+      watchPage(pg, tag)
+      try {
+        await pg.goto(url)
+        await pg.waitForFunction(ready, arg, { timeout: 60000 })
+        await pg.waitForTimeout(500)
+        await fn(pg)
+      } finally {
+        await pg.close()
+      }
+    }
+    for (const tab of ['cred', 'credibility'])
+      await opened(`${base}?qa#b=${bid}&tab=${tab}`, 'removed-link', async (pg) => {
+        const got = await pg.evaluate(() => ({ tab: window.__app.getState().resultsTab, sel: document.querySelector('.results [role=tab][aria-selected=true]')?.textContent ?? null }))
+        if (got.tab !== 'results' || got.sel !== 'Overview') bad(`a link with tab=${tab} opened ${JSON.stringify(got)}, want the Overview`)
+      }, () => /(^#|&)tab=results(&|$)/.test(location.hash)) // (the link sync rewrites the hash once the old link has been restored)
+    await opened(`${base}?qa&demo`, 'removed-demo', async (pg) => {
+      const got = await pg.evaluate(() => ({ cap: !!document.querySelector('.tourcap'), tour: typeof window.__tour, nav: window.__app.getState().navOpen }))
+      if (got.cap || got.tour !== 'undefined') bad(`?demo still starts something: ${JSON.stringify(got)}`)
+    })
+    const realIndex = JSON.parse(readFileSync(join(root, 'dist', 'demo', 'index.json'), 'utf8'))
+    const propped = realIndex.runs.find((r) => r.whatIf === 'propped')
+    if (propped)
+      await opened(`${base}?qa#b=${propped.buildingId}&r=${propped.id}&split=1`, 'removed-door-link', async (pg) => {
+        const got = await pg.evaluate(() => ({ key: window.__app.getState().activeRunKey, pair: !!window.__app.getState().runs[window.__app.getState().activeRunKey]?.whatIf, split: document.querySelectorAll('main.center canvas').length }))
+        if (got.key !== propped.id || got.pair || got.split !== 1) bad(`a link to the door what-if ${propped.id} loaded ${JSON.stringify(got)}, want that run alone (the comparison it asks for is ignored)`)
+      }, (id) => window.__app.getState().activeRunKey === id && window.__app.getState().loading === null, propped.id)
+    lines.push('removed ok: no Edit or Settings menu, no Demo, Share, Save PNG, Agent view, Credibility, What if or door-state legend rows; High contrast and Reduce motion are in View; old links load')
+  })
+  // The expand control: the analytics sidebar grows toward the middle of the screen, the charts re-render at the new width, and the 3D view keeps the rest.
+  await step('sidebar-wide', async () => {
+    const bad = (m) => problems.push(`sidebar-wide: ${m}`)
+    await page.evaluate(() => window.__app.setState({ sidebarOpen: true, sidebarWide: false, resultsTab: 'results', card: null, navOpen: false }))
+    await page.locator('#results-panel .recharts-surface').first().waitFor({ timeout: 15000 }).catch(() => {})
+    await page.evaluate(() => document.querySelector('.sb-body')?.scrollTo(0, 0))
+    await page.waitForTimeout(600)
+    const measure = () =>
+      page.evaluate(() => ({
+        side: document.querySelector('#analytics').getBoundingClientRect().width,
+        center: document.querySelector('main.center').getBoundingClientRect().width,
+        chart: document.querySelector('#results-panel .recharts-surface')?.getBoundingClientRect().width ?? 0,
+        vw: window.innerWidth,
+      }))
+    const before = await measure()
+    const expand = page.getByRole('button', { name: 'Expand panel', exact: true })
+    if ((await expand.count()) !== 1 || (await expand.getAttribute('aria-pressed')) !== 'false') bad('there is no "Expand panel" button with aria-pressed=false in the sidebar header')
+    await shot('sidebar-default')
+    await expand.click()
+    await page.waitForTimeout(1000)
+    const after = await measure()
+    const shrink = page.getByRole('button', { name: 'Shrink panel', exact: true })
+    if ((await shrink.count()) !== 1 || (await shrink.getAttribute('aria-pressed')) !== 'true') bad('once expanded the control is not "Shrink panel" with aria-pressed=true')
+    const want = Math.min(760, 0.55 * before.vw)
+    // The sidebar is its column less its 16 px margin.
+    if (after.side < want - 40 || after.side > want + 2) bad(`the expanded sidebar is ${Math.round(after.side)} px wide, want about ${Math.round(want)} (it was ${Math.round(before.side)})`)
+    if (after.center < 400 || after.center > before.center - 300) bad(`the 3D view is ${Math.round(after.center)} px wide expanded and ${Math.round(before.center)} before: it should keep the rest`)
+    if (before.chart > 0 && after.chart < before.chart + 150) bad(`the chart is ${Math.round(after.chart)} px wide expanded and ${Math.round(before.chart)} before: it did not re-render at the new width`)
+    await blankCheck('sidebar-wide')
+    await shot('sidebar-wide')
+    await axeOn(page, 'sidebar-wide', '.app')
+    await page.locator('.results [role=tab]').nth(2).click()
+    await page.waitForTimeout(1200)
+    await shot('sidebar-wide-report')
+    await page.locator('.results [role=tab]').first().click()
+    await shrink.click()
     await page.waitForTimeout(800)
-    const t = await page.locator('#results-panel').innerText()
-    if (!/0\.8 m door/.test(t) || !/Corridor/.test(t) || /EXAMPLE VALUES/.test(t)) problems.push('cred: calibration panel missing 0.8 m door / Corridor, or shows EXAMPLE VALUES')
-    await page.getByText('Known limits').first().scrollIntoViewIfNeeded()
-    await shot('cred-limits')
+    const back = await measure()
+    if (Math.abs(back.side - before.side) > 2 || (await expand.getAttribute('aria-pressed')) !== 'false') bad(`"Shrink panel" left the sidebar ${Math.round(back.side)} px wide, want ${Math.round(before.side)}`)
+    lines.push(`sidebar-wide ok: ${Math.round(before.side)} px to ${Math.round(after.side)} px, the 3D view ${Math.round(before.center)} to ${Math.round(after.center)} px, the chart ${Math.round(before.chart)} to ${Math.round(after.chart)} px`)
   })
   await step('about', async () => {
     await nav(page, true)
@@ -1181,6 +1219,8 @@ try {
     await page.locator('[role=dialog]').waitFor({ timeout: 10000 })
     await page.waitForTimeout(500)
     await shot('about')
+    const aboutText = await page.locator('.about-card').innerText()
+    if (/Scan to scrub|3-minute demo/.test(aboutText) || (await page.locator('.about-card svg').count()) !== 0) problems.push('about: the QR code, the scan line or the demo button is still in the About card')
     await page.keyboard.press('Escape')
     await nav(page, false)
   })
@@ -1195,79 +1235,8 @@ try {
     await page.locator('main.center canvas').first().waitFor({ timeout: 15000 })
     await nav(page, false)
   })
-  await step('scene4', async () => {
-    await page.evaluate(() => window.__tour.getState().go(3, false))
-    await page.waitForTimeout(4000)
-    await shot('scene4')
-    await blankCheck('scene4')
-    await page.evaluate(() => window.__tour.getState().stop())
-  })
-  await step('tour', async () => {
-    // The whole demo, in a fresh page, with timers of 10 s or more shortened tenfold so six scenes take about 20 s. Every scene must find its
-    // panel and tab on the new layout: the sidebar open, the nav and cards closed, and scenes 5 and 6 on their tabs.
-    const p4 = await ctx.newPage()
-    p4.on('console', (m) => {
-      if (m.type() === 'error' && !/calibration\.json/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[tour] ${m.text()}`)
-    })
-    p4.on('pageerror', (e) => errors.push(`[tour] ${String(e)}`))
-    await p4.addInitScript(() => {
-      const real = window.setTimeout.bind(window)
-      window.setTimeout = (fn, ms, ...a) => real(fn, typeof ms === 'number' && ms >= 10000 ? ms / 10 : ms, ...a)
-    })
-    try {
-      await p4.goto(`${server.resolvedUrls.local[0]}?qa&demo`)
-      // Each poll records what the page shows while a scene is current. resetStage runs in the same tick that the scene starts, so the first
-      // poll of a scene already sees the nav, cards and sidebar as the scene left them.
-      const rec = new Map()
-      const t0 = Date.now()
-      let settled = 0
-      while (Date.now() - t0 < 90000) {
-        const s = await p4.evaluate(() => {
-          const a = window.__app.getState()
-          return {
-            scene: window.__tour.getState().scene,
-            tab: a.resultsTab,
-            nav: a.navOpen,
-            card: a.card,
-            side: a.sidebarOpen,
-            tabSel: document.querySelector('.results [role=tab][aria-selected=true]')?.textContent ?? null,
-            sideVisible: !!document.querySelector('#analytics')?.offsetParent,
-            cap: !!document.querySelector('.tourcap'),
-          }
-        })
-        if (s.scene !== null) {
-          const r = rec.get(s.scene) ?? { first: s, tabs: new Set(), caps: 0, polls: 0 }
-          r.tabs.add(`${s.tab}/${s.tabSel}`)
-          r.caps += s.cap ? 1 : 0
-          r.polls++
-          rec.set(s.scene, r)
-          if ((s.scene === 4 || s.scene === 5) && r.polls === 3) await p4.screenshot({ path: join(out, `tour-scene${s.scene + 1}.png`) })
-          if (s.scene === 5 && r.polls >= 4) break
-        }
-        await p4.waitForTimeout(400)
-        settled++
-      }
-      for (let i = 0; i < 6; i++) {
-        const r = rec.get(i)
-        if (!r) {
-          problems.push(`tour: scene ${i + 1} never ran (ran: ${[...rec.keys()].map((k) => k + 1).join(', ') || 'none'})`)
-          continue
-        }
-        if (r.caps === 0) problems.push(`tour: scene ${i + 1} shows no caption`)
-        if (r.first.nav || r.first.card) problems.push(`tour: scene ${i + 1} started with navOpen=${r.first.nav}, card=${r.first.card}`)
-        if (!r.first.side || !r.first.sideVisible) problems.push(`tour: scene ${i + 1} has no visible analytics sidebar`)
-      }
-      const tabs = (i) => [...(rec.get(i)?.tabs ?? [])].join(', ')
-      if (rec.get(4) && !rec.get(4).tabs.has('risk/Risk')) problems.push(`tour: scene 5 never showed the Risk tab (saw ${tabs(4)})`)
-      if (rec.get(5) && !rec.get(5).tabs.has('cred/Credibility')) problems.push(`tour: scene 6 never showed the Credibility tab (saw ${tabs(5)})`)
-      lines.push(`tour: scenes ${[...rec.keys()].map((k) => k + 1).join(', ')} ran (${settled} polls)`)
-    } finally {
-      await p4.close()
-    }
-  })
   await step('deeplink', async () => {
     await page.evaluate(() => {
-      window.__tour.getState().stop()
       const a = window.__app
       a.setState({ split: false, resultsTab: 'risk', explode: 0.5, topView: a.getState().topView + 1 })
       a.setState({ layers: { ...a.getState().layers, heatmap: true, labels: false } })
@@ -1328,15 +1297,6 @@ try {
     }
     lines.push('deeplink ok')
   })
-  await step('share', async () => {
-    await nav(page, true)
-    await page.locator('.ctxbar').getByRole('button', { name: 'Share', exact: true }).click()
-    await page.locator('[role=dialog][aria-label="Share this view"]').waitFor({ timeout: 10000 })
-    await page.waitForTimeout(500)
-    await shot('share')
-    await page.keyboard.press('Escape')
-    await nav(page, false)
-  })
   await step('print', async () => {
     await page.locator('.results [role=tab]').nth(2).click()
     await page.locator('.results button', { hasText: 'Print report' }).first().click()
@@ -1393,23 +1353,12 @@ try {
       await pa.close()
     }
   })
-  await step('save-png', async () => {
-    await nav(page, true)
-    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.locator('.ctxbar').getByRole('button', { name: 'Save PNG', exact: true }).click()])
-    await nav(page, false)
-    const f = join(out, 'save-3d.png')
-    await dl.saveAs(f)
-    const share = await changedShare(readFileSync(f).toString('base64'))
-    lines.push(`save-3d.png: changed ${(share * 100).toFixed(1)}%`)
-    if (share < 0.01) problems.push('blank Save PNG')
-  })
   await step('a11y', async () => {
     const runAxe = (label, sel) => axeOn(page, label, sel)
     await page.evaluate(() => {
-      window.__tour.getState().stop()
       window.__clock.setState({ playing: false })
     })
-    const names = ['results', 'risk', 'report', 'cred']
+    const names = ['results', 'risk', 'report']
     for (let i = 0; i < names.length; i++) {
       await page.locator('.results [role=tab]').nth(i).click()
       await page.waitForTimeout(600)
@@ -1473,7 +1422,7 @@ try {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.reload()
     await page.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
-    await page.evaluate(() => window.__tour.getState().go(0, false))
+    await page.evaluate(() => window.__app.setState({ autoRotate: true }))
     await page.waitForTimeout(3000)
     const c = page.locator('main.center canvas').first()
     const a = await c.screenshot()
@@ -1481,20 +1430,17 @@ try {
     const b = await c.screenshot()
     if (!a.equals(b)) problems.push('motion despite reduced motion')
     await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.evaluate(() => {
-      window.__tour.getState().stop()
-      window.__app.setState({ autoRotate: false })
-    })
+    await page.evaluate(() => window.__app.setState({ autoRotate: false }))
 
-    // High contrast through Settings; the shot is of the collapsed layout.
+    // High contrast through the View menu; the shot is of the collapsed layout.
     await nav(page, true)
-    await pickMenu(page, 'Settings', 'High contrast')
+    await pickMenu(page, 'View', 'High contrast')
     await nav(page, false)
     await page.waitForTimeout(500)
     await shot('contrast')
     await runAxe('high contrast', '.app')
     await nav(page, true)
-    await pickMenu(page, 'Settings', 'High contrast')
+    await pickMenu(page, 'View', 'High contrast')
     await nav(page, false)
     if ((await page.evaluate(() => document.documentElement.dataset.contrast)) === 'high') problems.push('High contrast did not turn off')
   })
@@ -1539,6 +1485,7 @@ try {
       }
       await ph.screenshot({ path: join(out, 'phone-sidebar.png') })
       shots.push('phone-sidebar')
+      if (await ph.getByRole('button', { name: 'Expand panel', exact: true }).isVisible()) bad('the phone shows the "Expand panel" control: a phone keeps its full-width overlay')
       await axeOn(ph, 'phone', '.app')
       await ph.evaluate(() => window.__app.setState({ sidebarOpen: false }))
       await ph.locator('#nav-toggle').click()
@@ -1565,13 +1512,6 @@ try {
       await shot('open-about')
       await page.keyboard.press('Escape')
     })
-    for (const [scene, name] of [[3, 'open-scene4'], [4, 'open-scene5']])
-      await step(name, async () => {
-        await page.evaluate((i) => window.__tour.getState().go(i, false), scene)
-        await page.waitForTimeout(3000)
-        await shot(name)
-      })
-    await page.evaluate(() => window.__tour.getState().stop())
   }
   if (opens.length > 0)
     await step('fixes', async () => {
@@ -1687,92 +1627,6 @@ try {
       await p3.close()
     }
   })
-  await step('whatif-fallback', async () => {
-    // As live-fallback, for what-ifs, in a fresh page with the same routes: every way a live what-if can fail must end on the baseline's precomputed
-    // propped-door run with an amber note (and live mode kept, unless the connection itself was refused); with none for the building, the live error stays.
-    const p5 = await ctx.newPage()
-    const before = problems.length
-    p5.on('console', (m) => {
-      if (m.type() === 'error' && !/calibration\.json|status of 500|ERR_CONNECTION_REFUSED/.test(m.text() + (m.location()?.url ?? ''))) errors.push(`[whatif-fallback] ${m.text()}`)
-    })
-    p5.on('pageerror', (e) => errors.push(`[whatif-fallback] ${String(e)}`))
-    try {
-      let how = 'http'
-      const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-      await p5.route('**/runs', (r) => (how === 'down' ? r.abort('connectionrefused') : how === 'http' ? json(r, { detail: 'qa: backend error' }, 500) : json(r, { runId: 'qa-run' })))
-      await p5.route('**/runs/qa-run', (r) => json(r, how === 'failed' ? { status: 'error', error: 'qa: run failed' } : { status: 'running' }))
-      await p5.goto(`${server.resolvedUrls.local[0]}?qa`)
-      await p5.waitForFunction(() => window.__app?.getState().activeRunKey, null, { timeout: 60000 })
-      const first = await p5.evaluate(() => {
-        // pollRun's wait is 600 s of Date.now: this lets the page's clock jump over it
-        const real = Date.now.bind(Date)
-        let skew = 0
-        Date.now = () => real() + skew
-        window.__skew = (ms) => (skew += ms)
-        return window.__app.getState().activeRunKey
-      })
-      // The baseline's own precomputed what-if: the propped-door entry of the same fire in the index.
-      const want = await p5.evaluate(async (first) => {
-        const idx = await (await fetch('demo/index.json')).json()
-        const st = window.__app.getState()
-        const baseline = idx.runs.find((r) => r.id === first)
-        return idx.runs.find((r) => r.buildingId === st.building.id && r.whatIf === 'propped' && r.fire.room === baseline?.fire.room) ?? null
-      }, first)
-      if (!want) return void problems.push('whatif-fallback: the first baseline has no propped what-if in the demo index')
-      await p5.evaluate(() => window.__app.setState({ card: 'scenario' }))
-      const runButton = p5.locator('.whatif button.run')
-      const read = () =>
-        p5.evaluate(() => {
-          const a = window.__app.getState()
-          return { key: a.activeRunKey, note: a.whatIfNote, fallback: a.whatIfFallback, err: a.whatIfError, mode: a.mode, notice: a.notice, busy: a.whatIfBusy }
-        })
-      const settle = () => p5.waitForFunction(() => window.__app.getState().whatIfBusy === null, null, { timeout: 30000 })
-      const prefix = 'Live what-if unavailable: showing the precomputed what-if'
-      for (const name of ['http', 'failed', 'slow', 'down']) {
-        how = name
-        await p5.evaluate((first) => {
-          window.__app.getState().switchRun(first)
-          window.__app.setState({ mode: 'live', notice: null })
-        }, first)
-        await runButton.click()
-        if (name === 'slow') {
-          await p5.waitForFunction(() => /Running… \d+ s/.test(window.__app.getState().whatIfBusy ?? ''), null, { timeout: 15000 })
-          await p5.evaluate(() => window.__skew(700000))
-        }
-        await settle()
-        const s = await read()
-        const dom = await p5.locator('.whatif p.warn').allInnerTexts()
-        const wantMode = name === 'down' ? 'static' : 'live'
-        if (s.key !== want.id) problems.push(`whatif-fallback (${name}): active run ${s.key}, want ${want.id}`)
-        if (!s.note?.startsWith(prefix) || !s.fallback) problems.push(`whatif-fallback (${name}): note "${s.note}", fallback ${s.fallback}, want a note starting "${prefix}"`)
-        if (dom.length !== 1 || dom[0] !== s.note) problems.push(`whatif-fallback (${name}): the note is on screen as ${JSON.stringify(dom)}, want "${s.note}"`)
-        if ((await p5.locator('.whatif p.warn[role=status]').count()) !== 1) problems.push(`whatif-fallback (${name}): the note is not a p.warn[role=status]`)
-        if (s.err) problems.push(`whatif-fallback (${name}): whatIfError "${s.err}" beside a precomputed what-if`)
-        if (s.mode !== wantMode) problems.push(`whatif-fallback (${name}): mode ${s.mode}, want ${wantMode}`)
-        if (name === 'down' && s.notice !== 'Backend unreachable: precomputed runs only') problems.push(`whatif-fallback (down): notice "${s.notice}"`)
-        if (name === 'http') {
-          await p5.locator('.whatif p.warn').scrollIntoViewIfNeeded()
-          await p5.screenshot({ path: join(out, 'whatif-fallback.png') })
-          shots.push('whatif-fallback')
-          await axeOn(p5, 'whatif-fallback', '.app')
-        }
-      }
-      // No precomputed what-if for the building: today's error, and no note.
-      how = 'http'
-      await p5.evaluate(() => {
-        const a = window.__app
-        a.setState({ mode: 'live', notice: null, building: { ...a.getState().building, id: 'qa-none' } })
-      })
-      await runButton.click()
-      await settle()
-      const s = await read()
-      if (s.err !== 'Request failed (500): qa: backend error' || s.note || s.fallback) problems.push(`whatif-fallback (none): whatIfError "${s.err}", note "${s.note}", fallback ${s.fallback}`)
-      if (!(await p5.locator('.whatif p.err').allInnerTexts()).includes('Request failed (500): qa: backend error')) problems.push('whatif-fallback (none): the error is not on screen')
-      if (problems.length === before) lines.push('whatif-fallback ok: http, failed, slow and down end on the precomputed what-if; none keeps the error')
-    } finally {
-      await p5.close()
-    }
-  })
   if (FPS && opens.length > 0)
     await step('fps', async () => {
       await page.locator('.results [role=tab]').first().click()
@@ -1784,7 +1638,6 @@ try {
       for (const [name, flags] of cases) {
         await page.evaluate((f) => {
           window.__app.setState(f)
-          window.__tour?.getState().stop()
           window.__app.setState(f)
           window.__clock.getState().seek?.(0)
           window.__clock.setState({ t: 0, speed: 10, playing: true })

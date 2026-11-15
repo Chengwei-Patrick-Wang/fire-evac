@@ -112,7 +112,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
     const m = mesh.current
     if (!m || !ix) return
     const st = useApp.getState()
-    const { explode, visibleFloors, viewMode, focusFloor, follow } = st
+    const { explode, visibleFloors, viewMode, focusFloor } = st
     const t = useClock.getState().t
     const { out, m: mat, q, qFlat, p, s, c, pl, ghost } = tmp
     for (let fi = 0; fi < floors.length; fi++) {
@@ -138,7 +138,7 @@ export default function Agents({ runKey }: { runKey?: string }) {
                 : K_MOVING
         p.set(out.x + at.dx, at.y + 0.87, -out.y)
         // people in a stairwell are drawn smaller, whatever colour the scheme gives them
-        const sc = i === follow ? 0 : out.st === 3 ? 0.6 : 1
+        const sc = out.st === 3 ? 0.6 : 1
         s.set(sc, sc, sc)
       } else {
         p.set(0, 0, 0)
@@ -238,12 +238,6 @@ export default function Agents({ runKey }: { runKey?: string }) {
           if (e.instanceId !== undefined) setHover(e.instanceId)
         }}
         onPointerOut={() => setHover(null)}
-        onClick={(e) => {
-          if (!useApp.getState().pickAgent || e.instanceId === undefined) return
-          e.stopPropagation()
-          useApp.getState().setFollow(e.instanceId)
-          useApp.getState().setNotice(null)
-        }}
       >
         <capsuleGeometry args={[0.22, 1.3]} />
         <meshBasicMaterial toneMapped={false} />

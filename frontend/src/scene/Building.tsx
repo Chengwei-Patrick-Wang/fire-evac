@@ -6,7 +6,7 @@ import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { useApp } from '../store/app'
-import type { BuildingFloor, DoorState, Vec2 } from '../data/types'
+import type { BuildingFloor, Vec2 } from '../data/types'
 import { classifyWalls, floorAlpha, toWorld } from './geometry'
 import type { Segment } from './geometry'
 import { usePlace } from './usePlace'
@@ -21,7 +21,9 @@ const ROOM_COLORS: Record<string, string> = {
   classroom: '#38bdf8', office: '#a78bfa', lobby: '#34d399', corridor: '#64748b',
   lab: '#f472b6', kitchen: '#fb923c', restroom: '#94a3b8', storage: '#a16207',
 }
-export const DOOR_COLORS: Record<DoorState, string> = { open: '#2563EB', closed: '#1E3A8A', propped: '#0891B2', blocked: '#DC2626' }
+/** Every ordinary door is one neutral slate that reads on the light slabs; a door the fire closes turns red (BlockedDoors, the legend's "Closed by fire"). */
+export const DOOR_COLOR = '#64748B'
+export const CLOSED_BY_FIRE_COLOR = '#DC2626'
 const EXIT_COLOR = '#16A34A'
 const STAIR_COLOR = '#F97316'
 
@@ -205,7 +207,7 @@ function FloorTag({ floor, name, on }: { floor: BuildingFloor; name: string; on:
   )
 }
 
-function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<string, DoorState>; order: number }) {
+function Floor({ floor, order }: { floor: BuildingFloor; order: number }) {
   const reveal = useApp((s) => s.reveal)
   const walls = useRef<THREE.Group>(null)
   const t0 = useRef<{ reveal: number; t: number } | null>(null)
@@ -236,8 +238,8 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
     () =>
       floor.doors
         .filter((d) => (d.rect ?? []).length >= 3)
-        .map((d) => ({ poly: d.rect as Vec2[], color: DOOR_COLORS[doors[d.id] ?? d.state] })),
-    [floor, doors],
+        .map((d) => ({ poly: d.rect as Vec2[], color: DOOR_COLOR })),
+    [floor],
   )
   const stairItems = useMemo(() => floor.stairs.map((s) => ({ poly: s.polygon, color: STAIR_COLOR })), [floor])
   const exitItems = useMemo(() => floor.exits.map((e) => ({ poly: e.polygon, color: EXIT_COLOR })), [floor])
@@ -301,22 +303,16 @@ function Floor({ floor, doors, order }: { floor: BuildingFloor; doors: Record<st
   )
 }
 
-const NO_DOORS: Record<string, DoorState> = {}
-
-export default function Building({ runKey }: { runKey?: string }) {
+export default function Building() {
   const building = useApp((s) => s.building)
   const visible = useApp((s) => s.visibleFloors)
-  const doors = useApp((s) => {
-    const k = runKey ?? s.activeRunKey
-    return (k && s.runs[k]?.doors) || NO_DOORS
-  })
   if (!building) return null
   return (
     <>
       {building.floors
         .filter((f) => !visible || visible.includes(f.id))
         .map((f) => (
-          <Floor key={building.id + f.id} floor={f} doors={doors} order={building.floors.indexOf(f)} />
+          <Floor key={building.id + f.id} floor={f} order={building.floors.indexOf(f)} />
         ))}
     </>
   )

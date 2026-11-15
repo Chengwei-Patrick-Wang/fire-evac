@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useApp } from '../store/app'
 import { STATUS_COLORS, TYPE_COLORS } from '../replay/Agents'
 import { PROFILE_NAMES } from '../replay/runIndex'
-import { DOOR_COLORS } from '../scene/Building'
+import { CLOSED_BY_FIRE_COLOR } from '../scene/Building'
 import { readSpread } from '../model/fireSpread'
 import { claudeIdx } from '../model/brain'
 
@@ -88,12 +88,6 @@ export default function LegendCard() {
             Color by type
           </button>
           <ul>
-            {(Object.keys(DOOR_COLORS) as (keyof typeof DOOR_COLORS)[]).map((k) => (
-              <li key={k}>
-                <i className="sw" style={{ background: DOOR_COLORS[k] }} />
-                Door {k}
-              </li>
-            ))}
             <li>
               <i className="sw ring" />
               Queue at a door (ring size = people)
@@ -113,8 +107,8 @@ export default function LegendCard() {
                   Fire marker
                 </li>
                 <li>
-                  <i className="sw" style={{ background: DOOR_COLORS.blocked }} />
-                  Closed door
+                  <i className="sw" style={{ background: CLOSED_BY_FIRE_COLOR }} />
+                  Closed by fire
                 </li>
               </>
             )}

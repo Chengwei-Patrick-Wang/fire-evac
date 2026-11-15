@@ -2,14 +2,12 @@ import { useApp } from '../store/app'
 import type { ResultsTab } from '../store/app'
 import Overview from '../dashboard/Overview'
 import ReportCard from '../dashboard/ReportCard'
-import Credibility from '../dashboard/Credibility'
 import WeakSpots from '../dashboard/WeakSpots'
 
 const TABS: { id: ResultsTab; label: string }[] = [
   { id: 'results', label: 'Overview' },
   { id: 'risk', label: 'Risk' },
   { id: 'report', label: 'Report' },
-  { id: 'cred', label: 'Credibility' },
 ]
 
 export default function ResultsPanel() {
@@ -49,7 +47,6 @@ export default function ResultsPanel() {
       {tab === 'results' && <Overview />}
       {tab === 'risk' && <WeakSpots />}
       {tab === 'report' && <ReportCard />}
-      {tab === 'cred' && <Credibility />}
       </div>
       <p className="dim foot">Illustrative fire model. Not a compliance tool. One seed is one possible night.</p>
     </div>

@@ -7,11 +7,10 @@ import type { RunIndex } from '../replay/runIndex'
 import { useClock } from './clock'
 import { ApiError, listDemoRuns, loadDemoRun, pollRun, setMode as setLoaderMode, startBatch, startRun } from '../data/loader'
 import { nearestPrecomputedRun, normalizeMix } from '../model/scenarioDraft'
-import { doorLabels, spotPosition } from '../model/spots'
+import { spotPosition } from '../model/spots'
 import type { HeadlinePack } from '../model/headlines'
-import { findPrecomputedVariant, makeVariant } from '../model/whatif'
-import { DEFAULT_MATERIAL, materialName, materialPair, runMaterial } from '../model/fireSpread'
-import { WHATIF_RULES_ONLY, brainPair, claudeCrowdLimit, crowdOf, crowdTooBig, runLabel, runStatus, runWaitS } from '../model/brain'
+import { DEFAULT_MATERIAL, materialName, materialPair } from '../model/fireSpread'
+import { brainPair, claudeCrowdLimit, crowdOf, crowdTooBig, runLabel, runStatus, runWaitS } from '../model/brain'
 import type { Brain } from '../model/brain'
 import { floorsByLevel } from '../model/floors'
 import type { ViewMode } from '../scene/geometry'
@@ -32,14 +31,14 @@ export interface LoadedRun {
   doors: Record<string, DoorState>
   scenario?: Scenario
   /**
-   * The run this one is a variant of. A material variant (the precomputed wood run) has `material` and no door, and so has a crowd
-   * variant (the precomputed Claude crowd) with `brain`: `door` is '' there.
+   * The run this one is a variant of: a material variant (the precomputed wood run) has `material`, a crowd variant (the precomputed
+   * Claude crowd) has `brain`. Neither has a door: `door` is '' and `state` a placeholder (the field stays for the run/v0 pairs).
    */
   whatIf?: { baselineKey: string; door: string; state: DoorState; material?: Material; brain?: Brain }
 }
 
 export type View = 'replay' | 'tracer'
-export type ResultsTab = 'results' | 'risk' | 'report' | 'cred'
+export type ResultsTab = 'results' | 'risk' | 'report'
 /** The floating card open over the viewer, if any (one at a time). */
 export type Card = 'scenario' | 'layers' | 'visibility' | null
 
@@ -106,9 +105,6 @@ interface AppState {
   trails: boolean
   /** People are coloured by what they are doing (status) or by their mobility profile (type). */
   colorBy: 'status' | 'type'
-  follow: number | null
-  pickAgent: boolean
-  setFollow: (i: number | null) => void
   selectedRoom: string | null
   focus: Focus | null
   batchRunning: string | null
@@ -118,8 +114,6 @@ interface AppState {
   report: { key: string; md: string } | null
   printView: boolean
   setPrintView: (b: boolean) => void
-  share: boolean
-  setShare: (b: boolean) => void
   about: boolean
   setAbout: (b: boolean) => void
   resultsTab: ResultsTab
@@ -130,6 +124,9 @@ interface AppState {
   /** The analytics sidebar: open by default, collapsed on phones. */
   sidebarOpen: boolean
   setSidebarOpen: (b: boolean) => void
+  /** The sidebar grown toward the middle of the screen (desktop; a phone's sidebar is an overlay at full width anyway). Kept for the page's life only. */
+  sidebarWide: boolean
+  setSidebarWide: (b: boolean) => void
   card: Card
   setCard: (c: Card) => void
   activeSpot: string | null
@@ -142,12 +139,9 @@ interface AppState {
   patchDraft: (p: Partial<Scenario>) => void
   setPlacing: (b: boolean) => void
   runScenario: (s: Scenario) => Promise<void>
-  runWhatIf: (door: string, state: DoorState, sprinklers: boolean) => Promise<void>
-  whatIfBusy: string | null
-  whatIfError: string | null
-  /** Why the what-if on screen is the precomputed one (the live what-if failed). The card shows it as a warning while `whatIfFallback` is set. */
-  whatIfNote: string | null
-  whatIfFallback: boolean
+  /** Set while a comparison's two precomputed runs load (showMaterialPair, showBrainPair), and the error when they do not. */
+  pairBusy: string | null
+  pairError: string | null
   /** The building material the next live run spreads fire at (illustrative); kept across buildings. */
   material: Material
   setMaterial: (m: Material) => void
@@ -211,10 +205,8 @@ export const useApp = create<AppState>((set) => ({
   placing: false,
   running: null,
   runError: null,
-  whatIfBusy: null,
-  whatIfError: null,
-  whatIfNote: null,
-  whatIfFallback: false,
+  pairBusy: null,
+  pairError: null,
   material: DEFAULT_MATERIAL,
   setMaterial: (material) => set({ material }),
   runNote: null,
@@ -225,9 +217,6 @@ export const useApp = create<AppState>((set) => ({
   lens: [true, true, true, true, true, true],
   trails: false,
   colorBy: 'status',
-  follow: null,
-  pickAgent: false,
-  setFollow: (follow) => set({ follow, pickAgent: false }),
   selectedRoom: null,
   focus: null,
   batchRunning: null,
@@ -236,8 +225,6 @@ export const useApp = create<AppState>((set) => ({
   report: null,
   printView: false,
   setPrintView: (printView) => set({ printView }),
-  share: false,
-  setShare: (share) => set({ share }),
   about: false,
   setAbout: (about) => set({ about }),
   resultsTab: 'results',
@@ -246,6 +233,8 @@ export const useApp = create<AppState>((set) => ({
   setNavOpen: (navOpen) => set({ navOpen }),
   sidebarOpen: !phoneAtStart(),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  sidebarWide: false,
+  setSidebarWide: (sidebarWide) => set({ sidebarWide }),
   card: null,
   setCard: (card) => set({ card }),
   activeSpot: null,
@@ -358,79 +347,6 @@ export const useApp = create<AppState>((set) => ({
       set({ running: null })
     }
   },
-  runWhatIf: async (door, state, sprinklers) => {
-    const st = useApp.getState()
-    const b = st.building
-    const active = st.activeRunKey ? st.runs[st.activeRunKey] : null
-    if (!b || !active || st.whatIfBusy) return
-    const base = active.whatIf ? st.runs[active.whatIf.baselineKey] ?? active : active
-    // A door what-if is measured against a rules baseline. With a Claude crowd the door would not be the only change between the two runs
-    // (Claude's answers differ from run to run), and a second Claude run would take minutes: not offered.
-    if (crowdOf(base.scenario?.brain) !== 'rules') {
-      set({ whatIfError: WHATIF_RULES_ONLY, whatIfNote: null, whatIfFallback: false })
-      return
-    }
-    set({ whatIfBusy: 'Running…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
-    // Set when the live what-if failed, and whether the backend could not be reached at all (which also ends live mode).
-    let failure: Error | null = null
-    let unreachable = false
-    try {
-      if (useApp.getState().mode === 'live') {
-        try {
-          const f = base.run.fire
-          const room = st.draft?.fire.room
-          const baseSc: Scenario = base.scenario ?? {
-            ...(st.draft ?? makeDraftFallback(b.id)),
-            id: base.key,
-            seed: base.run.seed,
-            fire: { ...(st.draft?.fire ?? { type: 'kitchen', start: 0 }), floor: f.floor, x: f.x, y: f.y, room: st.draft?.fire.room ?? room },
-            doors: base.doors,
-          }
-          const sc = makeVariant({ ...baseSc, buildingId: b.id, occupants: { ...baseSc.occupants, mix: normalizeMix(baseSc.occupants.mix) } }, door, state, sprinklers)
-          // The what-if changes a door, never the material: it keeps the material its base run was made at.
-          sc.fire = { ...sc.fire, material: runMaterial(base.run) }
-          const runId = await startRun(sc)
-          const run = await pollRun(runId, (el) => set({ whatIfBusy: `Running… ${el} s` }))
-          const key = sc.id as string
-          const prev = useClock.getState().t
-          useApp.getState().addRun({ key, label: `What-if: ${door} ${state}${sprinklers ? ' +sprinklers' : ''}`, run, doors: sc.doors ?? {}, scenario: sc, whatIf: { baselineKey: base.key, door, state } })
-          useClock.getState().seek(prev)
-          return
-        } catch (e) {
-          // As for a live run: whatever went wrong (no backend, an HTTP error, a run that failed, one that outlasted pollRun's wait),
-          // the precomputed what-if below is shown instead. Only a connection that failed ends live mode.
-          failure = e instanceof Error ? e : new Error(String(e))
-          unreachable = e instanceof ApiError && /Could not reach|Timed out/.test(e.message)
-          console.warn(`live what-if failed, showing the precomputed what-if instead: ${failure.message}`)
-          if (unreachable) {
-            setLoaderMode('static')
-            set({ mode: 'static', notice: 'Backend unreachable: precomputed runs only' })
-          }
-          set({ whatIfBusy: 'Loading precomputed what-if…' })
-        }
-      }
-      const entries = await listDemoRuns(b.id)
-      const hit = findPrecomputedVariant(entries, { buildingId: b.id, room: entries.find((e) => e.id === base.key)?.fire.room ?? st.draft?.fire.room, doors: base.doors })
-      // With no precomputed what-if the error is today's: the live failure itself, or after a connection failure "No precomputed what-if".
-      if (!hit) throw failure && !unreachable ? failure : new ApiError('No precomputed what-if for this fire')
-      const { entry } = hit
-      if (useApp.getState().runs[entry.id]) useApp.getState().switchRun(entry.id)
-      else {
-        const prev = useClock.getState().t
-        const run = await loadDemoRun(entry)
-        useApp.getState().addRun({ key: entry.id, label: entry.label, run, doors: entry.doors ?? {}, whatIf: { baselineKey: base.key, door: hit.door, state: hit.state } })
-        useClock.getState().seek(prev)
-      }
-      if (failure) {
-        const name = hit.door === '?' ? 'a door' : doorLabels(b).get(hit.door)?.label ?? hit.door
-        set({ whatIfNote: `Live what-if unavailable: showing the precomputed what-if (${name} ${hit.state}).`, whatIfFallback: true })
-      }
-    } catch (e) {
-      set({ whatIfError: e instanceof Error ? e.message : String(e) })
-    } finally {
-      set({ whatIfBusy: null })
-    }
-  },
   showMaterialPair: () =>
     showPair('No precomputed wood and drywall pair for this building', (entries, id) => {
       const pair = materialPair(entries, id)
@@ -446,7 +362,7 @@ export const useApp = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setBuildings: (buildings) => set({ buildings }),
   // A different building invalidates the loaded runs.
-  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, placing: false, fromTracer: null, runNote: null, runFallback: false, runError: null, whatIfNote: null, whatIfFallback: false, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, follow: null, pickAgent: false, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
+  setBuilding: (building) => set((s) => ({ reveal: s.reveal + 1, building, headlines: null, layers: { ...s.layers, labels: labelsFor(building) }, draft: null, placing: false, fromTracer: null, runNote: null, runFallback: false, runError: null, split: false, viewMode: 'stacked', focusFloor: null, visibleFloors: null, focus: null, selectedRoom: null, activeSpot: null, runs: {}, runOrder: [], activeRunKey: null, compareKeys: [] })),
   setNotice: (notice) => set({ notice }),
   addRun: (r) =>
     set((s) => {
@@ -479,8 +395,8 @@ async function showPair(
 ): Promise<void> {
   const st = useApp.getState()
   const b = st.building
-  if (!b || st.whatIfBusy) return
-  useApp.setState({ whatIfBusy: 'Loading precomputed pair…', whatIfError: null, whatIfNote: null, whatIfFallback: false })
+  if (!b || st.pairBusy) return
+  useApp.setState({ pairBusy: 'Loading precomputed pair…', pairError: null })
   // Loads (once) and shows one precomputed run; false when another building was loaded meanwhile.
   const show = async (entry: DemoRun, whatIf?: LoadedRun['whatIf']): Promise<boolean> => {
     if (useApp.getState().runs[entry.id]) {
@@ -504,14 +420,10 @@ async function showPair(
     useClock.getState().seek(prev)
     useApp.setState({ split: true, compareKeys: [pair.base.id, pair.variant.id] })
   } catch (e) {
-    useApp.setState({ whatIfError: e instanceof Error ? e.message : String(e) })
+    useApp.setState({ pairError: e instanceof Error ? e.message : String(e) })
   } finally {
-    useApp.setState({ whatIfBusy: null })
+    useApp.setState({ pairBusy: null })
   }
-}
-
-function makeDraftFallback(buildingId: string): Scenario {
-  return { version: 'scenario/v0', buildingId, seed: 1, occupants: { total: 160, mix: { typical: 1 } }, fire: { type: 'kitchen', start: 0 }, sprinklers: false, doors: {}, alarmTime: 30, maxTime: 400 }
 }
 
 if (import.meta.env.DEV) (window as unknown as { __app: typeof useApp }).__app = useApp
