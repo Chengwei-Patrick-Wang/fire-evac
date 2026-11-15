@@ -16,18 +16,14 @@ import LayersCard from './ui/LayersCard'
 import VisibilityCard from './ui/VisibilityCard'
 import Scene from './scene/Scene'
 import SplitView from './scene/SplitView'
-import AgentReadout from './ui/AgentReadout'
 import ClockDriver from './ui/ClockDriver'
 import ScenarioPanel from './ui/ScenarioPanel'
 import ReplaySummary from './ui/ReplaySummary'
 import AboutOverlay, { shouldAutoOpenAbout } from './ui/AboutOverlay'
 import ErrorBoundary from './ui/ErrorBoundary'
 import NewBuildingCard from './ui/NewBuildingCard'
-import TourCaption from './tour/TourCaption'
-import { useTour, useTourKeys } from './tour/tour'
-import ShareCard from './ui/ShareCard'
+import { useCompareKey } from './ui/PairCompare'
 import { makeDraft, nearestPrecomputedRun } from './model/scenarioDraft'
-import { findPrecomputedVariant } from './model/whatif'
 import { materialPartner } from './model/fireSpread'
 import { brainPartner, runLabel } from './model/brain'
 import { loadHeadlines, readPack } from './model/headlines'
@@ -48,7 +44,7 @@ import {
 } from './data/loader'
 
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('qa'))
-  Object.assign(window, { __app: useApp, __clock: useClock, __tour: useTour, __pose: cameraPose })
+  Object.assign(window, { __app: useApp, __clock: useClock, __pose: cameraPose })
 
 const PrintReport = lazy(() => import('./ui/PrintReport'))
 const TracerPage = lazy(() => import('./tracer/TracerPage'))
@@ -101,8 +97,7 @@ export async function restoreLink(link: LinkState) {
     const entry = link.r ? entries.find((e) => e.id === link.r) : undefined
     if (entry) {
       if (st0.activeRunKey !== entry.id || !st0.runs[entry.id]) {
-        if (entry.whatIf === null) await ensureRun(entry)
-        else if (entry.whatIf === 'material') {
+        if (entry.whatIf === 'material') {
           // A material run (the wood one) opens against its drywall partner; the link says whether the two are side by side.
           const partner = materialPartner(entries, entry)
           if (partner) {
@@ -110,19 +105,15 @@ export async function restoreLink(link: LinkState) {
             await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', material: entry.material ?? 'wood' })
           } else await ensureRun(entry)
         } else if (entry.whatIf === 'brain') {
-          // A Claude crowd run opens against its rules partner, the same fire; it never passes for a door what-if (it has no door).
+          // A Claude crowd run opens against its rules partner, the same fire.
           const partner = brainPartner(entries, entry)
           if (partner) {
             await ensureRun(partner)
             await ensureRun(entry, { baselineKey: partner.id, door: '', state: 'propped', brain: entry.brain ?? 'llm' })
           } else await ensureRun(entry)
         } else {
-          const base = entries.find((e) => e.buildingId === entry.buildingId && e.fire.room === entry.fire.room && e.whatIf === null)
-          if (base) {
-            await ensureRun(base)
-            const hit = findPrecomputedVariant([entry], { buildingId: link.b, doors: base.doors ?? {} })
-            await ensureRun(entry, { baselineKey: base.id, door: hit?.door ?? '?', state: hit?.state ?? 'propped' })
-          } else await ensureRun(entry)
+          // A plain run opens as it is. So does an old link to a door what-if (the app has none now): the comparison it asks for is ignored.
+          await ensureRun(entry)
         }
       }
     } else if (link.ff !== undefined && link.fx !== undefined && link.fy !== undefined) {
@@ -150,7 +141,8 @@ export async function restoreLink(link: LinkState) {
     }
     // A link writes the floor gap only when it isn't the default, so a link without one means the default.
     patch.explode = link.x ?? DEFAULT_EXPLODE
-    if (link.split !== undefined) patch.split = link.split
+    // (A link to a door what-if asks for it side by side with its baseline: that comparison is gone, so its split is ignored too.)
+    if (link.split !== undefined && entry?.whatIf !== 'propped') patch.split = link.split
     useApp.setState(patch)
     // The floor view: v=side is side by side, v=ghost is ghost on f, f alone is one floor, and none is stacked. A link that carries a camera
     // pose keeps it (the view change doesn't re-frame the camera); one without lets the camera frame the view.
@@ -184,12 +176,9 @@ async function startup() {
       await selectBuilding(SAMPLE_BUILDING.id)
       return
     }
-    let link: LinkState | null = null
-    if (!params.has('demo')) {
-      await loadIndexIds()
-      link = decodeLink(location.hash)
-      if (link) linkCtl.restoring = true
-    }
+    await loadIndexIds()
+    const link: LinkState | null = decodeLink(location.hash)
+    if (link) linkCtl.restoring = true
     let list = await listBuildings().catch((e) => {
       useApp.getState().setNotice(msg(e))
       return []
@@ -350,7 +339,7 @@ function ShellStatus() {
 }
 
 export default function App() {
-  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView, navOpen, sidebarOpen, card } = useApp()
+  const { view, split, runs, runOrder, activeRunKey, notice, loading, printView, navOpen, sidebarOpen, sidebarWide, card } = useApp()
   const base = activeRunKey ? runs[activeRunKey]?.whatIf?.baselineKey ?? runOrder.find((k) => k !== activeRunKey) : undefined
   const splitOn = split && !!activeRunKey && !!base && !!runs[base] && base !== activeRunKey
   const onOpenBuilding = useCallback(async (id: string) => {
@@ -369,7 +358,7 @@ export default function App() {
       useApp.getState().setNotice(msg(e))
     }
   }, [])
-  useTourKeys()
+  useCompareKey()
   useLinkSync()
   useEffect(() => {
     const on = async () => {
@@ -397,8 +386,7 @@ export default function App() {
   }, [view])
   useEffect(() => {
     void startup().then(() => {
-      if (new URLSearchParams(location.search).has('demo')) useTour.getState().start()
-      else if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
+      if (shouldAutoOpenAbout()) useApp.getState().setAbout(true)
     })
   }, [])
 
@@ -416,7 +404,7 @@ export default function App() {
     )
 
   return (
-    <div className={'app' + (sidebarOpen ? '' : ' sb-closed') + (navOpen ? ' nav-open' : '')} key="replay">
+    <div className={'app' + (sidebarOpen ? '' : ' sb-closed') + (sidebarOpen && sidebarWide ? ' sb-wide' : '') + (navOpen ? ' nav-open' : '')} key="replay">
       <button className="skip" onClick={() => document.getElementById('play')?.focus()}>Skip to replay controls</button>
       <TopNav onSelectBuilding={(id) => void selectBuilding(id)} onOpenFile={(f) => void openFile(f)} />
       <AnalyticsSidebar />
@@ -475,9 +463,7 @@ export default function App() {
             <ScenarioPanel />
           </FloatingCard>
         )}
-        <AgentReadout />
         <NewBuildingCard />
-        <TourCaption />
         <ReplaySummary />
       </main>
       <footer className="dock">
@@ -487,7 +473,6 @@ export default function App() {
       </footer>
       <ClockDriver />
       <AboutOverlay />
-      <ShareCard />
       {printView && (
         <Suspense fallback={null}>
           <PrintReport />

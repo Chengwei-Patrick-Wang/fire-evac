@@ -1,10 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useDialogFocus } from './a11y'
-import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/app'
-import { useTour } from '../tour/tour'
 import { creditParts } from '../model/buildingIndex'
-import { phoneReachable, shareUrl } from '../model/link'
 import { spotLabel } from '../model/spots'
 import { BRAND } from './theme'
 
@@ -18,7 +15,7 @@ export function markAboutSeen() {
 
 export function shouldAutoOpenAbout(): boolean {
   const p = new URLSearchParams(location.search)
-  if (p.has('demo') || p.has('sample')) return false
+  if (p.has('sample')) return false
   if (new URLSearchParams(location.hash.replace(/^#/, '')).has('b')) return false
   try {
     return !localStorage.getItem('fes.aboutSeen')
@@ -55,7 +52,6 @@ export default function AboutOverlay() {
   }, [about])
 
   if (!about) return null
-  const url = phoneReachable() ? shareUrl() : null
   const sc = pack?.scenario
   const spot0 = pack?.weakSpots?.[0]
   const real = batch && (batch as { placeholder?: boolean }).placeholder !== true && batch.runs?.length > 0 ? batch : null
@@ -116,27 +112,8 @@ export default function AboutOverlay() {
           {extra && <li>{extra}</li>}
           <li>Libraries: JuPedSim, three.js, React Three Fiber, Recharts</li>
         </ul>
-        <p className="dim">Shortcuts: Space play/pause, ←/→ scrub 5 s, Home/End, W baseline ↔ what-if, 1–6 demo scenes, Esc stops the demo.</p>
-        {url && (
-          <div className="qr">
-            <div className="qrtile">
-              <QRCodeSVG value={url} size={160} level="M" />
-            </div>
-            <div>
-              <div>Scan to scrub the replay on your phone</div>
-              <a href={url}>{url}</a>
-            </div>
-          </div>
-        )}
+        <p className="dim">Shortcuts: Space play/pause, ←/→ scrub 5 s, Home/End, W switch between the two runs of a comparison.</p>
         <div className="aboutbtns">
-          <button
-            onClick={() => {
-              close()
-              useTour.getState().start()
-            }}
-          >
-            Play the 3-minute demo
-          </button>
           <button data-close onClick={close}>Close</button>
         </div>
       </div>

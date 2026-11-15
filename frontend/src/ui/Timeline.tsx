@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import { useApp } from '../store/app'
 import { SPEEDS, useClock } from '../store/clock'
-import { useTour } from '../tour/tour'
 
 const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
@@ -38,7 +37,6 @@ export default function Timeline() {
       if (e.code !== 'Space') {
         if (e.ctrlKey || e.altKey || e.metaKey) return
         if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || el?.isContentEditable) return
-        if (useTour.getState().scene !== null) return
         const c = useClock.getState()
         if (e.key === 'ArrowLeft') c.seek(Math.max(0, c.t - (e.shiftKey ? 1 : 5)))
         else if (e.key === 'ArrowRight') c.seek(Math.min(c.duration, c.t + (e.shiftKey ? 1 : 5)))

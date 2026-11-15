@@ -38,9 +38,6 @@ export const CROWD_NOTE: Record<Exclude<Brain, 'rules'>, string> = {
   llm: `Everyone asks Claude, up to ${MAX_CLAUDE_CROWD} people. A run takes several minutes, and Claude's answers can differ from one run to the next.`,
 }
 
-/** Why a door what-if is not offered against a Claude crowd. */
-export const WHATIF_RULES_ONLY = 'Door what-ifs compare against a Rules run. This run uses a Claude crowd, so run the same fire with Rules first.'
-
 /** How long a live run is waited for, in seconds. Claude is asked for every decision (about 1.5 s a simulated second; the 160-person
  *  example took 4.3 minutes in process and 5.3 through the API, measured Sat), so a Claude crowd gets fifteen minutes. */
 export const RUN_WAIT_S = 600
@@ -65,7 +62,7 @@ export function runLabel(label: string, brain: Brain | undefined): string {
   return label
 }
 
-/** The headline of the rules-against-Claude pair, and the tour's wording of it. */
+/** The headline of the rules-against-Claude pair. */
 export const CLAUDE_WORDS = 'Claude crowd instead of rules'
 
 export interface BrainPair {

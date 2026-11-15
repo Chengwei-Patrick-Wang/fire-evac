@@ -27,7 +27,7 @@ export function materialName(m: Material): string {
   return MATERIALS.find((x) => x.id === m)?.label ?? m
 }
 
-/** "Wood instead of drywall": a material what-if in words (the headline of the material pair and the tour's caption). */
+/** "Wood instead of drywall": a material comparison in words (the headline of the material pair). */
 export function materialWords(to: Material, from: Material = DEFAULT_MATERIAL): string {
   return `${materialName(to)} instead of ${materialName(from).toLowerCase()}`
 }

@@ -6,12 +6,12 @@ import { useClock } from '../store/clock'
 import { floorAlpha, floorPlace, toPlaced } from '../scene/geometry'
 import { readSpread } from '../model/fireSpread'
 import { spreadStats } from './BurningRooms'
+import { CLOSED_BY_FIRE_COLOR } from '../scene/Building'
 import { flatGeometry } from './flat'
 import type { Building, BuildingFloor, Door, Run, Vec2 } from '../data/types'
 
-const CLOSED = '#DC2626'
 const OPACITY = 0.85
-/** Above the door colours Building draws at 0.03, below the stairs, exits and room tints. */
+/** Above the neutral doors Building draws at 0.03, below the stairs, exits and room tints. */
 const OVERLAY_Y = 0.035
 const STRIP_WIDTH = 0.3
 
@@ -86,7 +86,7 @@ function Overlays({ closings, building, runKey }: { closings: Closing[]; buildin
     <>
       {geos.map((g, i) => (
         <mesh key={i} ref={(m) => { meshes.current[i] = m }} geometry={g} visible={false} renderOrder={1}>
-          <meshBasicMaterial color={CLOSED} transparent opacity={OPACITY} depthWrite={false} toneMapped={false} side={THREE.DoubleSide} />
+          <meshBasicMaterial color={CLOSED_BY_FIRE_COLOR} transparent opacity={OPACITY} depthWrite={false} toneMapped={false} side={THREE.DoubleSide} />
         </mesh>
       ))}
     </>
@@ -94,9 +94,9 @@ function Overlays({ closings, building, runKey }: { closings: Closing[]; buildin
 }
 
 /**
- * The doors the simulation closes, red from the moment of their `door_blocked` event: Building colours a door by the state the scenario
- * gave it, and a door that a burning room closes mid-run has no such state. Drawn for runs that carry a spread (`fire.rooms`); every
- * other run looks as before.
+ * The doors the simulation closes, red from the moment of their `door_blocked` event: Building draws every door in one neutral colour,
+ * and a door that a burning room closes mid-run turns red over it. Drawn for runs that carry a spread (`fire.rooms`); every other run
+ * has only the neutral doors.
  */
 export default function BlockedDoors({ runKey }: { runKey?: string }) {
   const activeKey = useApp((s) => s.activeRunKey)

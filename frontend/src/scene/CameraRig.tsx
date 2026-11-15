@@ -112,19 +112,17 @@ export default function CameraRig() {
     until.current = 0
   }, [focus, building])
   useFrame((_, dt) => {
-    if (useApp.getState().follow === null) {
-      cameraPose.p[0] = camera.position.x
-      cameraPose.p[1] = camera.position.y
-      cameraPose.p[2] = camera.position.z
-      const c = controls as unknown as { target: { x: number; y: number; z: number } } | null
-      if (c) {
-        cameraPose.t[0] = c.target.x
-        cameraPose.t[1] = c.target.y
-        cameraPose.t[2] = c.target.z
-      }
+    cameraPose.p[0] = camera.position.x
+    cameraPose.p[1] = camera.position.y
+    cameraPose.p[2] = camera.position.z
+    const pose = controls as unknown as { target: { x: number; y: number; z: number } } | null
+    if (pose) {
+      cameraPose.t[0] = pose.target.x
+      cameraPose.t[1] = pose.target.y
+      cameraPose.t[2] = pose.target.z
     }
     const g = goal.current
-    if (!g || useApp.getState().follow !== null) return
+    if (!g) return
     if (until.current && performance.now() > until.current) {
       goal.current = null
       until.current = 0

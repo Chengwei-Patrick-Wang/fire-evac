@@ -52,6 +52,7 @@ a { color: var(--primary-text); }
   color: var(--text);
   font: var(--fs-md) var(--font);
 }
+.app.sb-wide { --sb-col: min(760px, 55vw); }
 .app.sb-closed { --sb-col: 0px; }
 .center { grid-area: center; position: relative; overflow: hidden; min-width: 0; min-height: 0; }
 .center canvas { touch-action: none; }
@@ -202,22 +203,9 @@ a { color: var(--primary-text); }
 .vis-row input[type=range] { grid-column: 1 / -1; grid-row: 2; width: 100%; margin: 0; }
 .vis-btns { display: flex; gap: var(--s2); }
 .visibility .note { margin: 0; font-size: var(--fs-xs); }
-.pane-caption, .agentreadout, .newbuilding, .tourcap {
+.pane-caption, .newbuilding {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow);
 }
-.agentreadout { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); z-index: 2; padding: var(--s2) var(--s3); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
-.nav-open .agentreadout { top: calc(var(--nav-h) + 36px); }
-.agentreadout button { padding: 4px 10px; margin-top: 4px; }
-/* Claude's latest decision for the person (a run that logged them): the reason can run to two lines. */
-.agentreadout .claude-line { max-width: 300px; }
-.agentreadout .claude-line.rules, .agentreadout .claude-line .action { color: var(--text-2); }
-.tourcap { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; pointer-events: none; max-width: min(720px, 92%); padding: 10px 16px; text-align: center; }
-.tourcap p { margin: 6px 0 0; font-size: 15px; }
-.tourcap .tourhead { display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 18px; }
-.tourcap button { pointer-events: auto; cursor: pointer; padding: 0 8px; font-size: 16px; }
-.tourcap button:disabled { opacity: 0.4; cursor: default; }
-.tourbar { height: 3px; background: var(--primary); margin-top: 8px; width: 0; animation: tourfill linear forwards; }
-@keyframes tourfill { to { width: 100%; } }
 .newbuilding { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(360px, 90%); display: flex; flex-direction: column; gap: var(--s2); padding: 16px; font-size: var(--fs-sm); }
 .newbuilding p { margin: 0; color: var(--muted); }
 .newbuilding .x { position: absolute; top: 4px; right: 4px; padding: 0 var(--s2); }
@@ -310,12 +298,11 @@ a { color: var(--primary-text); }
 .scenario label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .scenario label.check { justify-content: flex-start; }
 .scenario input[type=number] { width: 80px; padding: 3px 6px; }
-.scenario .doorrow { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
 .scenario .err, .weak .err { color: var(--danger); }
 .scenario .warn { color: var(--warn); }
-.whatif .note, .scenario > .note { margin: 2px 0 6px; font-size: var(--fs-xs); }
+.paircompare .note, .scenario > .note { margin: 2px 0 6px; font-size: var(--fs-xs); }
 /* One plain line under a field says what it is; the people mix is a fieldset of percentages; the fire is placed by clicking, with a list as the other way. */
-.scenario .hint, .whatif .hint { margin: -4px 0 4px; font-size: var(--fs-xs); }
+.scenario .hint { margin: -4px 0 4px; font-size: var(--fs-xs); }
 .scenario fieldset.mix { border: 0; padding: 0; margin: 2px 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .scenario fieldset.mix legend { padding: 0; margin-bottom: 4px; font-size: var(--fs-sm); font-weight: 600; }
 .scenario fieldset.mix .note { margin: 0; font-size: var(--fs-xs); }
@@ -325,12 +312,11 @@ a { color: var(--primary-text); }
 .scenario .fireplace button { flex: none; }
 .scenario details.roompick summary { cursor: pointer; color: var(--primary-text); font-size: var(--fs-sm); }
 .scenario details.roompick label { margin-top: 6px; }
-.whatif .material, .whatif .claudepair { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: var(--s2); }
-.whatif .material h5, .whatif .claudepair h5 { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
-.whatif .material .note, .whatif .claudepair .note { margin: 0; }
-.whatif .doorrow { flex-wrap: wrap; }
-.whatif .doorrow select:first-child { flex: 1 1 100%; min-width: 0; }
-ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; font-size: var(--fs-sm); color: var(--muted); }
+/* A precomputed comparison sits under the setting it is about: its button, a note, and what the pair says. */
+.paircompare { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.paircompare .note { margin: 0; }
+.paircompare .whatif-card { margin: 0; }
+.sb-wide-btn[aria-pressed=true] { background: var(--primary-soft); color: var(--primary-text); }
 .stamp { background: #7f1d1d; color: #fecaca; font-weight: 700; font-size: var(--fs-sm); padding: 4px 8px; border-radius: var(--radius); margin: 6px 0; text-align: center; }
 .risklegend .ramp { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #22c55e, #eab308, #ef4444); }
 .risklegend .row { display: flex; justify-content: space-between; font-size: var(--fs-xs); }
@@ -364,21 +350,10 @@ ul.limits { border-left: 3px solid #f59e0b; padding-left: 18px; margin: 6px 0; f
 .about-card h3 { margin: 14px 0 4px; font-size: 14px; }
 .about-card .pitch { font-size: 17px; margin: 6px 0; }
 .about-card .aboutnote { background: #FFFBEB; border: 1px solid #F59E0B; color: #92400E; border-radius: 6px; padding: 8px 12px; }
-.about-card .qr { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
-.qrtile { background: #fff; padding: 8px; border-radius: var(--radius); line-height: 0; }
 .about-card a { color: var(--primary-text); word-break: break-all; }
 .aboutbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 .aboutbtns button { padding: 6px 14px; }
 .aboutbtns button:first-child { background: var(--primary); border-color: var(--primary); color: #fff; }
-.sharecard {
-  position: fixed; top: calc(var(--nav-h) + 16px); right: 16px; z-index: 50; width: 260px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
-}
-.sharecard h3 { margin: 0; }
-.sharecard .sharex { position: absolute; top: 4px; right: 6px; background: none; border: none; color: inherit; cursor: pointer; font-size: 18px; }
-.sharecard .qrtile { align-self: center; }
-.sharecard input { width: 100%; box-sizing: border-box; font-size: 11px; }
-.sharecard p { margin: 0; font-size: 12px; }
 
 /* Printable report */
 .printreport { position: fixed; inset: 0; z-index: 110; overflow: auto; background: #64748b; color: #111; }
@@ -412,6 +387,11 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
   .sidebar { grid-area: center; z-index: 20; justify-self: start; width: min(344px, calc(100vw - 32px)); }
   .app:not(.sb-closed) .scenariocard { left: calc(min(344px, 100vw - 32px) + 28px); }
 }
+/* Expanded on a smaller desktop the floating sidebar widens too (and the scenario card stays beside it); never on a phone. */
+@media (min-width: 901px) and (max-width: 1099px) {
+  .app.sb-wide .sidebar { width: min(760px, 55vw); }
+  .app.sb-wide:not(.sb-closed) .scenariocard { left: calc(min(760px, 55vw) + 28px); }
+}
 
 /* Phones: one column; panels and cards are sheets over the viewer, the floor strip scrolls, the timeline wraps */
 @media (max-width: 900px) {
@@ -421,6 +401,7 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
   .menubar-right { flex-wrap: wrap; }
   .menubar-right select { max-width: 160px; }
   .sidebar { margin: 8px; width: auto; justify-self: stretch; align-self: start; max-height: calc(100% - 16px); }
+  .sb-wide-btn { display: none; }
   .nav-open .sidebar { margin-top: calc(var(--nav-h) + 8px); max-height: calc(100% - var(--nav-h) - 16px); }
   .dock { margin: 0 8px 8px; padding: 6px 8px 2px; }
   .fs-sil { display: none; }
@@ -444,15 +425,12 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
     top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 60dvh; z-index: 30;
   }
   .nav-open .scenariocard { top: auto; max-height: min(60dvh, calc(100% - var(--nav-h) - 16px)); }
-  .tourcap { bottom: 8px; }
-  .sharecard { right: 8px; left: 8px; width: auto; }
   button { min-height: 36px; }
   .timeline .mark { min-height: 10px; }
   html, body { overflow-x: hidden; }
 }
 
 /* Accessibility */
-:root[data-motion="reduce"] .tourbar { animation: none; width: 100%; }
 :root[data-motion="reduce"] .spinner { animation-duration: 3s; }
 :root[data-motion="reduce"] .lc-thumb { transition: none; }
 :root[data-contrast="high"] button, :root[data-contrast="high"] select, :root[data-contrast="high"] input { border: 2px solid #fff; }
@@ -462,8 +440,8 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
 :root[data-contrast="high"] a { text-decoration: underline; color: #fff; }
 :root[data-contrast="high"] .about-card a { color: #fff; }
 :root[data-contrast="high"] .badge { background: #000; border: 1px solid #fff; color: #fff; }
-:root[data-contrast="high"] .legendcard, :root[data-contrast="high"] .tourcap, :root[data-contrast="high"] .banner, :root[data-contrast="high"] .pane-caption,
-:root[data-contrast="high"] .agentreadout, :root[data-contrast="high"] .sidebar, :root[data-contrast="high"] .topnav, :root[data-contrast="high"] .navtoggle,
+:root[data-contrast="high"] .legendcard, :root[data-contrast="high"] .banner, :root[data-contrast="high"] .pane-caption,
+:root[data-contrast="high"] .sidebar, :root[data-contrast="high"] .topnav, :root[data-contrast="high"] .navtoggle,
 :root[data-contrast="high"] .edgetab, :root[data-contrast="high"] .dock, :root[data-contrast="high"] .card, :root[data-contrast="high"] .kpi,
 :root[data-contrast="high"] .menu, :root[data-contrast="high"] .railbtn, :root[data-contrast="high"] .newbuilding {
   background: #000; border: 2px solid #fff; color: #fff;
@@ -474,20 +452,9 @@ body.printing, body.printing * { print-color-adjust: exact; -webkit-print-color-
 :root[data-contrast="high"] .floortag { background: #000; border: 2px solid #fff; color: #fff; box-shadow: none; }
 :root[data-contrast="high"] .floortag.on { background: #0040c0; border-color: #ffd400; }
 :root[data-contrast="high"] .fs-item.on { border-color: #ffd400; color: #ffd400; }
-:root[data-contrast="high"] .about-card, :root[data-contrast="high"] .sharecard { background: #000; border: 2px solid #fff; }
+:root[data-contrast="high"] .about-card { background: #000; border: 2px solid #fff; }
 :root[data-contrast="high"] .menuitem:hover:not(:disabled), :root[data-contrast="high"] .menuitem:focus-visible { background: #000; outline: 3px solid #ffd400; outline-offset: -3px; }
 :root[data-contrast="high"] .tool, :root[data-contrast="high"] .menubtn { border-color: #fff; }
 :root[data-contrast="high"] .playbtn, :root[data-contrast="high"] .demo, :root[data-contrast="high"] .aboutbtns button:first-child { background: #0040c0; color: #fff; }
 :root[data-contrast="high"] .cbar { background: #000; border: 1px solid #fff; }
 .aboutbtns button:first-child, .demo { color: #fff; }
-
-/* Calibration series explanations stay visible for touch and keyboard users. */
-.cal-legend { margin: 8px 0; font-size: var(--fs-sm); }
-.cal-legend > div { margin: 0 0 10px; }
-.cal-legend dt { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-.cal-legend dd { margin: 3px 0 0 16px; color: var(--muted); }
-.cal-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
-.cal-methods { margin: 12px 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
-.cal-methods summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
-.cal-limits-note { font-size: var(--fs-sm); }
-.cred a { color: var(--primary-text); text-decoration: underline; text-underline-offset: 2px; }
